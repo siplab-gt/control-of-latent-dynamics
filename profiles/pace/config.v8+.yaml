@@ -1,7 +1,0 @@
-# for running on GT PACE cluster
-executor: slurm
-jobs: 100
-wms-monitor: http://127.0.0.1:5000
-
-default-resources:
-  slurm_account: gts-crozell3
