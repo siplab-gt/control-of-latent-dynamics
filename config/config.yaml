@@ -1,0 +1,164 @@
+seed:
+  - 17230616
+  - 18051223
+  - 16320829
+  - 18060520
+  - 18220427
+
+task:
+  - cycling
+  - reaching
+  - integration
+  # - cycling_reaching
+  # - cycling_integration
+  # - reaching_integration
+  # - cycling_reaching_integration
+
+# more easily handled per control experiment, since different control methods would
+# all have the same dependencies
+control:
+  - OL
+  - LQMPC
+
+power_per_neuron_uW: 1
+
+# to sweep one at a time in Q1, Q2
+##################################
+latent_dim: # only possible on some tasks?
+  - 1
+  - 2
+  - 4
+  - 8
+  - 16
+
+total_scale:
+  - 0.1
+  - 0.5
+  - 1
+  - 5
+  - 10
+
+network_size_um: # width of square
+  - 100
+  - 500
+  - 1000
+  - 2000
+
+beam_width_um:
+  - 10
+  - 50
+  - 100
+  - 200
+
+beam_spacing:
+  - 0.5
+  - 1
+  - 2
+  - 5
+  - 10
+
+connection_distance_penalty_max: 1
+# to multiply by the max
+connection_distance_penalty:
+  - 0
+  - 0.25
+  - 0.5
+  - 0.75
+  - 1
+
+connection_l2_penalty:
+  - 0
+  - 0.001
+  - 0.01
+  - 0.1
+
+# keep the same L4-L2/3-L5 structure everywhere, but
+# alter weights
+connection_layer_penalty:
+  - 0
+  - 0.001
+  - 0.01
+  - 0.1
+
+dales_law:
+  - false
+  - true
+
+reference_configuration:
+  latent_dim: 2
+  total_scale: 1
+  network_size_um: 1000
+  beam_width_um: 100
+  beam_spacing: 2
+  connection_distance_penalty: 0.5
+  connection_l2_penalty: 0
+  connection_layer_penalty: 0
+  dales_law: false
+  latency: true
+
+# Q1: how many channels are good enough?
+########################################
+q1:
+  good_enough_ctrl: 0.9
+  k:
+    - 1
+    - 2
+    - 4
+    - 8
+    - 16
+    - 32
+    - 64
+
+# Q2: optimal stim/rec balance
+##############################
+q2:
+  channel_budget: 64
+  stim_ratio_min: 0
+  stim_ratio_max: 1
+  num_stim_ratio_levels: 7
+
+# sys ID
+########
+trials_for_sys_id: 50
+
+# control
+#########
+Q: 1
+R: 0.1
+dt_ms: 1
+
+ctrl_horizon_ms: 50
+pred_horizon_ms: 100
+
+# Q3: how do results change with increasing realism?
+####################################################
+# maybe don't need to hardcode this in? could interpolate
+# realism_levels:
+#   0: reference
+#   1:
+#     latent_dim: 4
+#     network_size_um: 2000
+#     connection_distance_penalty: 1
+#     connection_layer_penalty: 1
+#     num_tasks: 1
+#     # dale's law
+#   2:
+#     total_scale: 1
+#     network_size_um: 1000
+#     beam_width_um: 100
+#     beam_spacing: 2
+#     connection_distance_penalty: 0
+#     connection_l2_penalty: 0
+#     stim_channels: 0.5
+
+# interpolate from least to most realistic setting for each feature
+# from the one-at-a-time sweeps
+num_realism_levels: 10
+realism_features:
+  - latent_dim
+  - network_size_um # or total_scale?
+  - connection_distance_penalty
+  - connection_layer_penalty
+  # TODO: num_tasks
+  # - num_tasks
+  - dales_law

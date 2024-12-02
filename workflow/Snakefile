@@ -1,17 +1,104 @@
-# Main entrypoint of the workflow. 
-# Please follow the best practices: 
+from snakemake.utils import Paramspace
+import pandas as pd
+
+# Main entrypoint of the workflow.
+# Please follow the best practices:
 # https://snakemake.readthedocs.io/en/stable/snakefiles/best_practices.html,
-# in particular regarding the standardized folder structure mentioned there. 
+# in particular regarding the standardized folder structure mentioned there.
+
+
+configfile: "config/config.yaml"
+
+TASKS = ['cycling', 'reaching', 'integration']
 
 rule all:
     input:
         # 'greetings/{idx}.txt' for idx in range(1, 3)
-        expand("results/{idx}.txt", idx=range(5))
+        # expand("results/{idx}.txt", idx=range(5)),
+        "results/conditions.csv",
+        expand("results/figs/sufficient-stim-{task}.svg", task=TASKS),
+        "results/figs/stim-rec-balance.svg",
+        "results/figs/realism.svg",
+
+
+paramspace = Paramspace(pd.read_csv("results/conditions.csv"))
+
+vars_to_sweep = [
+    "latent_dim",
+    "total_scale",
+    "network_size_um",
+    "beam_width_um",
+    "beam_spacing",
+    "connection_distance_penalty",
+    "connection_l2_penalty",
+    "connection_layer_penalty",
+    "dales_law",
+]
+
+params_str = "/".join(
+    # f"{var}_{var}" for var in sorted(vars_to_sweep + ["seed", "control", "task"])
+    f"{var}_{" + var + "}"
+    for var in sorted(vars_to_sweep + ["seed", "control", "task"])
+)
+
+
+def paths_for_params(file: list | str, wildcards=list | str, **kwargs) -> str:
+    params = config["reference_configuration"] | kwargs
+    return expand(
+        "results/" + params_str + "/{file}",
+        file=file,
+        **params,
+    )
+
+COMMON_WILDCARDS = ['task', 'seed']
+
+rule sufficient_stim_fig:
+    input:
+        # expand("results/{params}/{file}", params=paramspace.instance_patterns, ext=[""]),
+        # to get main fig
+        paths_for_params(
+            file="data.npz",
+            wildcards=COMMON_WILDCARDS,
+            latency=False,
+            control=["LQMPC", "OL"],
+            k=config["q1"]["k"],
+        ),
+        paths_for_params(
+            file="data.npz",
+            wildcards=COMMON_WILDCARDS,
+            latency=True,
+            control='LQMPC',
+            k=config["q1"]["k"],
+        ),
+        # exploratory variables
+        [
+            paths_for_params(
+                file="data.npz",
+                wildcards=COMMON_WILDCARDS,
+                latency=True,
+                control=["OL", "LQMPC"],
+                k=config["q1"]["k"],
+                **{var: config[var]},
+            )
+            for var in vars_to_sweep
+        ],
+    output:
+        "results/figs/sufficient-stim-{task}.svg",
+
+
+checkpoint conditions:
+    input:
+        "config/config.yaml",
+    output:
+        "results/conditions.csv",
+    localrule: True
+    script:
+        "scripts/generate_conditions_table.py"
 
 
 rule process:
     output:
-        "results/{idx}.txt"
+        "results/{idx}.txt",
     shell:
         "sleep 1 "
         "&& echo {wildcards.idx} > {output} "
