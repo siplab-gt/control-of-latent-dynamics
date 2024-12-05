@@ -5,7 +5,7 @@ import pandas as pd
 import yaml
 
 
-def main(cfg):
+def main(cfg, outfile):
     grid_search = {k: cfg[k] for k in ["seed", "task"]}
     keys = grid_search.keys()
     values = (grid_search[key] for key in keys)
@@ -82,7 +82,7 @@ def main(cfg):
     df = pd.DataFrame(all_conditions)
     print(df)
     print(df.info())
-    df.to_csv(snakemake.output[0], index=False)
+    df.to_csv(outfile, index=False)
 
 
 if __name__ == "__main__" and "snakemake" in locals():
@@ -93,4 +93,4 @@ if __name__ == "__main__" and "snakemake" in locals():
 elif __name__ == "__main__":
     with open("config/config.yaml") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-    main(config)
+    main(config, "results/conditions.csv")

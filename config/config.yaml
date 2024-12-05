@@ -24,6 +24,11 @@ power_per_neuron_uW: 1
 
 # to sweep one at a time in Q1, Q2
 ##################################
+n_trials_sys_id:
+  - 10
+  - 50
+  - 100
+
 latent_dim: # only possible on some tasks?
   - 1
   - 2
@@ -85,6 +90,7 @@ dales_law:
   - true
 
 reference_configuration:
+  n_trials_sys_id: 50
   latent_dim: 2
   total_scale: 1
   network_size_um: 1000
@@ -99,7 +105,7 @@ reference_configuration:
 # Q1: how many channels are good enough?
 ########################################
 q1:
-  good_enough_ctrl: 0.9
+  sufficient_ctrl: 0.9
   k:
     - 1
     - 2

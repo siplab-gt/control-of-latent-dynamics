@@ -9,13 +9,15 @@ import pandas as pd
 
 configfile: "config/config.yaml"
 
-TASKS = ['cycling', 'reaching', 'integration']
+
+TASKS = ["cycling", "reaching", "integration"]
+
 
 rule all:
     input:
         # 'greetings/{idx}.txt' for idx in range(1, 3)
         # expand("results/{idx}.txt", idx=range(5)),
-        "results/conditions.csv",
+        # "results/conditions.csv",
         expand("results/figs/sufficient-stim-{task}.svg", task=TASKS),
         "results/figs/stim-rec-balance.svg",
         "results/figs/realism.svg",
@@ -24,6 +26,7 @@ rule all:
 paramspace = Paramspace(pd.read_csv("results/conditions.csv"))
 
 vars_to_sweep = [
+    "n_trials_sys_id",
     "latent_dim",
     "total_scale",
     "network_size_um",
@@ -35,56 +38,75 @@ vars_to_sweep = [
     "dales_law",
 ]
 
+all_vars = ["setting", "task", "seed", "control"] + sorted(vars_to_sweep)
+
 params_str = "/".join(
-    # f"{var}_{var}" for var in sorted(vars_to_sweep + ["seed", "control", "task"])
-    f"{var}_{" + var + "}"
-    for var in sorted(vars_to_sweep + ["seed", "control", "task"])
+    f'{var}_{{{var}}}' for var in all_vars
 )
 
 
-def paths_for_params(file: list | str, wildcards=list | str, **kwargs) -> str:
+def paths_for_params(file: list | str, **kwargs) -> str:
     params = config["reference_configuration"] | kwargs
+    wildcards = set(all_vars) - params.keys()
+    # need to mask wildcards we want to keep
+    for wc in wildcards:
+        params_str_masked = params_str.replace(f'{{{wc}}}', f'{{{{{wc}}}}}')
     return expand(
-        "results/" + params_str + "/{file}",
+        f"results/{params_str_masked}/{{file}}",
         file=file,
         **params,
     )
 
-COMMON_WILDCARDS = ['task', 'seed']
 
-rule sufficient_stim_fig:
+rule sufficient_stim_process_condition:
+    input:
+        f"results/{params_str}/data.npz",
+    output:
+        f"results/{params_str}/summary.csv",
+
+
+
+rule sufficient_stim_tabulate:
     input:
         # expand("results/{params}/{file}", params=paramspace.instance_patterns, ext=[""]),
         # to get main fig
-        paths_for_params(
-            file="data.npz",
-            wildcards=COMMON_WILDCARDS,
-            latency=False,
-            control=["LQMPC", "OL"],
-            k=config["q1"]["k"],
-        ),
-        paths_for_params(
-            file="data.npz",
-            wildcards=COMMON_WILDCARDS,
-            latency=True,
-            control='LQMPC',
-            k=config["q1"]["k"],
-        ),
+        [
+            paths_for_params(
+                file="summary.csv",
+                setting="sufficient-stim",
+                latency=latency,
+                control=ctrl,
+                k=config["q1"]["k"],
+                seed=config['seed'],
+            )
+            for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
+        ],
         # exploratory variables
         [
             paths_for_params(
-                file="data.npz",
-                wildcards=COMMON_WILDCARDS,
-                latency=True,
-                control=["OL", "LQMPC"],
+                file="summary.csv",
+                setting="sufficient-stim",
+                latency=latency,
+                control=ctrl,
                 k=config["q1"]["k"],
+                seed=config['seed'],
                 **{var: config[var]},
             )
             for var in vars_to_sweep
+            for ctrl, latency in [("OL", False), ("LQMPC", True)]
         ],
     output:
-        "results/figs/sufficient-stim-{task}.svg",
+        "results/sufficient-stim-{task}.csv",
+    script:
+        "scripts/sufficient_stim_tabulate.py"
 
+rule sufficient_stim_fig:
+    input:
+        "results/sufficient-stim-{task}.csv",
+    output:
+        "results/figs/sufficient-stim-{task}.svg",
+    script:
+        "scripts/sufficient_stim_fig.py"
 
 checkpoint conditions:
     input:
