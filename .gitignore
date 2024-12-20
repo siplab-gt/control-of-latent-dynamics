@@ -4,3 +4,7 @@ logs/**
 .snakemake
 .snakemake/**
 .panoptes.db
+*.egg-info
+*.pyc
+report*.html
+.vscode/**

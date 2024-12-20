@@ -27,12 +27,12 @@ exploratory_vars = [
     "n_trials_sys_id",
     "latent_dim",
     "total_scale",
-    "network_size_um",
+    "network_area_scale",
     "beam_width_um",
     "beam_spacing",
     "connection_distance_penalty",
     "connection_l2_penalty",
-    "connection_layer_penalty",
+    "layer_structure",
     "dales_law",
 ]
 
@@ -54,11 +54,13 @@ def paths_for_params(file: list | str, **kwargs) -> str:
     )
 
 
-rule analyze_ctrl_data:
+rule sufficient_stim_fig:
     input:
-        f"results/{params_str}/ctrl_data.pkl",
+        "results/sufficient-stim-{task}.csv",
     output:
-        f"results/{params_str}/summary.csv",
+        "results/figs/sufficient-stim-{task}.svg",
+    script:
+        "scripts/sufficient_stim_fig.py"
 
 
 rule sufficient_stim_tabulate:
@@ -101,13 +103,18 @@ rule sufficient_stim_tabulate:
         df.write_csv(output[0], index=False)
 
 
-rule sufficient_stim_fig:
+def standard_log_kwargs(log_name):
+    return {
+        "stdout": f"logs/{params_str}/{log_name}.log",
+        "stderr": f"logs/{params_str}/{log_name}.log",
+    }
+
+
+rule analyze_ctrl_data:
     input:
-        "results/sufficient-stim-{task}.csv",
+        f"results/{params_str}/ctrl_data.pkl",
     output:
-        "results/figs/sufficient-stim-{task}.svg",
-    script:
-        "scripts/sufficient_stim_fig.py"
+        f"results/{params_str}/summary.csv",
 
 
 rule ctrl_expts:
@@ -122,18 +129,18 @@ rule ctrl_expts:
         # or a CtrlData dataclass
 
 
-rule sys_id_expts:
-    input:
-        f"results/{params_str}/fsnn_with_cleo.pkl",
-    output:
-        f"results/{params_str}/sys_id_data.pkl",
-
-
 rule sys_id_fit:
     input:
         f"results/{params_str}/sys_id_data.pkl",
     output:
         f"results/{params_str}/dpad_model.pkl",
+
+
+rule sys_id_expts:
+    input:
+        f"results/{params_str}/fsnn_with_cleo.pkl",
+    output:
+        f"results/{params_str}/sys_id_data.pkl",
 
 
 rule cleo_prep:
@@ -143,22 +150,26 @@ rule cleo_prep:
         f"results/{params_str}/fsnn_with_cleo.pkl",
 
 
+rule plot_fsnn:
+    input:
+        f"results/{params_str}/trained_fsnn.pkl",
+        "src/helpers.py",
+    output:
+        f"results/{params_str}/fsnn_plot.png",
+    localrule: True
+    script:
+        "scripts/plot_fsnn.py"
+
+
+rule test:
+    run:
+        print("test")
+
+
 rule train_fsnn:
     output:
         f"results/{params_str}/trained_fsnn.pkl",
-
-
-# checkpoint conditions:
-#     input:
-#         "config/config.yaml",
-#     output:
-#         "results/conditions.csv",
-#     localrule: True
-#     script:
-#         "scripts/generate_conditions_table.py"
-# rule process:
-#     output:
-#         "results/{idx}.txt",
-#     shell:
-#         "sleep 1 "
-#         "&& echo {wildcards.idx} > {output} "
+    log:
+        **standard_log_kwargs("train_fsnn"),
+    script:
+        "scripts/train_fsnn.py"

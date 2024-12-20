@@ -20,10 +20,22 @@ control:
   - OL
   - LQMPC
 
-power_per_neuron_uW: 1
+# parameters, used across conditions
+####################################
+power_per_neuron_uW: 1 # when normalizing power
+# L5 is the sparsest, serves as base.
+# from Narayanan 2017:
+l5_neuron_density: 65 # neurons per mm^3. 65k is realistic
+l4_l5_density_ratio: 1.539 # 100/65
+l23_l5_density_ratio: 1.231 # 80/65
+layer_boundaries_um:
+  - 150
+  - 550
+  - 900
+  - 1450
 
-# to sweep one at a time in Q1, Q2
-##################################
+# exploratory vars to sweep one at a time in Q1, Q2
+###################################################
 n_trials_sys_id:
   - 10
   - 50
@@ -43,11 +55,12 @@ total_scale:
   - 5
   - 10
 
-network_size_um: # width of square
-  - 100
-  - 500
-  - 1000
-  - 2000
+array_side_length_mm: 4
+network_area_scale: # proportional to array area
+  - 1
+  - 2
+  - 3
+  - 4
 
 beam_width_um:
   - 10
@@ -79,11 +92,19 @@ connection_l2_penalty:
 
 # keep the same L4-L2/3-L5 structure everywhere, but
 # alter weights
-connection_layer_penalty:
+# TODO: single "layerness" variable that controls density variation by layer too?
+connection_layer_penalty_max: 0.1 # TODO
+layer_structure:
   - 0
-  - 0.001
-  - 0.01
-  - 0.1
+  - 0.33
+  - 0.67
+  - 1
+
+# connection_layer_penalty:
+#   - 0
+#   - 0.001
+#   - 0.01
+#   - 0.1
 
 dales_law:
   - false
@@ -93,12 +114,12 @@ reference_configuration:
   n_trials_sys_id: 50
   latent_dim: 2
   total_scale: 1
-  network_size_um: 1000
+  network_area_scale: 2
   beam_width_um: 100
   beam_spacing: 2
   connection_distance_penalty: 0.5
   connection_l2_penalty: 0
-  connection_layer_penalty: 0
+  layer_structure: 0
   dales_law: false
   latency: true
 

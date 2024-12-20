@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from src.plotting import style_plots
+from helpers import style_plots
 
 
 def main(cfg, results_csv, outfile):
