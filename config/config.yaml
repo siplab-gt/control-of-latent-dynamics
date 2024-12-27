@@ -29,10 +29,12 @@ l5_neuron_density: 65 # neurons per mm^3. 65k is realistic
 l4_l5_density_ratio: 1.539 # 100/65
 l23_l5_density_ratio: 1.231 # 80/65
 layer_boundaries_um:
-  - 150
-  - 550
-  - 900
+  - 150 # L2/3
+  - 550 # L4
+  - 900 # L5
   - 1450
+array_side_length_mm: 4
+array_n_per_side: 8
 
 # exploratory vars to sweep one at a time in Q1, Q2
 ###################################################
@@ -50,12 +52,9 @@ latent_dim: # only possible on some tasks?
 
 total_scale:
   - 0.1
-  - 0.5
   - 1
-  - 5
   - 10
 
-array_side_length_mm: 4
 network_area_scale: # proportional to array area
   - 1
   - 2

@@ -4,11 +4,6 @@ import cleo.utilities
 import numpy as np
 
 
-def style_plots():
-    print("styled plots")
-    pass
-
-
 def seed_everything(seed):
     np.random.seed(seed)
     b2.seed(seed)

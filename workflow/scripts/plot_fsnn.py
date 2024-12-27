@@ -2,12 +2,12 @@ import cleo
 import matplotlib.pyplot as plt
 
 from src.data_classes import fSNN
-from src.helpers import style_plots
+from src.plot_style import style_plots
 
 
 def main(fsnn_file, out_file):
-    plt.switch_backend("agg")
     style_plots()
+    plt.switch_backend("agg")
     fsnn = fSNN.load(fsnn_file)
     fig, ax = cleo.viz.plot(fsnn.ng)
     fig.savefig(out_file)
