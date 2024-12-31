@@ -16,7 +16,7 @@ TASKS = ["cycling", "reaching", "integration"]
 rule all:
     input:
         # "results/conditions.csv",
-        expand("results/figs/sufficient-stim-{task}.svg", task=TASKS),
+        expand("results/figs/sufficient_stim-{task}.svg", task=TASKS),
         # "results/figs/stim-rec-balance.svg",
         # "results/figs/realism.svg",
 
@@ -62,11 +62,11 @@ rule test:
         # f"results/{params_str}/fsnn_with_cleo.pkl",
         paths_for_params(
             file="{file}",
-            setting="sufficient-stim",
+            setting="sufficient_stim",
             task="cycling",
             latency=False,
             control="OL",
-            k=1,
+            k=4,
             m=0,
             seed=0,
         ),
@@ -78,9 +78,9 @@ rule test:
 
 rule sufficient_stim_fig:
     input:
-        "results/sufficient-stim-{task}.csv",
+        "results/sufficient_stim-{task}.csv",
     output:
-        "results/figs/sufficient-stim-{task}.svg",
+        "results/figs/sufficient_stim-{task}.svg",
     script:
         "scripts/sufficient_stim_fig.py"
 
@@ -92,7 +92,7 @@ rule sufficient_stim_tabulate:
         [
             paths_for_params(
                 file="summary.csv",
-                setting="sufficient-stim",
+                setting="sufficient_stim",
                 latency=latency,
                 control=ctrl,
                 k=config["q1"]["k"],
@@ -105,7 +105,7 @@ rule sufficient_stim_tabulate:
         [
             paths_for_params(
                 file="summary.csv",
-                setting="sufficient-stim",
+                setting="sufficient_stim",
                 latency=latency,
                 control=ctrl,
                 k=config["q1"]["k"],
@@ -117,7 +117,7 @@ rule sufficient_stim_tabulate:
             for ctrl, latency in [("OL", False), ("LQMPC", True)]
         ],
     output:
-        "results/sufficient-stim-{task}.csv",
+        "results/sufficient_stim-{task}.csv",
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -180,6 +180,7 @@ rule cleo_prep:
     input:
         f"results/{params_str}/trained_fsnn.pkl",
         "src/grouped_light.py",
+        "src/cleo_prep_{setting}.py",
     output:
         f"results/{params_str}/fsnn_with_cleo.pkl",
     script:

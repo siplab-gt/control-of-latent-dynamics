@@ -1,3 +1,4 @@
+import brian2.only as b2
 import cleo
 import matplotlib.pyplot as plt
 
@@ -10,6 +11,14 @@ def main(cleo_file, out_file):
     plt.switch_backend("agg")
     cleo_expt = CleoExperiment.load(cleo_file)
     fig, ax = cleo.viz.plot(sim=cleo_expt.sim, scatterargs={"s": 1})
+    for i_group, group in enumerate(cleo_expt.light.groups):
+        for i_channel in group:
+            ax.text(
+                *(cleo_expt.light.coords[i_channel] / b2.um),
+                f"{i_group + 1}",
+                fontsize=6,
+                ha="center",
+            )
     fig.savefig(out_file)
 
 

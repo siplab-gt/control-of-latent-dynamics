@@ -20,18 +20,32 @@ def main(cond_vars, cfg, fsnn_file, outfile):
         indexing="ij",
     )
     grid = np.stack((x, y, z), axis=-1).reshape(-1, 3) * b2.mm
-    if cond_vars["setting"] == "sufficient-stim":
-        coords = grid
-        groups = np.arange(len(coords)).reshape(int(cond_vars["k"]), -1)
-        probe = None
+
+    # separate files so one can change without causing the other to be rerun
+    if cond_vars["setting"] == "sufficient_stim":
+        from src.cleo_prep_sufficient_stim import light_and_probe_coords
+    elif cond_vars["setting"] == "optimal-stim-rec":
+        from src.cleo_prep_optimal_stim_rec import light_and_probe_coords
+
+    light_coords, light_groups, probe_coords = light_and_probe_coords(
+        grid, int(cond_vars["k"])
+    )
 
     array = GroupedLight(
-        name="light array", coords=coords, groups=groups, light_model=light_model
+        name="light array",
+        coords=light_coords,
+        groups=light_groups,
+        light_model=light_model,
     )
     sim = cleo.CLSimulator(fsnn.net)
     sim.inject(array, fsnn.ng)
-    if probe:
+
+    if probe_coords:
+        probe = cleo.ephys.Probe(probe_coords)
         sim.inject(probe, fsnn.ng)
+    else:
+        probe = None
+
     cleo_expt = CleoExperiment(fsnn, array, probe, sim)
     cleo_expt.save(outfile)
 
