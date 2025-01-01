@@ -28,7 +28,7 @@ exploratory_vars = [
     "beam_spacing",
     "connection_distance_penalty",
     "connection_l2_penalty",
-    "layer_structure",
+    "layeredness",
     "dales_law",
 ]
 
@@ -69,6 +69,7 @@ rule test:
             k=4,
             m=0,
             seed=0,
+            layeredness=1,
         ),
     output:
         "results/test/{file}",
@@ -181,6 +182,7 @@ rule cleo_prep:
         f"results/{params_str}/trained_fsnn.pkl",
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
+        "src/interface_array.py",
     params:
         **params_from_cfg("array_side_length_mm", "array_n_per_side"),
     output:
@@ -205,9 +207,8 @@ rule train_fsnn:
         f"results/{params_str}/trained_fsnn.pkl",
     params:
         **params_from_cfg(
-            "l5_neuron_density",
-            "l4_l5_density_ratio",
-            "l23_l5_density_ratio",
+            "base_neuron_density",
+            "layer_density_ratios",
             "layer_boundaries_um",
             "array_side_length_mm",
         ),
@@ -215,3 +216,22 @@ rule train_fsnn:
         **standard_log_kwargs("train_fsnn"),
     script:
         "scripts/train_fsnn.py"
+
+
+rule plot_schematic:
+    input:
+        "src/interface_array.py",
+        "src/cleo_prep_{setting}.py",
+    output:
+        top=multiext(f"results/{params_str}/top_schematic", ".svg", ".png"),
+        side=multiext(f"results/{params_str}/side_schematic", ".svg", ".png"),
+    params:
+        **params_from_cfg(
+            "base_neuron_density",
+            "layer_density_ratios",
+            "layer_boundaries_um",
+            "array_side_length_mm",
+            "array_n_per_side",
+        ),
+    script:
+        "scripts/plot_schematic.py"

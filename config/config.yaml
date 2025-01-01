@@ -25,9 +25,11 @@ control:
 power_per_neuron_uW: 1 # when normalizing power
 # L5 is the sparsest, serves as base.
 # from Narayanan 2017:
-l5_neuron_density: 65 # neurons per mm^3. 65k is realistic
-l4_l5_density_ratio: 1.539 # 100/65
-l23_l5_density_ratio: 1.231 # 80/65
+base_neuron_density: 65 # neurons per mm^3. 65k is realistic
+layer_density_ratios:
+  - 1.231 # L2/3, =80/65
+  - 1.539 # L4, =100/65
+  - 1 # L5
 layer_boundaries_um:
   - 150 # L2/3
   - 550 # L4
@@ -89,11 +91,11 @@ connection_l2_penalty:
   - 0.01
   - 0.1
 
-# keep the same L4-L2/3-L5 structure everywhere, but
-# alter weights
-# TODO: single "layerness" variable that controls density variation by layer too?
+# keep the same L4-L2/3-L5 structure everywhere, but alter weights
+# single "layeredness" variable that controls both layer connectivity penalty
+# and density variation by layer
 connection_layer_penalty_max: 0.1 # TODO
-layer_structure:
+layeredness:
   - 0
   - 0.33
   - 0.67
@@ -118,7 +120,7 @@ reference_configuration:
   beam_spacing: 2
   connection_distance_penalty: 0.5
   connection_l2_penalty: 0
-  layer_structure: 0
+  layeredness: 0
   dales_law: false
   latency: true
 

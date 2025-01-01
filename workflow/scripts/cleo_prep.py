@@ -4,6 +4,7 @@ import numpy as np
 
 from src.data_classes import CleoExperiment, fSNN
 from src.grouped_light import GroupedLight
+from src.interface_array import get_interface_array
 
 
 def main(cond_vars, params, fsnn_file, outfile):
@@ -11,15 +12,11 @@ def main(cond_vars, params, fsnn_file, outfile):
     light_model = cleo.light.fiber473nm(
         R0=float(cond_vars["beam_width_um"]) * b2.um / 2
     )
-    grid_len = float(params["array_side_length_mm"]) * float(cond_vars["total_scale"])
-    # TODO: define grid size by beam spacing?
-    x, y, z = np.meshgrid(
-        np.linspace(-grid_len / 2, grid_len / 2, int(params["array_n_per_side"])),
-        np.linspace(-grid_len / 2, grid_len / 2, int(params["array_n_per_side"])),
-        0.6,  # TODO: what depth? just one layer? this is L4
-        indexing="ij",
+    grid = get_interface_array(
+        float(params["array_side_length_mm"]),
+        float(cond_vars["total_scale"]),
+        int(params["array_n_per_side"]),
     )
-    grid = np.stack((x, y, z), axis=-1).reshape(-1, 3) * b2.mm
 
     # separate files so one can change without causing the other to be rerun
     if cond_vars["setting"] == "sufficient_stim":
