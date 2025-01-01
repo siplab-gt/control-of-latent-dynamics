@@ -6,16 +6,16 @@ from src.data_classes import CleoExperiment, fSNN
 from src.grouped_light import GroupedLight
 
 
-def main(cond_vars, cfg, fsnn_file, outfile):
+def main(cond_vars, params, fsnn_file, outfile):
     fsnn = fSNN.load(fsnn_file)
     light_model = cleo.light.fiber473nm(
         R0=float(cond_vars["beam_width_um"]) * b2.um / 2
     )
-    grid_len = float(cfg["array_side_length_mm"]) * float(cond_vars["total_scale"])
+    grid_len = float(params["array_side_length_mm"]) * float(cond_vars["total_scale"])
     # TODO: define grid size by beam spacing?
     x, y, z = np.meshgrid(
-        np.linspace(-grid_len / 2, grid_len / 2, int(cfg["array_n_per_side"])),
-        np.linspace(-grid_len / 2, grid_len / 2, int(cfg["array_n_per_side"])),
+        np.linspace(-grid_len / 2, grid_len / 2, int(params["array_n_per_side"])),
+        np.linspace(-grid_len / 2, grid_len / 2, int(params["array_n_per_side"])),
         0.6,  # TODO: what depth? just one layer? this is L4
         indexing="ij",
     )
@@ -53,4 +53,4 @@ def main(cond_vars, cfg, fsnn_file, outfile):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    main(snakemake.wildcards, snakemake.config, snakemake.input[0], snakemake.output[0])
+    main(snakemake.wildcards, snakemake.params, snakemake.input[0], snakemake.output[0])

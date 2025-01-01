@@ -43,4 +43,4 @@ def main(condition_vars, cfg, outfile):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    main(snakemake.wildcards, snakemake.config, snakemake.output[0])
+    main(snakemake.wildcards, snakemake.params, snakemake.output[0])

@@ -1,4 +1,3 @@
-from snakemake.utils import Paramspace
 import pandas as pd
 
 # Main entrypoint of the workflow.
@@ -15,13 +14,10 @@ TASKS = ["cycling", "reaching", "integration"]
 
 rule all:
     input:
-        # "results/conditions.csv",
         expand("results/figs/sufficient_stim-{task}.svg", task=TASKS),
         # "results/figs/stim-rec-balance.svg",
         # "results/figs/realism.svg",
 
-
-paramspace = Paramspace(pd.read_csv("results/conditions.csv"))
 
 exploratory_vars = [
     "n_trials_sys_id",
@@ -53,6 +49,10 @@ def paths_for_params(file: list | str, **kwargs) -> str:
         file=file,
         **params,
     )
+
+
+def params_from_cfg(*params: str) -> dict:
+    return {param: config[param] for param in params}
 
 
 rule test:
@@ -181,6 +181,8 @@ rule cleo_prep:
         f"results/{params_str}/trained_fsnn.pkl",
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
+    params:
+        **params_from_cfg("array_side_length_mm", "array_n_per_side"),
     output:
         f"results/{params_str}/fsnn_with_cleo.pkl",
     script:
@@ -201,6 +203,14 @@ rule plot_fsnn:
 rule train_fsnn:
     output:
         f"results/{params_str}/trained_fsnn.pkl",
+    params:
+        **params_from_cfg(
+            "l5_neuron_density",
+            "l4_l5_density_ratio",
+            "l23_l5_density_ratio",
+            "layer_boundaries_um",
+            "array_side_length_mm",
+        ),
     log:
         **standard_log_kwargs("train_fsnn"),
     script:

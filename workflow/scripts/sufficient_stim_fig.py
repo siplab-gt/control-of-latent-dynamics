@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from helpers import style_plots
+from src.helpers import style_plots
 
 
 def main(cfg, results_csv, outfile):
@@ -16,4 +16,4 @@ def main(cfg, results_csv, outfile):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    main(snakemake.config, snakemake.input[0], snakemake.output[0])
+    main(snakemake.params, snakemake.input[0], snakemake.output[0])
