@@ -7,12 +7,12 @@ from src.interface_array import get_interface_array
 from src.plot_style import c, style_plots
 
 
-def main(cond_vars, params, outfiles):
+def main(cond_params, base_params, outfiles):
     style_plots()
     fig, ax = plt.subplots()
 
-    side_length_mm = np.sqrt(float(params["array_side_length_mm"])) ** 2 * float(
-        cond_vars["network_area_scale"]
+    side_length_mm = np.sqrt(float(base_params["array_side_length_mm"])) ** 2 * float(
+        cond_params["network_area_scale"]
     )
     net_rect = plt.Rectangle(
         (-side_length_mm / 2, -side_length_mm / 2),
@@ -26,20 +26,20 @@ def main(cond_vars, params, outfiles):
     ax.add_patch(net_rect)
 
     grid = get_interface_array(
-        float(params["array_side_length_mm"]),
-        float(cond_vars["total_scale"]),
-        int(params["array_n_per_side"]),
+        float(base_params["array_side_length_mm"]),
+        float(cond_params["total_scale"]),
+        int(base_params["array_n_per_side"]),
     )
-    if cond_vars["setting"] == "sufficient_stim":
+    if cond_params["setting"] == "sufficient_stim":
         from src.cleo_prep_sufficient_stim import light_and_probe_coords
-    elif cond_vars["setting"] == "optimal-stim-rec":
+    elif cond_params["setting"] == "optimal-stim-rec":
         from src.cleo_prep_optimal_stim_rec import light_and_probe_coords
 
     light_coords, light_groups, probe_coords = light_and_probe_coords(
-        grid, int(cond_vars["k"])
+        grid, int(cond_params["k"])
     )
     # TODO: two opsins/lights
-    beam_width_mm = float(cond_vars["beam_width_um"]) / 1000
+    beam_width_mm = float(cond_params["beam_width_um"]) / 1000
     ellipses = EllipseCollection(
         beam_width_mm,
         beam_width_mm,
@@ -84,10 +84,10 @@ def main(cond_vars, params, outfiles):
     # side view
     fig, ax = plt.subplots()
 
-    layer_bounds_mm = [float(lb) / 1000 for lb in params["layer_boundaries_um"]]
-    density_ratios = np.array([float(dr) for dr in params["layer_density_ratios"]])
-    base_neuron_density = float(params["base_neuron_density"])
-    adj_density_ratios = 1 + (density_ratios - 1) * float(cond_vars["layeredness"])
+    layer_bounds_mm = [float(lb) / 1000 for lb in base_params["layer_boundaries_um"]]
+    density_ratios = np.array([float(dr) for dr in base_params["layer_density_ratios"]])
+    base_neuron_density = float(base_params["base_neuron_density"])
+    adj_density_ratios = 1 + (density_ratios - 1) * float(cond_params["layeredness"])
     layer_densities = base_neuron_density * adj_density_ratios
 
     layer_rects = []

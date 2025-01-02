@@ -1,3 +1,4 @@
+# TODO: restructure to condition parameters -> {grid, star, other}
 seed:
   - 17230616
   - 18051223
@@ -42,8 +43,8 @@ array_n_per_side: 8
 ###################################################
 n_trials_sys_id:
   - 10
-  - 50
-  - 100
+  # - 50
+  # - 100
 
 latent_dim: # only possible on some tasks?
   - 1
@@ -145,15 +146,22 @@ q2:
   stim_ratio_max: 1
   num_stim_ratio_levels: 7
 
-# sys ID
-########
-trials_for_sys_id: 50
+# task-specific parameters
+##########################
+task_params:
+  cycling:
+    t_intertrial_ms: 10
+    t_trial_ms: 100
+  reaching:
+    t_intertrial_ms: 10
+    t_trial_ms: 100
 
 # control
 #########
 Q: 1
 R: 0.1
-dt_ms: 1
+dt_ms: 5
+u_max_mWmm2: 75
 
 ctrl_horizon_ms: 50
 pred_horizon_ms: 100

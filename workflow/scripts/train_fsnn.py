@@ -5,11 +5,12 @@ import brian2.only as b2
 import numpy as np
 from cleo.coords import assign_coords_rand_rect_prism
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 from src.data_classes import fSNN
+from src.helpers import seed_everything
 
 
 def main(condition_vars, params, outfile):
+    seed_everything(int(condition_vars["seed"]), "train_fsnn")
     # TODO: calculate volume, num neurons per layer
     thickness = (
         params["layer_boundaries_um"][-1] - params["layer_boundaries_um"][0]
@@ -18,7 +19,7 @@ def main(condition_vars, params, outfile):
         condition_vars["network_area_scale"]
     )
     vol = (side_length_um * b2.um) ** 2 * thickness
-    n_ng = vol * (params["l5_neuron_density"] * b2.mm**-3)
+    n_ng = vol * (params["base_neuron_density"] * b2.mm**-3)
     print(f"side_length_um: {side_length_um}, volume: {vol}, n_ng: {n_ng}")
     ng = b2.NeuronGroup(n_ng, "dv/dt = -v / (10*ms) : 1")
     hor_lim = (-side_length_um / 2, side_length_um / 2)

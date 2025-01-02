@@ -2,30 +2,30 @@ import brian2.only as b2
 import cleo
 import numpy as np
 
-from src.data_classes import CleoExperiment, fSNN
+from src.data_classes import CleoPrep, fSNN
 from src.grouped_light import GroupedLight
 from src.interface_array import get_interface_array
 
 
-def main(cond_vars, params, fsnn_file, outfile):
+def main(cond_params, base_params, fsnn_file, outfile):
     fsnn = fSNN.load(fsnn_file)
     light_model = cleo.light.fiber473nm(
-        R0=float(cond_vars["beam_width_um"]) * b2.um / 2
+        R0=float(cond_params["beam_width_um"]) * b2.um / 2
     )
     grid = get_interface_array(
-        float(params["array_side_length_mm"]),
-        float(cond_vars["total_scale"]),
-        int(params["array_n_per_side"]),
+        float(base_params["array_side_length_mm"]),
+        float(cond_params["total_scale"]),
+        int(base_params["array_n_per_side"]),
     )
 
     # separate files so one can change without causing the other to be rerun
-    if cond_vars["setting"] == "sufficient_stim":
+    if cond_params["setting"] == "sufficient_stim":
         from src.cleo_prep_sufficient_stim import light_and_probe_coords
-    elif cond_vars["setting"] == "optimal-stim-rec":
+    elif cond_params["setting"] == "optimal-stim-rec":
         from src.cleo_prep_optimal_stim_rec import light_and_probe_coords
 
     light_coords, light_groups, probe_coords = light_and_probe_coords(
-        grid, int(cond_vars["k"])
+        grid, int(cond_params["k"])
     )
 
     array = GroupedLight(
@@ -43,7 +43,7 @@ def main(cond_vars, params, fsnn_file, outfile):
     else:
         probe = None
 
-    cleo_expt = CleoExperiment(fsnn, array, probe, sim)
+    cleo_expt = CleoPrep(fsnn, array, probe, sim)
     cleo_expt.save(outfile)
 
 

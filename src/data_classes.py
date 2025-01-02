@@ -1,4 +1,5 @@
 import pickle
+from typing import Self
 from dataclasses import dataclass
 
 import brian2.only as b2
@@ -13,7 +14,7 @@ class BaseDataClass:
             pickle.dump(self, f)
 
     @classmethod
-    def load(cls, filename):
+    def load(cls, filename) -> Self:
         with open(filename, "rb") as f:
             return pickle.load(f)
 
@@ -26,7 +27,7 @@ class fSNN(BaseDataClass):
 
 
 @dataclass
-class CleoExperiment(BaseDataClass):
+class CleoPrep(BaseDataClass):
     """fSNN wrapped with Cleo"""
 
     fsnn: fSNN

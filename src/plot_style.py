@@ -28,8 +28,8 @@ def style_plots(fontscale=5 / 6):
     except ImportError:
         plt.style.use("seaborn-v0_8-paper")
         warnings.warn("Seaborn not found, using matplotlib style, ignoring fontscale")
-
-    plt.rc("savefig", transparent=True, bbox="tight", dpi=300)
+    # keep white background for now, makes viewing and sharing easier, though harder for figure assembly
+    plt.rc("savefig", transparent=False, bbox="tight", dpi=300)
     plt.rc("svg", fonttype="none")
     plt.rc("axes.spines", top=False, right=False)
     plt.rc(
