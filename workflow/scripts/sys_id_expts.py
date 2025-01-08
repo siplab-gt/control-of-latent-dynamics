@@ -28,7 +28,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     expt_data = ExptData(
         U=cleo_prep.light.irradiance_,
-        Y=Y_true,
+        Y=cleo_prep.fsnn.state_mon.Y,
     )
     expt_data.save(outfile)
 

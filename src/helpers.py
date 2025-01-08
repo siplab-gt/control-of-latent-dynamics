@@ -15,7 +15,7 @@ def seed_everything(seed: int, extra_seed_str=""):
         String used to modify the base seed so that different steps in the pipeline
         don't use identical seeds, by default "".
     """
-    extra_seed_int = int("".join([ord(c) for c in extra_seed_str]))
+    extra_seed_int = sum(ord(c) for c in extra_seed_str)
     seed += extra_seed_int
     print(f"Seeding with {seed}")
     np.random.seed(seed)

@@ -1,28 +1,109 @@
-# TODO: restructure to condition parameters -> {grid, star, other}
-seed:
-  - 17230616
-  - 18051223
-  - 16320829
-  - 18060520
-  - 18220427
+###############################
+# condition parameters to sweep
+###############################
 
-task:
-  - cycling
-  - reaching
-  - integration
-  # - cycling_reaching
-  # - cycling_integration
-  # - reaching_integration
-  # - cycling_reaching_integration
+# to automatically sweep all combinations
+#########################################
+grid_sweep_conds:
+  seed:
+    - 17230616
+    - 18051223
+    - 16320829
+    - 18060520
+    - 18220427
 
-# more easily handled per control experiment, since different control methods would
-# all have the same dependencies
-control:
-  - OL
-  - LQMPC
+# exploratory vars to sweep one at a time in Q1, Q2
+# i.e., explore space in star pattern
+###################################################
+star_sweep_conds:
+  n_trials_sys_id:
+    - 10
+    - 50
+    - 100
+  latent_dim: # only possible on integration?
+    - 1
+    - 2
+    - 4
+    - 8
+    - 16
+  total_scale:
+    - 0.1
+    - 1
+    - 10
+  network_area_scale: # proportional to array area
+    - 1
+    - 2
+    - 3
+    - 4
+  beam_width_um:
+    - 10
+    - 50
+    - 100
+    - 200
+  beam_spacing:
+    - 0.5
+    - 1
+    - 2
+    - 5
+    - 10
+  connection_distance_penalty:
+    - 0
+    - 0.001
+    - 0.01
+    - 0.1
+  connection_l2_penalty:
+    - 0
+    - 0.001
+    - 0.01
+    - 0.1
+  # keep the same L4-L2/3-L5 structure everywhere, but alter weights
+  # single "layeredness" variable that controls both layer connectivity penalty
+  # and density variation by layer
+  layeredness:
+    - 0
+    - 0.33
+    - 0.67
+    - 1
+  dales_law:
+    - false
+    - true
 
-# parameters, used across conditions
-####################################
+# don't automatically sweep these, will be handled manually in Snakefile
+########################################################################
+manual_sweep_conds:
+  setting:
+    - sufficient_stim
+    - optimal_stim_rec
+  task:
+    - cycling
+    - reaching
+    - integration
+  control:
+    - OL
+    - LQMPC
+  k: "depends on setting"
+  m: "depends on setting"
+  latency:
+    - true
+    - false
+
+reference_conds:
+  n_trials_sys_id: 50
+  latent_dim: 2
+  total_scale: 1
+  network_area_scale: 2
+  beam_width_um: 100
+  beam_spacing: 2
+  connection_distance_penalty: 0.5
+  connection_l2_penalty: 0
+  layeredness: 0
+  dales_law: false
+  latency: true
+
+#########################################
+# base parameters, used across conditions
+#########################################
+
 power_per_neuron_uW: 1 # when normalizing power
 # L5 is the sparsest, serves as base.
 # from Narayanan 2017:
@@ -38,92 +119,8 @@ layer_boundaries_um:
   - 1450
 array_side_length_mm: 4
 array_n_per_side: 8
-
-# exploratory vars to sweep one at a time in Q1, Q2
-###################################################
-n_trials_sys_id:
-  - 10
-  # - 50
-  # - 100
-
-latent_dim: # only possible on some tasks?
-  - 1
-  - 2
-  - 4
-  - 8
-  - 16
-
-total_scale:
-  - 0.1
-  - 1
-  - 10
-
-network_area_scale: # proportional to array area
-  - 1
-  - 2
-  - 3
-  - 4
-
-beam_width_um:
-  - 10
-  - 50
-  - 100
-  - 200
-
-beam_spacing:
-  - 0.5
-  - 1
-  - 2
-  - 5
-  - 10
-
 connection_distance_penalty_max: 1
-# to multiply by the max
-connection_distance_penalty:
-  - 0
-  - 0.25
-  - 0.5
-  - 0.75
-  - 1
-
-connection_l2_penalty:
-  - 0
-  - 0.001
-  - 0.01
-  - 0.1
-
-# keep the same L4-L2/3-L5 structure everywhere, but alter weights
-# single "layeredness" variable that controls both layer connectivity penalty
-# and density variation by layer
 connection_layer_penalty_max: 0.1 # TODO
-layeredness:
-  - 0
-  - 0.33
-  - 0.67
-  - 1
-
-# connection_layer_penalty:
-#   - 0
-#   - 0.001
-#   - 0.01
-#   - 0.1
-
-dales_law:
-  - false
-  - true
-
-reference_configuration:
-  n_trials_sys_id: 50
-  latent_dim: 2
-  total_scale: 1
-  network_area_scale: 2
-  beam_width_um: 100
-  beam_spacing: 2
-  connection_distance_penalty: 0.5
-  connection_l2_penalty: 0
-  layeredness: 0
-  dales_law: false
-  latency: true
 
 # Q1: how many channels are good enough?
 ########################################
@@ -148,7 +145,7 @@ q2:
 
 # task-specific parameters
 ##########################
-task_params:
+task_specific:
   cycling:
     t_intertrial_ms: 10
     t_trial_ms: 100

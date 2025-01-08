@@ -24,6 +24,7 @@ class fSNN(BaseDataClass):
     net: b2.Network
     ng: b2.NeuronGroup
     syn: b2.Synapses
+    state_mon: b2.StateMonitor
 
 
 @dataclass
