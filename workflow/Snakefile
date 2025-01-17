@@ -9,12 +9,12 @@ import pandas as pd
 configfile: "config/config.yaml"
 
 
-TASKS = ["cycling", "reaching", "integration"]
-
-
 rule all:
     input:
-        expand("results/figs/sufficient_stim-{task}.svg", task=TASKS),
+        expand(
+            "results/figs/sufficient_stim-{task}.svg",
+            task=config["manual_sweep_conds"]["task"],
+        ),
         # "results/figs/stim-rec-balance.svg",
         # "results/figs/realism.svg",
 
@@ -24,8 +24,6 @@ cond_params = [
     for param_type in ["manual_sweep_conds", "grid_sweep_conds", "star_sweep_conds"]
     for param in config[param_type].keys()
 ]
-
-# all_vars = ["setting", "task", "seed", "control", "k", "m"] + sorted(exploratory_vars)
 
 params_str = "/".join(f"{par}_{{{par}}}" for par in cond_params)
 
@@ -44,7 +42,7 @@ def paths_for_params(file: list | str, **kwargs) -> str:
     )
 
 
-def params_from_cfg(*params: str, keep_parents=False) -> dict:
+def params_from_cfg(*params: str, keep_parents=False, get_children=False) -> dict:
     """easy way to get params from config dict. can go past first level with /"""
     result = {}
     for param in params:
@@ -57,7 +55,10 @@ def params_from_cfg(*params: str, keep_parents=False) -> dict:
                     d[key] = {}
                 d = d[key]
             subcfg = subcfg[key]
-        d[keys[-1]] = subcfg[keys[-1]]
+        if get_children:
+            d |= subcfg[keys[-1]]
+        else:
+            d[keys[-1]] = subcfg[keys[-1]]
     return result
 
 
@@ -80,7 +81,7 @@ rule test:
     output:
         "results/test/{file}",
     shell:
-        "cp {input} {output}"
+        "cp $(dirname {input})/* $(dirname {output})"
 
 
 rule sufficient_stim_fig:
@@ -176,18 +177,40 @@ rule plot_sys_id_data:
         "scripts/plot_sys_id_data.py"
 
 
+rule ln_sys_id_data:
+    """makes a symlink to the all-trials sys_id_data.pkl file for easier access"""
+    input:
+        paths_for_params("sys_id_data.pkl", n_trials_sys_id="all"),
+    output:
+        f"results/{params_str}/sys_id_data.pkl",
+    params:
+        path=paths_for_params("sys_id_data.pkl", n_trials_sys_id="all")[0],
+    shell:
+        "ln -s {params.path} {output}"
+
+
+def task_specific_params(wildcards):
+    # return {"foo": 42}
+    return params_from_cfg("task_specific", get_children=True)[wildcards["task"]]
+
+
 rule sys_id_expts:
     input:
         f"results/{params_str}/cleo_prep.pkl",
     params:
-        # **params_from_cfg("task_specific/{task}"),
-        lambda wc: params_from_cfg("task_specific")[wc["task"]],
+        task_specific_params,
+        # lambda wildcards: params_from_cfg("task_specific", get_children=True)[
+        #     wildcards["task"]
+        # ],
+        **params_from_cfg("u_max_mWmm2"),
         n_trials_sys_id_max=config["star_sweep_conds"]["n_trials_sys_id"][-1],
     output:
-        # f"results/{params_str}/sys_id_data.pkl",
+        f"results/{params_str}/sys_id_data.pkl",
         # just run once with maximum number of trials
         # split up later during fit
-        paths_for_params("sys_id_data.pkl", n_trials_sys_id="all"),
+        # paths_for_params("sys_id_data.pkl", n_trials_sys_id="all"),
+        # this produces an error. leave wildcard, but n_trials_sys_id='all' should
+        # be the only thing this rule produces
     script:
         "scripts/sys_id_expts.py"
 

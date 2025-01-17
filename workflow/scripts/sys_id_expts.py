@@ -8,11 +8,19 @@ from src.helpers import seed_everything
 
 
 def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
+    print(f"{base_params=}")
+    print(base_params.keys())
     seed = seed_everything(int(cond_params["seed"]), "sys_id_expts")
     rng = np.random.default_rng(seed)
 
     k = int(cond_params["k"])
     u_max = float(base_params["u_max_mWmm2"])
+    try:
+        print(f"{base_params.t_intertrial_ms=}")
+    except:
+        print("no base_params.t_intertrial_ms")
+        # TODO: unpack params
+        pass
 
     class SysIDProcessor(cleo.LatencyIOProcessor):
         def process(self, state_dict, t_samp):
@@ -20,11 +28,13 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     cleo_prep = CleoPrep.load(cleo_prep_file)
     cleo_prep.sim.set_io_processor(SysIDProcessor())
+    print("will print state mon keys")
+    print(f"{cleo_prep.fsnn.state_mon.Y=}")
     cleo_prep.sim.run(
-        float(base_params["sys_id_duration_s"]),
-        dt=float(base_params["sys_id_dt_s"]),
-        report_period=float(base_params["sys_id_report_period_s"]),
+        1 * b2.ms,  # TODO
+        report_period=50 * b2.second,
     )
+    print("successfully ran")
 
     expt_data = ExptData(
         U=cleo_prep.light.irradiance_,

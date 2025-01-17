@@ -1,9 +1,9 @@
-import pickle
 from typing import Self
 from dataclasses import dataclass
 
 import brian2.only as b2
 import cleo
+import dill
 import numpy as np
 from jaxtyping import Float, Int
 
@@ -11,12 +11,12 @@ from jaxtyping import Float, Int
 class BaseDataClass:
     def save(self, filename):
         with open(filename, "wb") as f:
-            pickle.dump(self, f)
+            dill.dump(self, f)
 
     @classmethod
     def load(cls, filename) -> Self:
         with open(filename, "rb") as f:
-            return pickle.load(f)
+            return dill.load(f)
 
 
 @dataclass

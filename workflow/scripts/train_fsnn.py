@@ -21,7 +21,9 @@ def main(cond_params, base_params, outfile):
     vol = (side_length_um * b2.um) ** 2 * thickness
     n_ng = vol * (base_params["base_neuron_density"] * b2.mm**-3)
     print(f"side_length_um: {side_length_um}, volume: {vol}, n_ng: {n_ng}")
-    ng = b2.NeuronGroup(n_ng, "dv/dt = -v / (10*ms) : 1")
+    ng = b2.NeuronGroup(
+        n_ng, "dv/dt = -v / (10*ms) : 1 \n dY/dt = -(Y + xi*sqrt(3*ms)) / (20*ms) : 1"
+    )
     hor_lim = (-side_length_um / 2, side_length_um / 2)
     assign_coords_rand_rect_prism(
         ng,
@@ -40,7 +42,10 @@ def main(cond_params, base_params, outfile):
     state_mon = b2.StateMonitor(ng, "Y", record=True)
 
     net = b2.Network(ng, syn, state_mon)
+    b2.prefs.codegen.target = "numpy"
+    net.run(1 * b2.ms)
     fsnn = fSNN(net, ng, syn, state_mon)
+    print(fsnn)
     fsnn.save(outfile)
     print(f"saved to {outfile}")
 
