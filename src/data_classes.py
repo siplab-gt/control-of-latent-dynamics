@@ -1,4 +1,5 @@
 from typing import Self
+import sys
 from dataclasses import dataclass
 
 import brian2.only as b2
@@ -15,6 +16,8 @@ class BaseDataClass:
 
     @classmethod
     def load(cls, filename) -> Self:
+        if b2.prefs.codegen.runtime.cython.cache_dir not in sys.path:
+            sys.path.append(b2.prefs.codegen.runtime.cython.cache_dir)
         with open(filename, "rb") as f:
             return dill.load(f)
 
@@ -25,6 +28,16 @@ class fSNN(BaseDataClass):
     ng: b2.NeuronGroup
     syn: b2.Synapses
     state_mon: b2.StateMonitor
+
+    def refresh_monitors_for_run(self) -> None:
+        """since weakref after unserializing breaks the monitors"""
+        state_mon2 = b2.StateMonitor(
+            self.ng, self.state_mon.recorded_variables, record=True
+        )
+        # state_mon2.set_states(self.state_mon.get_states())
+        self.net.remove(self.state_mon)
+        self.state_mon = state_mon2
+        self.net.add(state_mon2)
 
 
 @dataclass

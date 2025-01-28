@@ -24,9 +24,11 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     class SysIDProcessor(cleo.LatencyIOProcessor):
         def process(self, state_dict, t_samp):
-            return {"light array": rng.uniform(0, u_max, k) * b2.mwatt / b2.mm2}, t_samp
+            value = rng.uniform(0, u_max, k) * b2.mwatt / b2.mm2
+            return {"light array": value}, t_samp
 
     cleo_prep = CleoPrep.load(cleo_prep_file)
+    cleo_prep.fsnn.refresh_monitors_for_run()
     cleo_prep.sim.set_io_processor(SysIDProcessor())
     print("will print state mon keys")
     print(f"{cleo_prep.fsnn.state_mon.Y=}")

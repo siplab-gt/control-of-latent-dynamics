@@ -250,6 +250,9 @@ rule plot_fsnn:
     script:
         "scripts/plot_fsnn.py"
 
+# for verifying things like L2, spatial, layer penalties are working
+# rule plot_fsnn_weights:
+    # ...
 
 rule train_fsnn:
     output:

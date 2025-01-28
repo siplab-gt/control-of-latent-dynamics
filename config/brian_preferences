@@ -1,0 +1,2 @@
+codegen.runtime.cython.cache_dir = "resources/cython_cache"
+codegen.runtime.cython.multiprocess_safe = False

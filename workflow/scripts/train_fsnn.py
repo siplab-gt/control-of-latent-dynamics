@@ -42,7 +42,7 @@ def main(cond_params, base_params, outfile):
     state_mon = b2.StateMonitor(ng, "Y", record=True)
 
     net = b2.Network(ng, syn, state_mon)
-    b2.prefs.codegen.target = "numpy"
+    b2.prefs.codegen.target = "cython"
     net.run(1 * b2.ms)
     fsnn = fSNN(net, ng, syn, state_mon)
     print(fsnn)
