@@ -1,13 +1,38 @@
 import os
 import sys
+from dataclasses import dataclass
 
 import brian2.only as b2
 import brian2cuda  # noqa: F401
 import numpy as np
 from cleo.coords import assign_coords_rand_rect_prism
 
-from src.data_classes import fSNN
+from src.data_classes import BaseDataClass
 from src.helpers import seed_everything
+
+
+@dataclass
+class fSNN(BaseDataClass):
+    net: b2.Network
+    ng: b2.NeuronGroup
+    syn: b2.Synapses
+    state_mon: b2.StateMonitor
+
+    def refresh_monitors_for_run(self) -> None:
+        """since weakref after unserializing breaks the monitors"""
+        state_mon2 = b2.StateMonitor(
+            self.ng, self.state_mon.recorded_variables, record=True
+        )
+        # state_mon2.set_states(self.state_mon.get_states())
+        self.net.remove(self.state_mon)
+        self.state_mon = state_mon2
+        self.net.add(state_mon2)
+
+    def sample_condition(self, rng: np.random.Generator) -> int:
+        return rng.choice(8)
+
+    def set_condition(self, condition):
+        self.ng.condition = condition
 
 
 def main(cond_params, base_params, outfile):
