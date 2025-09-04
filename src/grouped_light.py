@@ -5,6 +5,7 @@ import cleo
 import cleo.light
 import numpy as np
 from attrs import define, field
+from brian2 import Quantity, mm2, mwatt
 
 
 @define(eq=False)
@@ -57,8 +58,31 @@ class GroupedLight(cleo.light.Light):
 
         # values are stored as irradiance with mW/mm2 stripped
         super(cleo.light.Light, self).update(irr0_grouped / (b2.mwatt / b2.mm2))
-        irr0_ungrouped = np.zeros(len(self.coords))
+        irr0_ungrouped = np.zeros(len(self.coords)) * mwatt / mm2
         for i, group in enumerate(self.groups):
             irr0_ungrouped[group] = irr0_grouped[i]
         if self.source is not None:
             self.source.Irr0 = irr0_ungrouped
+
+    def _preprocess_value(self, value: Quantity) -> Quantity:
+        """ensures value is a 1D, n-length Quantity of proper units"""
+        if isinstance(value, (int, float)) and value == 0:
+            value = 0 * mwatt / mm2
+        elif not isinstance(value, Quantity):
+            raise ValueError(
+                f"Input to light must be a Quantity. Got {type(value)} instead."
+            )
+        if np.shape(value) not in [(), (1,), (self.n_groups,)]:
+            raise ValueError(
+                f"Input to light must be a scalar or an array of"
+                f" length {self.n_groups}. Got {value.shape} instead."
+            )
+        if len(np.shape(value)) == 0:
+            unit = value.get_best_unit()
+            value = np.broadcast_to(value / unit, (self.n_groups,)) * unit
+        if not (cleo.light.light._is_power(value) or cleo.light.light._is_irr(value)):
+            raise ValueError(
+                f"Input to light must be in units of power or irradiance."
+                f" Got {value.dim} instead."
+            )
+        return value

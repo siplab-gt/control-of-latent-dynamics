@@ -8,3 +8,4 @@ logs/**
 *.pyc
 report*.html
 .vscode/**
+**/output

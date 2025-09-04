@@ -12,5 +12,5 @@ def light_and_probe_coords(
 ) -> tuple[Quantity, Float[np.ndarray, "k 3"], Quantity]:
     coords = grid
     groups = np.arange(len(coords)).reshape(k, -1)
-    probe_coords = None
+    probe_coords = grid
     return coords, groups, probe_coords

@@ -90,7 +90,7 @@ rule sufficient_stim_fig:
     output:
         "results/figs/sufficient_stim-{task}.svg",
     script:
-        "scripts/sufficient_stim_fig.py"
+        "../src/scripts/sufficient_stim_fig.py"
 
 
 rule sufficient_stim_tabulate:
@@ -159,38 +159,28 @@ rule ctrl_expts:
         # or a CtrlData dataclass
 
 
+n_trials_sys_id_max = config["star_sweep_conds"]["n_trials_sys_id"][-1]
+
+
 rule sys_id_fit:
     input:
-        paths_for_params("sys_id_data.pkl", n_trials_sys_id="all"),
+        paths_for_params("sys_id_data.pkl", n_trials_sys_id=n_trials_sys_id_max),
     output:
         f"results/{params_str}/dpad_model.pkl",
 
 
 rule plot_sys_id_data:
     input:
-        paths_for_params("sys_id_data.pkl", n_trials_sys_id="all"),
+        paths_for_params("sys_id_data.pkl", n_trials_sys_id=n_trials_sys_id_max),
         "src/plot_style.py",
     output:
         multiext(f"results/{params_str}/sys_id_plot", ".png", ".svg"),
     localrule: True
     script:
-        "scripts/plot_sys_id_data.py"
-
-
-rule ln_sys_id_data:
-    """makes a symlink to the all-trials sys_id_data.pkl file for easier access"""
-    input:
-        paths_for_params("sys_id_data.pkl", n_trials_sys_id="all"),
-    output:
-        f"results/{params_str}/sys_id_data.pkl",
-    params:
-        path=paths_for_params("sys_id_data.pkl", n_trials_sys_id="all")[0],
-    shell:
-        "ln -s {params.path} {output}"
+        "../src/scripts/plot_sys_id_data.py"
 
 
 def task_specific_params(wildcards):
-    # return {"foo": 42}
     return params_from_cfg("task_specific", get_children=True)[wildcards["task"]]
 
 
@@ -198,12 +188,9 @@ rule sys_id_expts:
     input:
         f"results/{params_str}/cleo_prep.pkl",
     params:
-        task_specific_params,
-        # lambda wildcards: params_from_cfg("task_specific", get_children=True)[
-        #     wildcards["task"]
-        # ],
         **params_from_cfg("u_max_mWmm2"),
-        n_trials_sys_id_max=config["star_sweep_conds"]["n_trials_sys_id"][-1],
+        task_specific=task_specific_params,
+        # n_trials_sys_id_max=config["star_sweep_conds"]["n_trials_sys_id"][-1],
     output:
         f"results/{params_str}/sys_id_data.pkl",
         # just run once with maximum number of trials
@@ -212,7 +199,7 @@ rule sys_id_expts:
         # this produces an error. leave wildcard, but n_trials_sys_id='all' should
         # be the only thing this rule produces
     script:
-        "scripts/sys_id_expts.py"
+        "../src/scripts/sys_id_expts.py"
 
 
 rule plot_cleo:
@@ -223,7 +210,7 @@ rule plot_cleo:
         multiext(f"results/{params_str}/cleo_plot", ".png", ".svg"),
     localrule: True
     script:
-        "scripts/plot_cleo.py"
+        "../src/scripts/plot_cleo.py"
 
 
 rule cleo_prep:
@@ -237,7 +224,7 @@ rule cleo_prep:
     output:
         f"results/{params_str}/cleo_prep.pkl",
     script:
-        "scripts/cleo_prep.py"
+        "../src/scripts/cleo_prep.py"
 
 
 rule plot_fsnn:
@@ -248,7 +235,12 @@ rule plot_fsnn:
         f"results/{params_str}/fsnn_plot.png",
     localrule: True
     script:
-        "scripts/plot_fsnn.py"
+        "../src/scripts/plot_fsnn.py"
+
+
+# for verifying things like L2, spatial, layer penalties are working
+# rule plot_fsnn_weights:
+# ...
 
 
 rule train_fsnn:
@@ -264,7 +256,7 @@ rule train_fsnn:
     log:
         **standard_log_kwargs("train_fsnn"),
     script:
-        "scripts/train_fsnn.py"
+        "../src/scripts/train_fsnn.py"
 
 
 rule plot_schematic:
@@ -284,4 +276,4 @@ rule plot_schematic:
             "array_n_per_side",
         ),
     script:
-        "scripts/plot_schematic.py"
+        "../src/scripts/plot_schematic.py"

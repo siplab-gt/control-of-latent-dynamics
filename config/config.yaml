@@ -75,9 +75,9 @@ manual_sweep_conds:
     - sufficient_stim
     - optimal_stim_rec
   task:
-    - cycling
+    # - cycling
     - reaching
-    - integration
+    # - integration
   control:
     - OL
     - LQMPC
