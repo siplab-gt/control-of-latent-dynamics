@@ -29,12 +29,21 @@ class ExptData(BaseDataClass):
         Float[np.ndarray, "T k"], Float[np.ndarray, "T n"], Float[np.ndarray, "T"]
     ]:
         """Get the control input, experimental measurements, and time for a specific trial."""
-        start = self.i_trial_starts[trial_idx]
-        end = self.i_trial_ends[trial_idx]
+        start, end = self.i_trial_boundaries[trial_idx]
         return self.U[start:end], self.Y[start:end], self.t_ms[start:end]
 
 
 def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
+    if False:
+        import debugpy
+
+        # The port number here must match the port in your launch.json file
+        debugpy.listen(("localhost", 5678))
+
+        print("Waiting for debugger attach...")
+        debugpy.wait_for_client()
+        print("Debugger attached!")
+
     print(f"{base_params=}")
     print(base_params.keys())
     seed = seed_everything(int(cond_params["seed"]), "sys_id_expts")
@@ -42,24 +51,25 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     k = int(cond_params["k"])
     u_max = float(base_params["u_max_mWmm2"])
-    t_intertrial_ms = float(base_params.task_specific["t_intertrial_ms"]) // 10 + 0.1
-    t_trial_ms = float(base_params.task_specific["t_trial_ms"]) // 10 + 0.1
+    t_intertrial_ms = float(base_params.task_specific["t_intertrial_ms"]) // 5 + 0.1
+    t_trial_ms = float(base_params.task_specific["t_trial_ms"]) // 5 + 0.1
     n_trials = int(cond_params["n_trials_sys_id"])
+
+    cleo_prep = CleoPrep.load(cleo_prep_file)
+    cleo_prep.reset()
 
     class SysIDProcessor(cleo.LatencyIOProcessor):
         def process(self, state_dict, t_samp):
             value = rng.uniform(0, u_max, k) * b2.mwatt / b2.mm2
             return {"light array": value}, t_samp
 
-    cleo_prep = CleoPrep.load(cleo_prep_file)
-    cleo_prep.reset()
-    print(b2.defaultclock.t)
-    print(cleo_prep.light.t)
     cleo_prep.sim.set_io_processor(SysIDProcessor())
     # b2.prefs.codegen.target = "cython"
     conditions = []
     i_trial_boundaries = []
     for i_trial in range(n_trials):
+        # for i_trial in range(8):
+        print(f"running trial {i_trial}")
         cleo_prep.sim.run(
             t_intertrial_ms * b2.ms,  # TODO
             report_period=50 * b2.second,
@@ -73,14 +83,12 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         i_trial_boundaries.append((i_start, i_end))
     print("successfully ran")
 
-    # if using monitor, downsample to light time
-    i_mon_to_keep = np.searchsorted(cleo_prep.fsnn.state_mon.t, cleo_prep.light.t)
-    print(np.max(cleo_prep.fsnn.state_mon.t / b2.second))
-    print(cleo_prep.light.t.max())
+    # skip first sample from Cleo devices since there's a repeat after reset
+    assert np.all(cleo_prep.light.t[1:] == cleo_prep.fsnn.state_mon.t)
 
     expt_data = ExptData(
-        U=cleo_prep.light.irradiance_,
-        Y=cleo_prep.fsnn.state_mon.Y.T[i_mon_to_keep],
+        U=cleo_prep.light.irradiance_[1:],
+        Y=cleo_prep.fsnn.state_mon.Y.T[:, :10],
         t_ms=cleo_prep.fsnn.state_mon.t / b2.ms,
         i_trial_boundaries=i_trial_boundaries,
     )

@@ -174,7 +174,7 @@ rule plot_sys_id_data:
         paths_for_params("sys_id_data.pkl", n_trials_sys_id=n_trials_sys_id_max),
         "src/plot_style.py",
     output:
-        multiext(f"results/{params_str}/sys_id_plot", ".png", ".svg"),
+        multiext(f"results/{params_str}/sys_id_plot", ".png"),
     localrule: True
     script:
         "../src/scripts/plot_sys_id_data.py"
@@ -240,12 +240,17 @@ rule plot_fsnn:
 
 # for verifying things like L2, spatial, layer penalties are working
 # rule plot_fsnn_weights:
-# ...
+#     output:
+#         f"results/{params_str}/fsnn_weights_plot.png",
+#         f"results/{params_str}/fsnn_weights_plot.svg",
+#     script:
+#         "../src/scripts/plot_fsnn_weights.py"
 
 
 rule train_fsnn:
     output:
         f"results/{params_str}/trained_fsnn.pkl",
+        # f"results/{params_str}/small_worldness.pkl",
     params:
         **params_from_cfg(
             "base_neuron_density",

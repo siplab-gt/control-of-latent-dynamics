@@ -20,8 +20,10 @@ class fSNN(BaseDataClass):
 
     def refresh_monitors_for_run(self) -> None:
         """since weakref after unserializing breaks the monitors"""
+        new_clock = b2.Clock(dt=self.state_mon.clock.dt)
+        new_clock._set_t_update_dt(self.state_mon.clock.variables["t"].get_value())
         state_mon2 = b2.StateMonitor(
-            self.ng, self.state_mon.recorded_variables, record=True
+            self.ng, self.state_mon.recorded_variables, record=True, clock=new_clock
         )
         # state_mon2.set_states(self.state_mon.get_states())
         self.net.remove(self.state_mon)
@@ -35,11 +37,11 @@ class fSNN(BaseDataClass):
         self.ng.condition = condition
 
 
-def main(cond_params, base_params, outfile):
+def main(cond_params, base_params, fsnn_outfile):
     seed = seed_everything(int(cond_params["seed"]), "train_fsnn")
     rng = np.random.default_rng(seed)
 
-    outdir = os.path.dirname(outfile)
+    outdir = os.path.dirname(fsnn_outfile)
     # b2.prefs.codegen.target = "cython"
     b2.set_device("cuda_standalone", build_on_run=False)
 
@@ -79,7 +81,7 @@ def main(cond_params, base_params, outfile):
     syn.w = 0.5
 
     print(f"{ng.N=}")
-    state_mon = b2.StateMonitor(ng, "Y", record=np.arange(n_ng))
+    state_mon = b2.StateMonitor(ng, "Y", record=np.arange(n_ng), dt=1 * b2.ms)
 
     net = b2.Network(ng, syn, state_mon)
     net.run(1 * b2.ms)
@@ -96,8 +98,8 @@ def main(cond_params, base_params, outfile):
     print("done running")
     fsnn = fSNN(net, ng, syn, state_mon)
     print(fsnn)
-    fsnn.save(outfile)
-    print(f"saved to {outfile}")
+    fsnn.save(fsnn_outfile)
+    print(f"saved to {fsnn_outfile}")
 
 
 if __name__ == "__main__" and "snakemake" in locals():

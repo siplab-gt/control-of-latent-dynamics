@@ -24,6 +24,7 @@ class CleoPrep(BaseDataClass):
         self.fsnn.refresh_monitors_for_run()
         self.light.reset()
         self.probe.reset()
+        assert self.fsnn.net == self.sim.network
 
 
 def main(cond_params, base_params, fsnn_file, outfile):
@@ -62,7 +63,6 @@ def main(cond_params, base_params, fsnn_file, outfile):
     else:
         probe = None
 
-    print(probe)
     cleo_expt = CleoPrep(fsnn, array, probe, sim)
     cleo_expt.save(outfile)
 
