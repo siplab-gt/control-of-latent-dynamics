@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 from typing import Self
+from dataclasses import dataclass
 
 import brian2.only as b2
 import cleo
@@ -17,6 +17,24 @@ class BaseDataClass:
     def load(cls, filename) -> Self:
         with open(filename, "rb") as f:
             return dill.load(f)
+
+
+@dataclass
+class fSNN(BaseDataClass):
+    net: b2.Network
+    ng: b2.NeuronGroup
+    syn: b2.Synapses
+    state_mon: b2.StateMonitor
+
+
+@dataclass
+class CleoPrep(BaseDataClass):
+    """fSNN wrapped with Cleo"""
+
+    fsnn: fSNN
+    light: cleo.light.Light
+    probe: cleo.ephys.Probe
+    sim: cleo.CLSimulator
 
 
 @dataclass

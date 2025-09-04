@@ -1,34 +1,21 @@
-from dataclasses import dataclass
-
 import brian2.only as b2
 import cleo
 import numpy as np
 
-from src.fsnn import fSNN
+from src.data_classes import CleoPrep, fSNN
 from src.grouped_light import GroupedLight
-from src.helpers import seed_everything
 from src.interface_array import get_interface_array
 
 
-@dataclass
-class CleoPrep:
-    """fSNN wrapped with Cleo"""
-
-    fsnn: fSNN
-    light_array: cleo.light.Light
-    elec_array: cleo.ephys.Probe
-    sim: cleo.CLSimulator
-
-
-def cleo_prep(fsnn: fSNN, cond_params: dict, config: dict) -> CleoPrep:
-    seed_everything(int(cond_params["seed"]), "cleo_prep")
+def main(cond_params, base_params, fsnn_file, outfile):
+    fsnn = fSNN.load(fsnn_file)
     light_model = cleo.light.fiber473nm(
         R0=float(cond_params["beam_width_um"]) * b2.um / 2
     )
     grid = get_interface_array(
-        float(config["array_side_length_mm"]),
+        float(base_params["array_side_length_mm"]),
         float(cond_params["total_scale"]),
-        int(config["array_n_per_side"]),
+        int(base_params["array_n_per_side"]),
     )
 
     # separate files so one can change without causing the other to be rerun
@@ -41,19 +28,26 @@ def cleo_prep(fsnn: fSNN, cond_params: dict, config: dict) -> CleoPrep:
         grid, int(cond_params["k"])
     )
 
-    light_array = GroupedLight(
+    array = GroupedLight(
         name="light array",
         coords=light_coords,
         groups=light_groups,
         light_model=light_model,
     )
     sim = cleo.CLSimulator(fsnn.net)
-    sim.inject(light_array, fsnn.ng)
+    sim.inject(array, fsnn.ng)
 
     if probe_coords:
-        probe = cleo.ephys.Probe(probe_coords, name="elec array")
+        probe = cleo.ephys.Probe(probe_coords)
         sim.inject(probe, fsnn.ng)
     else:
         probe = None
 
-    return CleoPrep(fsnn, light_array, probe, sim)
+    cleo_expt = CleoPrep(fsnn, array, probe, sim)
+    cleo_expt.save(outfile)
+
+
+if __name__ == "__main__" and "snakemake" in locals():
+    from snakemake.script import snakemake
+
+    main(snakemake.wildcards, snakemake.params, snakemake.input[0], snakemake.output[0])

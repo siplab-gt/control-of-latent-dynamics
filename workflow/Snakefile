@@ -217,8 +217,7 @@ rule sys_id_expts:
 
 rule plot_cleo:
     input:
-        f"results/{params_str}/trained_fsnn.b2store.pkl",
-        f"results/{params_str}/cleo_prep.dependencies",
+        f"results/{params_str}/cleo_prep.pkl",
         "src/plot_style.py",
     output:
         multiext(f"results/{params_str}/cleo_plot", ".png", ".svg"),
@@ -227,37 +226,34 @@ rule plot_cleo:
         "scripts/plot_cleo.py"
 
 
-# dummy rule mainly to keep track of dependencies for the cleo configuration
-# in a convenient way; can be used as input to other rules
-# will need for plot_cleo, sys_id_expts, ctrl_expts
 rule cleo_prep:
     input:
-        f"results/{params_str}/trained_fsnn.b2store.pkl",
-        "src/cleo_prep.py",
-        "src/cleo_prep_{setting}.py",
+        f"results/{params_str}/trained_fsnn.pkl",
         "src/grouped_light.py",
+        "src/cleo_prep_{setting}.py",
         "src/interface_array.py",
     params:
         **params_from_cfg("array_side_length_mm", "array_n_per_side"),
     output:
-        touch(f"results/{params_str}/cleo_prep.dependencies")
-
-# TODO: compile once for cython first?
-
-rule plot_fsnn_training:
-    input:
-        f"results/{params_str}/trained_fsnn.b2store.pkl"
-    output:
-        f"results/{params_str}/training_data_plot.png",
+        f"results/{params_str}/cleo_prep.pkl",
     script:
-        "scripts/plot_fsnn_training.py"
+        "scripts/cleo_prep.py"
+
+
+rule plot_fsnn:
+    input:
+        f"results/{params_str}/trained_fsnn.pkl",
+        "src/plot_style.py",
+    output:
+        f"results/{params_str}/fsnn_plot.png",
+    localrule: True
+    script:
+        "scripts/plot_fsnn.py"
 
 
 rule train_fsnn:
-    input:
-        "src/fsnn.py"
     output:
-        f"results/{params_str}/trained_fsnn.b2store.pkl",
+        f"results/{params_str}/trained_fsnn.pkl",
     params:
         **params_from_cfg(
             "base_neuron_density",
@@ -269,18 +265,6 @@ rule train_fsnn:
         **standard_log_kwargs("train_fsnn"),
     script:
         "scripts/train_fsnn.py"
-
-# TODO: compile once for CUDA first?
-
-rule plot_fsnn:
-    input:
-        "src/fsnn.py",
-        "src/plot_style.py",
-    output:
-        f"results/{params_str}/fsnn_plot.png",
-    localrule: True
-    script:
-        "scripts/plot_fsnn.py"
 
 
 rule plot_schematic:
