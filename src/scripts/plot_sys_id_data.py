@@ -11,17 +11,23 @@ def main(cond_params, base_params, data_file, outfiles):
     trials_per_row = 4
     rows = (n_trials + trials_per_row - 1) // trials_per_row
     fig = plt.figure(figsize=(trials_per_row * 2, 4 * rows))
-    subfigs = fig.subfigures(rows, trials_per_row)
+    subfigs = fig.subfigures(rows, 1)
 
-    # TODO: plot all at once instead, with different trials as different lines on same axis
-    # MAYBE NOT
-    for i in range(n_trials):
-        subfig = subfigs.flatten()[i]
-        ax_U, ax_Y = subfig.subplots(nrows=2, ncols=1)
-        print(f"plotting trial {i}")
-        U, Y, t_ms = expt_data.get_trial_UYt(i)
-        ax_U.plot(t_ms, U)
-        ax_Y.plot(t_ms, Y)
+    for row in range(rows):
+        subfig = subfigs[row]
+        axs_Y, axs_U = subfig.subplots(2, trials_per_row, sharex="col", sharey="row")
+        axs_Y[0].set(ylabel="Y (a.u.)")
+        axs_U[0].set(ylabel="U (mW/mm²)")
+        for col in range(trials_per_row):
+            i = row * trials_per_row + col
+            if i >= n_trials:
+                break
+            print(f"plotting trial {i}")
+            U, Y, t_ms = expt_data.get_trial_UYt(i)
+            axs_U[col].plot(t_ms, U)
+            axs_Y[col].plot(t_ms, Y)
+            axs_Y[col].set(title=f"trial {i}")
+            axs_U[col].set(xlabel="t (ms)")
 
     for f in outfiles:
         fig.savefig(f)
