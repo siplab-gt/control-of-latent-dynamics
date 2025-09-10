@@ -104,6 +104,8 @@ reference_conds:
 # base parameters, used across conditions
 #########################################
 
+train_device: cython
+
 power_per_neuron_uW: 1 # when normalizing power
 # L5 is the sparsest, serves as base.
 # from Narayanan 2017:

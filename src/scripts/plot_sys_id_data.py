@@ -12,6 +12,8 @@ def main(cond_params, base_params, data_file, outfiles):
     rows = (n_trials + trials_per_row - 1) // trials_per_row
     fig = plt.figure(figsize=(trials_per_row * 2, 4 * rows))
     subfigs = fig.subfigures(rows, 1)
+    if rows == 1:
+        subfigs = [subfigs]
 
     for row in range(rows):
         subfig = subfigs[row]
@@ -22,7 +24,7 @@ def main(cond_params, base_params, data_file, outfiles):
             i = row * trials_per_row + col
             if i >= n_trials:
                 break
-            print(f"plotting trial {i}")
+            print(f"plotting sys ID trial {i}")
             U, Y, t_ms = expt_data.get_trial_UYt(i)
             axs_U[col].plot(t_ms, U)
             axs_Y[col].plot(t_ms, Y)

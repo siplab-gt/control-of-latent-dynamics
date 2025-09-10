@@ -169,6 +169,7 @@ rule sys_id_fit:
         f"results/{params_str}/dpad_model.pkl",
 
 
+# TODO: only get sys ID data for latency=False, control="OL" (or "None"?), etc.
 rule plot_sys_id_data:
     input:
         paths_for_params("sys_id_data.pkl", n_trials_sys_id=n_trials_sys_id_max),

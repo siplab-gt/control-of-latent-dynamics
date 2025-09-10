@@ -4,6 +4,7 @@ import brian2.only as b2
 import cleo
 import numpy as np
 from jaxtyping import Float, UInt
+from matplotlib import pyplot as plt
 
 from src.data_classes import BaseDataClass
 from src.helpers import seed_everything
@@ -34,16 +35,6 @@ class ExptData(BaseDataClass):
 
 
 def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
-    if False:
-        import debugpy
-
-        # The port number here must match the port in your launch.json file
-        debugpy.listen(("localhost", 5678))
-
-        print("Waiting for debugger attach...")
-        debugpy.wait_for_client()
-        print("Debugger attached!")
-
     print(f"{base_params=}")
     print(base_params.keys())
     seed = seed_everything(int(cond_params["seed"]), "sys_id_expts")
@@ -51,8 +42,8 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     k = int(cond_params["k"])
     u_max = float(base_params["u_max_mWmm2"])
-    t_intertrial_ms = float(base_params.task_specific["t_intertrial_ms"]) // 5 + 0.1
-    t_trial_ms = float(base_params.task_specific["t_trial_ms"]) // 5 + 0.1
+    t_intertrial_ms = float(base_params.task_specific["t_intertrial_ms"]) // 5
+    t_trial_ms = float(base_params.task_specific["t_trial_ms"]) // 5
     n_trials = int(cond_params["n_trials_sys_id"])
 
     cleo_prep = CleoPrep.load(cleo_prep_file)
@@ -67,19 +58,18 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     # b2.prefs.codegen.target = "cython"
     conditions = []
     i_trial_boundaries = []
-    for i_trial in range(n_trials):
-        # for i_trial in range(8):
-        print(f"running trial {i_trial}")
-        cleo_prep.sim.run(
+    for i_trial in range(4):
+        print(f"running sys ID trial {i_trial}")
+        cleo_prep.run(
             t_intertrial_ms * b2.ms,  # TODO
             report_period=50 * b2.second,
         )
-        i_start = len(cleo_prep.light.irradiance_)
+        i_start = cleo_prep.fsnn.state_mon.Y.shape[1]
         condition = cleo_prep.fsnn.sample_condition(rng)
         cleo_prep.fsnn.set_condition(condition)
         conditions.append(condition)
         cleo_prep.sim.run(t_trial_ms * b2.ms, report_period=50 * b2.second)
-        i_end = len(cleo_prep.light.irradiance_)
+        i_end = cleo_prep.fsnn.state_mon.Y.shape[1]
         i_trial_boundaries.append((i_start, i_end))
     print("successfully ran")
 
@@ -93,6 +83,9 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         i_trial_boundaries=i_trial_boundaries,
     )
     expt_data.save(outfile)
+
+    plt.plot(cleo_prep.fsnn.v_mon.t / b2.ms, cleo_prep.fsnn.v_mon.v.T / b2.mV)
+    plt.savefig(outfile.replace(".pkl", "_v.png"))
 
 
 if __name__ == "__main__" and "snakemake" in locals():
