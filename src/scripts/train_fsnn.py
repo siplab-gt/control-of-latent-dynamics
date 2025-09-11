@@ -6,6 +6,7 @@ import brian2.only as b2
 import brian2cuda  # noqa: F401
 import numpy as np
 from cleo.coords import assign_coords_rand_rect_prism
+from matplotlib import pyplot as plt
 
 from src.data_classes import BaseDataClass
 from src.helpers import seed_everything
@@ -73,6 +74,7 @@ def main(cond_params, base_params, train_device, fsnn_outfile):
         Iopto_inh : amp
         condition : 1
         """,
+        threshold="v > -50*mvolt",
     )
     hor_lim = (-side_length_um / 2, side_length_um / 2)
     assign_coords_rand_rect_prism(

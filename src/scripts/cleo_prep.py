@@ -17,14 +17,29 @@ class CleoPrep(BaseDataClass):
     fsnn: fSNN
     light: cleo.light.Light
     probe: cleo.ephys.Probe
+    mua: cleo.ephys.MultiUnitActivity
     sim: cleo.CLSimulator
 
     def reset(self):
         """Resets monitors and device histories for fresh run (without changing network state)"""
         self.fsnn.refresh_monitors_for_run()
+        self.refresh_monitors_for_run()
         self.light.reset()
         self.probe.reset()
         assert self.fsnn.net == self.sim.network
+
+    def refresh_monitors_for_run(self) -> None:
+        """since weakref after unserializing breaks the monitors"""
+        # spkmon in MUA
+        assert len(self.mua._monitors) == 1
+        spkmon = self.mua._monitors[0]
+        new_spkmon = b2.SpikeMonitor(spkmon.source)
+        self.fsnn.net.remove(spkmon)
+        self.mua._monitors[0] = new_spkmon
+        self.fsnn.net.add(new_spkmon)
+
+    def run(self, dt, *args, **kwargs):
+        self.sim.run(dt, *args, **kwargs)
 
 
 def main(cond_params, base_params, fsnn_file, outfile):
@@ -48,22 +63,23 @@ def main(cond_params, base_params, fsnn_file, outfile):
         grid, int(cond_params["k"])
     )
 
-    array = GroupedLight(
+    light_array = GroupedLight(
         name="light array",
         coords=light_coords,
         groups=light_groups,
         light_model=light_model,
     )
     sim = cleo.CLSimulator(fsnn.net)
-    sim.inject(array, fsnn.ng)
+    sim.inject(light_array, fsnn.ng)
 
     if probe_coords is not None:
-        probe = cleo.ephys.Probe(probe_coords)
+        mua = cleo.ephys.MultiUnitActivity(name="mua")
+        probe = cleo.ephys.Probe(probe_coords, signals=[mua])
         sim.inject(probe, fsnn.ng)
     else:
         probe = None
 
-    cleo_expt = CleoPrep(fsnn, array, probe, sim)
+    cleo_expt = CleoPrep(fsnn, light_array, probe, mua, sim)
     cleo_expt.save(outfile)
 
 

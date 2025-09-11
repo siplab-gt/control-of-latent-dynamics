@@ -19,6 +19,8 @@ class ExptData(BaseDataClass):
     """Control input in mW/mm2, shape (T, k) array"""
     Y: Float[np.ndarray, "T n"]
     """Experimental measurements, shape (T, n) array"""
+    spikes: UInt[np.ndarray, "T m"]
+    """Spike counts across channels, shape (T, m) array"""
     t_ms: Float[np.ndarray, "T"]
     """Time in ms, shape (T,) array"""
     i_trial_boundaries: UInt[np.ndarray, "n_trials 2"]
@@ -49,8 +51,12 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     cleo_prep = CleoPrep.load(cleo_prep_file)
     cleo_prep.reset()
 
+    spike_counts = []
+
     class SysIDProcessor(cleo.LatencyIOProcessor):
         def process(self, state_dict, t_samp):
+            t, i, counts = state_dict["Probe"]["mua"]
+            spike_counts.append(counts)
             value = rng.uniform(0, u_max, k) * b2.mwatt / b2.mm2
             return {"light array": value}, t_samp
 
@@ -68,10 +74,16 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         condition = cleo_prep.fsnn.sample_condition(rng)
         cleo_prep.fsnn.set_condition(condition)
         conditions.append(condition)
-        cleo_prep.sim.run(t_trial_ms * b2.ms, report_period=50 * b2.second)
+        cleo_prep.run(t_trial_ms * b2.ms, report_period=50 * b2.second)
         i_end = cleo_prep.fsnn.state_mon.Y.shape[1]
         i_trial_boundaries.append((i_start, i_end))
     print("successfully ran")
+
+    spike_count_array = np.array(spike_counts)
+    assert spike_count_array.shape == (
+        len(cleo_prep.fsnn.state_mon.t),
+        cleo_prep.probe.signals[0].n,
+    )
 
     # skip first sample from Cleo devices since there's a repeat after reset
     assert np.all(cleo_prep.light.t[1:] == cleo_prep.fsnn.state_mon.t)
@@ -79,6 +91,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     expt_data = ExptData(
         U=cleo_prep.light.irradiance_[1:],
         Y=cleo_prep.fsnn.state_mon.Y.T[:, :10],
+        spikes=spike_count_array,
         t_ms=cleo_prep.fsnn.state_mon.t / b2.ms,
         i_trial_boundaries=i_trial_boundaries,
     )
