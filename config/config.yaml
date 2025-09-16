@@ -67,6 +67,12 @@ star_sweep_conds:
   dales_law:
     - false
     - true
+  n_pcs:
+    - 1
+    - 5
+    - 10
+    - 15
+    - 20
 
 # don't automatically sweep these, will be handled manually in Snakefile
 ########################################################################
@@ -99,6 +105,7 @@ reference_conds:
   layeredness: 0
   dales_law: false
   latency: true
+  n_pcs: 20
 
 #########################################
 # base parameters, used across conditions
@@ -152,8 +159,17 @@ task_specific:
     t_intertrial_ms: 10
     t_trial_ms: 100
   reaching:
-    t_intertrial_ms: 10
-    t_trial_ms: 100
+    expts:
+      t_intertrial_ms: 10
+      t_trial_ms: 100
+    model_fit:
+      n_x1: 3
+      epochs: 100
+
+# sys ID parameters
+####################
+sys_id:
+  foo: bar
 
 # control
 #########

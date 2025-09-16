@@ -41,9 +41,11 @@ def paths_for_params(file: list | str, **kwargs) -> str:
         **params,
     )
 
+
 NA = "NA"  # when a parameter is not applicable (e.g. latency for open-loop control)
 
-def params_from_cfg(*params: str, keep_parents=False, get_children=False) -> dict:
+
+def params_from_cfg(*params: str, keep_parent_keys=False, keep_target_key=True) -> dict:
     """easy way to get params from config dict. can go past first level with /"""
     result = {}
     for param in params:
@@ -51,16 +53,33 @@ def params_from_cfg(*params: str, keep_parents=False, get_children=False) -> dic
         d = result
         subcfg = config
         for key in keys[:-1]:
-            if keep_parents:
+            if keep_parent_keys:
                 if key not in d:
                     d[key] = {}
                 d = d[key]
             subcfg = subcfg[key]
-        if get_children:
+        if not keep_target_key:
             d |= subcfg[keys[-1]]
         else:
             d[keys[-1]] = subcfg[keys[-1]]
     return result
+
+
+def params_from_cfg_with_wildcards(
+    *queries: str, keep_parent_keys=False, keep_target_key=True
+) -> dict:
+    def replace_wildcards(wildcards):
+        results = {}
+        for query in queries:
+            results |= params_from_cfg(
+                *expand(query, **wildcards),
+                keep_parent_keys=keep_parent_keys,
+                keep_target_key=keep_target_key,
+            )
+        print(f"{results=}")
+        return results
+
+    return replace_wildcards
 
 
 rule test:
@@ -71,7 +90,7 @@ rule test:
         paths_for_params(
             file="{file}",
             setting="sufficient_stim",
-            task="cycling",
+            task="reaching",
             latency=False,
             control="OL",
             k=4,
@@ -167,8 +186,12 @@ n_trials_sys_id_max = config["star_sweep_conds"]["n_trials_sys_id"][-1]
 rule model_fit:
     input:
         paths_for_params("sys_id_data.pkl", n_trials_sys_id=n_trials_sys_id_max),
+    params:
+        params_from_cfg_with_wildcards("task_specific/{task}/model_fit"),
     output:
         f"results/{params_str}/braid_model.pkl",
+    conda:
+        "envs/braid.yaml"
     script:
         "../src/scripts/fit_model.py"
 
@@ -179,7 +202,7 @@ rule plot_sys_id_data:
         paths_for_params("sys_id_data.pkl", n_trials_sys_id=n_trials_sys_id_max),
         "src/plot_style.py",
     params:
-        params_from_cfg("sys_id")
+        params_from_cfg("sys_id"),
     output:
         multiext(f"results/{params_str}/sys_id_plot", ".png"),
     localrule: True
@@ -187,16 +210,15 @@ rule plot_sys_id_data:
         "../src/scripts/plot_sys_id_data.py"
 
 
-def task_specific_params(wildcards):
-    return params_from_cfg("task_specific", get_children=True)[wildcards["task"]]
-
-
 rule sys_id_expts:
     input:
         f"results/{params_str}/cleo_prep.pkl",
     params:
         **params_from_cfg("u_max_mWmm2"),
-        task_specific=task_specific_params,
+        task_specific=params_from_cfg_with_wildcards(
+            "task_specific/{task}/expts", keep_target_key=False
+        ),
+        # params_from_cfg_with_wildcards("task_specific/{task}/expts"),
         # n_trials_sys_id_max=config["star_sweep_conds"]["n_trials_sys_id"][-1],
     output:
         f"results/{params_str}/sys_id_data.pkl",
