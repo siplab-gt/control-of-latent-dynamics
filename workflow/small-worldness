@@ -1,0 +1,218 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import networkx as nx
+from scipy import io
+import seaborn as sns
+from pathlib import Path
+from tkinter import Tk, filedialog
+import warnings
+warnings.filterwarnings('ignore')
+
+# Set up the style
+plt.style.use('default')
+plt.rcParams['font.family'] = 'DejaVu Sans'
+plt.rcParams['figure.figsize'] = (12, 8)
+
+class SNNSmallWorldAnalyzer:
+    def __init__(self):
+        self.adjacency_matrices = []
+        self.time_points = []
+        self.small_worldness_values = []
+        
+    def load_trained_network(self):
+        """Load a trained fSNN file"""
+        root = Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        file_path = filedialog.askopenfilename(
+            title="Select trained Factor-Based Spiking Neural Network (fSNN) file",
+            filetypes=[("MAT files", "*.mat"), ("NPZ files", "*.npz"), ("Numpy files", "*.npy")]
+        )
+        root.destroy()
+        
+        if not file_path:
+            raise ValueError("No file selected. Please select a trained fSNN file.")
+            
+        file_ext = Path(file_path).suffix.lower()
+        
+        try:
+            if file_ext == '.mat':
+                # Load MATLAB file
+                data = io.loadmat(file_path)
+                # Look for adjacency matrices or connectivity data
+                for key in data.keys():
+                    if not key.startswith('__') and len(data[key].shape) >= 2:
+                        if len(data[key].shape) == 2:
+                            self.adjacency_matrices = [data[key]]
+                            self.time_points = [0]
+                        elif len(data[key].shape) == 3:
+                            self.adjacency_matrices = [data[key][:, :, i] for i in range(data[key].shape[2])]
+                            self.time_points = list(range(data[key].shape[2]))
+                        break
+                
+            elif file_ext == '.npz':
+                # Load NPZ file
+                data = np.load(file_path)
+                # Look for adjacency matrices
+                for key in data.keys():
+                    if 'adj' in key.lower() or 'connect' in key.lower() or 'weight' in key.lower():
+                        matrix = data[key]
+                        if len(matrix.shape) == 2:
+                            self.adjacency_matrices = [matrix]
+                            self.time_points = [0]
+                        elif len(matrix.shape) == 3:
+                            self.adjacency_matrices = [matrix[:, :, i] for i in range(matrix.shape[2])]
+                            self.time_points = list(range(matrix.shape[2]))
+                        break
+                
+            elif file_ext == '.npy':
+                # Load numpy file
+                matrix = np.load(file_path)
+                if len(matrix.shape) == 2:
+                    self.adjacency_matrices = [matrix]
+                    self.time_points = [0]
+                elif len(matrix.shape) == 3:
+                    self.adjacency_matrices = [matrix[:, :, i] for i in range(matrix.shape[2])]
+                    self.time_points = list(range(matrix.shape[2]))
+            
+            if not self.adjacency_matrices:
+                raise ValueError("No valid adjacency matrices found in the file. Please check your fSNN file format.")
+                
+            print(f"Loaded fSNN with {len(self.adjacency_matrices)} time points and {self.adjacency_matrices[0].shape[0]} neurons")
+            
+        except Exception as e:
+            raise ValueError(f"Error loading fSNN file: {str(e)}")
+    
+    def calculate_small_worldness(self, threshold=0.1):
+        """Calculate small-worldness sigma for each time point"""
+        self.small_worldness_values = []
+        
+        for i, adj_matrix in enumerate(self.adjacency_matrices):
+            # Binarize the adjacency matrix
+            binary_adj = (adj_matrix > threshold).astype(int)
+            
+            # Create networkx graph
+            G = nx.from_numpy_array(binary_adj)
+            
+            # Skip if graph is empty
+            if len(G) == 0:
+                self.small_worldness_values.append(0)
+                continue
+                
+            # Calculate average clustering coefficient
+            if len(G) > 1:
+                try:
+                    C = nx.average_clustering(G)
+                except:
+                    C = 0
+            else:
+                C = 0
+                
+            # Calculate average shortest path length
+            L = 0
+            if nx.is_connected(G):
+                try:
+                    L = nx.average_shortest_path_length(G)
+                except:
+                    L = 0
+            else:
+                # For disconnected graphs, calculate for largest connected component
+                try:
+                    largest_cc = max(nx.connected_components(G), key=len)
+                    G_sub = G.subgraph(largest_cc).copy()
+                    if len(G_sub) > 1:
+                        L = nx.average_shortest_path_length(G_sub)
+                    else:
+                        L = 0
+                except:
+                    L = 0
+            
+            # Generate random graph with same degree distribution
+            if len(G) > 0 and len(G.edges) > 0:
+                try:
+                    random_graph = nx.random_reference(G, niter=5, connectivity=True)
+                    C_rand = nx.average_clustering(random_graph)
+                    
+                    if nx.is_connected(random_graph):
+                        L_rand = nx.average_shortest_path_length(random_graph)
+                    else:
+                        try:
+                            largest_cc_rand = max(nx.connected_components(random_graph), key=len)
+                            G_rand_sub = random_graph.subgraph(largest_cc_rand).copy()
+                            if len(G_rand_sub) > 1:
+                                L_rand = nx.average_shortest_path_length(G_rand_sub)
+                            else:
+                                L_rand = 0
+                        except:
+                            L_rand = 0
+                    
+                    # Calculate small-worldness (sigma)
+                    if C_rand > 0 and L_rand > 0:
+                        sigma = (C / C_rand) / (L / L_rand)
+                    else:
+                        sigma = 0
+                except:
+                    sigma = 0
+            else:
+                sigma = 0
+                
+            self.small_worldness_values.append(sigma)
+            
+            print(f"Time point {i}: Small-worldness σ = {sigma:.3f}")
+    
+    def visualize_results(self):
+        """Create visualization of small-worldness over time"""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Plot small-worldness over time
+        ax1.plot(self.time_points, self.small_worldness_values, 'bo-', linewidth=2, markersize=8)
+        ax1.set_xlabel('Time', fontsize=12)
+        ax1.set_ylabel('Small-Worldness (σ)', fontsize=12)
+        ax1.set_title('Small-Worldness Evolution of fSNN', fontsize=14, fontweight='bold')
+        ax1.axhline(y=1.0, color='gray', linestyle=':', alpha=0.7, label='Random Network Threshold (σ=1)')
+        ax1.grid(True, alpha=0.3)
+        ax1.legend()
+        
+        # Show network structure at the last time point
+        if len(self.adjacency_matrices) > 0:
+            last_adj = self.adjacency_matrices[-1]
+            binary_adj = (last_adj > 0.1).astype(int)
+            G = nx.from_numpy_array(binary_adj)
+            
+            # Use spring layout for visualization
+            pos = nx.spring_layout(G, seed=42)
+            nx.draw_networkx_nodes(G, pos, ax=ax2, node_size=50, node_color='lightblue')
+            nx.draw_networkx_edges(G, pos, ax=ax2, alpha=0.3)
+            ax2.set_title(f'Final fSNN Connectivity Structure\n(σ = {self.small_worldness_values[-1]:.3f})', fontsize=14)
+            ax2.axis('off')
+        
+        plt.tight_layout()
+        plt.show()
+
+# Main execution
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Factor-Based Spiking Neural Network Small-Worldness Analyzer")
+    print("=" * 60)
+    print("This tool analyzes the small-world properties of your trained fSNN over time.")
+    print("Please select your trained fSNN file when prompted.")
+    print("Supported formats: .mat, .npz, .npy")
+    print("=" * 60)
+    
+    analyzer = SNNSmallWorldAnalyzer()
+    
+    # Load the trained fSNN file
+    analyzer.load_trained_network()
+    
+    # Calculate small-worldness
+    print("\nCalculating small-worldness metrics...")
+    analyzer.calculate_small_worldness()
+    
+    # Visualize results
+    print("\nGenerating visualization...")
+    analyzer.visualize_results()
+    
+    print("\nAnalysis complete! The small-worldness (σ) metric indicates:")
+    print("σ > 1: Network exhibits small-world properties")
+    print("σ ≈ 1: Network resembles a random network")
+    print("σ < 1: Network has neither small-world nor random structure")
