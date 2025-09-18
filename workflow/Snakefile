@@ -76,7 +76,7 @@ def params_from_cfg_with_wildcards(
                 keep_parent_keys=keep_parent_keys,
                 keep_target_key=keep_target_key,
             )
-        print(f"{results=}")
+        # print(f"{results=}")
         return results
 
     return replace_wildcards
@@ -178,6 +178,8 @@ rule ctrl_expts:
         f"results/{params_str}/ctrl_data.pkl",
         # NOTE: maybe instead of just data.npz have separate files U.npy, R.npy, etc.?
         # or a CtrlData dataclass
+    script:
+        "../src/scripts/ctrl_expts.py"
 
 
 n_trials_sys_id_max = config["star_sweep_conds"]["n_trials_sys_id"][-1]
@@ -187,11 +189,13 @@ rule model_fit:
     input:
         paths_for_params("sys_id_data.pkl", n_trials_sys_id=n_trials_sys_id_max),
     params:
-        params_from_cfg_with_wildcards("task_specific/{task}/model_fit"),
+        model_fit=params_from_cfg_with_wildcards(
+            "task_specific/{task}/model_fit", keep_target_key=False
+        ),
+        comp_graph_plot_basename=f"results/{params_str}/model_graph",
     output:
-        f"results/{params_str}/braid_model.pkl",
-    conda:
-        "envs/braid.yaml"
+        braid_model=f"results/{params_str}/braid_model.pkl",
+        logs_plot=f"results/{params_str}/braid_model_logs.png",
     script:
         "../src/scripts/fit_model.py"
 

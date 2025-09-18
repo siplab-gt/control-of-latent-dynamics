@@ -1,11 +1,8 @@
 from typing import Self
 import sys
-from dataclasses import dataclass
 
 import brian2.only as b2
-import cleo
 import dill
-import numpy as np
 
 
 class BaseDataClass:

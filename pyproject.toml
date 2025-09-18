@@ -4,10 +4,10 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cold"
+name = "control_latent_dynamics"
 version = "0.1.0"
 description = "Source code for Control of Latent Dynamics"
-dependencies = ['numpy', 'pandas', 'matplotlib', 'cleosim']
+dependencies = ['numpy', 'pandas', 'matplotlib', 'cleosim==0.18.2', 'dill']
 
 [tool.setuptools]
 packages = ["src"]

@@ -15,10 +15,14 @@ from src.scripts.cleo_prep import CleoPrep
 class ExptData(BaseDataClass):
     """should be able to use for sys ID and control experiments data"""
 
-    U: Float[np.ndarray, "T k"]
+    Uopto: Float[np.ndarray, "T k"]
     """Control input in mW/mm2, shape (T, k) array"""
+    Utask: Float[np.ndarray, "T n_task_inputs"]
+    """Task-related inputs, shape (T, n_task_inputs) array"""
     Y: Float[np.ndarray, "T n"]
     """Experimental measurements, shape (T, n) array"""
+    Z: Float[np.ndarray, "T n_behavior"]
+    """Behavioral measurements, shape (T, n_behavior) array"""
     spikes: UInt[np.ndarray, "T m"]
     """Spike counts across channels, shape (T, m) array"""
     t_ms: Float[np.ndarray, "T"]
@@ -34,6 +38,26 @@ class ExptData(BaseDataClass):
         """Get the control input, experimental measurements, and time for a specific trial."""
         start, end = self.i_trial_boundaries[trial_idx]
         return self.U[start:end], self.Y[start:end], self.t_ms[start:end]
+
+    # def save(self, filename):
+    #     np.savez_compressed(
+    #         filename,
+    #         U=self.U,
+    #         Y=self.Y,
+    #         spikes=self.spikes,
+    #         t_ms=self.t_ms,
+    #         i_trial_boundaries=self.i_trial_boundaries,
+    #     )
+
+    # def load(cls, filename) -> "ExptData":
+    #     data = np.load(filename)
+    #     return cls(
+    #         U=data["U"],
+    #         Y=data["Y"],
+    #         spikes=data["spikes"],
+    #         t_ms=data["t_ms"],
+    #         i_trial_boundaries=data["i_trial_boundaries"],
+    #     )
 
 
 def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
@@ -64,7 +88,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     # b2.prefs.codegen.target = "cython"
     conditions = []
     i_trial_boundaries = []
-    for i_trial in range(4):
+    for i_trial in range(12):
         print(f"running sys ID trial {i_trial}")
         cleo_prep.run(
             t_intertrial_ms * b2.ms,  # TODO
@@ -89,12 +113,16 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     assert np.all(cleo_prep.light.t[1:] == cleo_prep.fsnn.state_mon.t)
 
     expt_data = ExptData(
-        U=cleo_prep.light.irradiance_[1:],
+        Uopto=cleo_prep.light.irradiance_[1:],
+        # stand-in for task-related inputs for now
+        Utask=cleo_prep.light.irradiance_[1:],
         Y=cleo_prep.fsnn.state_mon.Y.T[:, :10],
+        Z=cleo_prep.fsnn.state_mon.Z.T[:, :10],
         spikes=spike_count_array,
         t_ms=cleo_prep.fsnn.state_mon.t / b2.ms,
         i_trial_boundaries=i_trial_boundaries,
     )
+    # save dict to
     expt_data.save(outfile)
 
     plt.plot(cleo_prep.fsnn.v_mon.t / b2.ms, cleo_prep.fsnn.v_mon.v.T / b2.mV)

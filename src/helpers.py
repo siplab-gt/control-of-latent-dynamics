@@ -2,6 +2,7 @@ import brian2.only as b2
 import cleo
 import cleo.utilities
 import numpy as np
+from jaxtyping import UInt
 
 
 def seed_everything(seed: int, extra_seed_str=""):
@@ -22,3 +23,16 @@ def seed_everything(seed: int, extra_seed_str=""):
     b2.seed(seed)
     cleo.utilities.set_seed(seed)
     return seed
+
+
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"Cannot convert {value!r} to bool")
+    value = value.strip().lower()
+    if value in {"true", "1", "yes", "y", "on"}:
+        return True
+    if value in {"false", "0", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Invalid boolean string: {value!r}")

@@ -72,6 +72,7 @@ def main(cond_params, base_params, train_device, fsnn_outfile):
         # Y = i + t / ms : 1
         Iopto_exc : amp
         Iopto_inh : amp
+        Z = cos(Y) : 1  # "behavior"
         condition : 1
         """,
         threshold="v > -50*mvolt",
@@ -92,7 +93,7 @@ def main(cond_params, base_params, train_device, fsnn_outfile):
     syn.w = 0.5
 
     print(f"{ng.N=}")
-    state_mon = b2.StateMonitor(ng, "Y", record=np.arange(10), dt=1 * b2.ms)
+    state_mon = b2.StateMonitor(ng, ["Y", "Z"], record=np.arange(10), dt=1 * b2.ms)
     v_mon = b2.StateMonitor(ng, "v", record=np.arange(10))
 
     net = b2.Network(ng, syn, state_mon, v_mon)

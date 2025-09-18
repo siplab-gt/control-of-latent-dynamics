@@ -73,6 +73,9 @@ star_sweep_conds:
     - 10
     - 15
     - 20
+  model_task_inputs:
+    - false
+    - true
 
 # don't automatically sweep these, will be handled manually in Snakefile
 ########################################################################
@@ -106,6 +109,7 @@ reference_conds:
   dales_law: false
   latency: true
   n_pcs: 20
+  model_task_inputs: true
 
 #########################################
 # base parameters, used across conditions
