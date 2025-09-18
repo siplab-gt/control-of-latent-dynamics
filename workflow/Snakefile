@@ -197,7 +197,7 @@ rule model_fit:
         braid_model=f"results/{params_str}/braid_model.pkl",
         logs_plot=f"results/{params_str}/braid_model_logs.png",
     script:
-        "../src/scripts/fit_model.py"
+        "../src/scripts/model_fit.py"
 
 
 # TODO: only get sys ID data for latency=False, control="OL" (or "None"?), etc.

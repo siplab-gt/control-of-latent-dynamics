@@ -12,8 +12,8 @@ from src.helpers import str2bool
 from src.scripts.sys_id_expts import ExptData
 
 
-def fit_model(cond_params, base_params, expt_data_file, outfiles):
-    extra_seed_int = sum(ord(c) for c in "fit_model")
+def model_fit(cond_params, base_params, expt_data_file, outfiles):
+    extra_seed_int = sum(ord(c) for c in "model_fit")
     seed = int(cond_params["seed"]) + extra_seed_int
     print(f"Seeding with {seed}")
     random.seed(seed)
@@ -91,6 +91,6 @@ def fit_model(cond_params, base_params, expt_data_file, outfiles):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    fit_model(
+    model_fit(
         snakemake.wildcards, snakemake.params, snakemake.input[0], snakemake.output
     )
