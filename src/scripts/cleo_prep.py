@@ -1,3 +1,4 @@
+import importlib
 from dataclasses import dataclass
 
 import brian2.only as b2
@@ -54,10 +55,10 @@ def main(cond_params, base_params, fsnn_file, outfile):
     )
 
     # separate files so one can change without causing the other to be rerun
-    if cond_params["setting"] == "sufficient_stim":
-        from src.cleo_prep_sufficient_stim import light_and_probe_coords
-    elif cond_params["setting"] == "optimal_stim_rec":
-        from src.cleo_prep_optimal_stim_rec import light_and_probe_coords
+    setting = cond_params["setting"]
+    module_name = f"src.cleo_prep_{setting}"
+    module = importlib.import_module(module_name)
+    light_and_probe_coords = module.light_and_probe_coords
 
     light_coords, light_groups, probe_coords = light_and_probe_coords(
         grid, int(cond_params["k"])

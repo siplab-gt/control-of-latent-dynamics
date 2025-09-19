@@ -175,15 +175,19 @@ task_specific:
 sys_id:
   foo: bar
 
-# control
-#########
-Q: 1
-R: 0.1
-dt_ms: 5
 u_max_mWmm2: 75
 
-ctrl_horizon_ms: 50
-pred_horizon_ms: 100
+# control
+#########
+control:
+  Q: 1
+  R: 0.1
+  dt_ms: 5
+
+  ctrl_horizon_ms: 50
+  pred_horizon_ms: 100
+
+  n_trials_ctrl: 100
 
 # Q3: how do results change with increasing realism?
 ####################################################

@@ -30,6 +30,10 @@ class ExptData(BaseDataClass):
     i_trial_boundaries: UInt[np.ndarray, "n_trials 2"]
     """Trial (start, ..., end) indices, shape (n_trials, 2) array"""
 
+    @property
+    def n_trials(self) -> int:
+        return self.i_trial_boundaries.shape[0]
+
     def get_trial_UYt(
         self, trial_idx: int
     ) -> tuple[
@@ -68,8 +72,8 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     k = int(cond_params["k"])
     u_max = float(base_params["u_max_mWmm2"])
-    t_intertrial_ms = float(base_params.task_specific["t_intertrial_ms"]) // 5
-    t_trial_ms = float(base_params.task_specific["t_trial_ms"]) // 5
+    t_intertrial_ms = float(base_params.expts["t_intertrial_ms"]) // 5
+    t_trial_ms = float(base_params.expts["t_trial_ms"]) // 5
     n_trials = int(cond_params["n_trials_sys_id"])
 
     cleo_prep = CleoPrep.load(cleo_prep_file)
@@ -120,7 +124,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         Z=cleo_prep.fsnn.state_mon.Z.T[:, :10],
         spikes=spike_count_array,
         t_ms=cleo_prep.fsnn.state_mon.t / b2.ms,
-        i_trial_boundaries=i_trial_boundaries,
+        i_trial_boundaries=np.array(i_trial_boundaries),
     )
     # save dict to
     expt_data.save(outfile)

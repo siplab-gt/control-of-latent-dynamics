@@ -28,8 +28,9 @@ cond_params = [
 params_str = "/".join(f"{par}_{{{par}}}" for par in cond_params)
 
 
-def paths_for_params(file: list | str, **kwargs) -> str:
-    params = config["reference_conds"] | kwargs
+def paths_for_params(file: list | str, fill_in_ref=False, **kwargs) -> str:
+    params = config["reference_conds"] if fill_in_ref else {}
+    params |= kwargs
     wildcards = set(cond_params) - params.keys()
     # need to mask wildcards we want to keep with double braces
     params_str_masked = params_str
@@ -88,6 +89,7 @@ rule test:
     input:
         # f"results/{params_str}/cleo_prep.pkl",
         paths_for_params(
+            fill_in_ref=True,
             file="{file}",
             setting="sufficient_stim",
             task="reaching",
@@ -171,9 +173,21 @@ rule analyze_ctrl_data:
 rule ctrl_expts:
     input:
         paths_for_params("braid_model.pkl", latency=NA, control=NA),
-        f"results/{params_str}/cleo_prep.pkl",
+        paths_for_params(
+            "cleo_prep.pkl",
+            latency=NA,
+            control=NA,
+            n_trials_sys_id=NA,
+            model_task_inputs=NA,
+        ),
         # NOTE: if fSNN is big, maybe store separately from Cleo prep 
         # to avoid redundancy
+    params:
+        **params_from_cfg("u_max_mWmm2"),
+        **params_from_cfg("control"),
+        expts=params_from_cfg_with_wildcards(
+            "task_specific/{task}/expts", keep_target_key=False
+        ),
     output:
         f"results/{params_str}/ctrl_data.pkl",
         # NOTE: maybe instead of just data.npz have separate files U.npy, R.npy, etc.?
@@ -187,7 +201,11 @@ n_trials_sys_id_max = config["star_sweep_conds"]["n_trials_sys_id"][-1]
 
 rule model_fit:
     input:
-        paths_for_params("sys_id_data.pkl", n_trials_sys_id=n_trials_sys_id_max),
+        paths_for_params(
+            "sys_id_data.pkl",
+            n_trials_sys_id=n_trials_sys_id_max,
+            model_task_inputs=NA,
+        ),
     params:
         model_fit=params_from_cfg_with_wildcards(
             "task_specific/{task}/model_fit", keep_target_key=False
@@ -200,7 +218,6 @@ rule model_fit:
         "../src/scripts/model_fit.py"
 
 
-# TODO: only get sys ID data for latency=False, control="OL" (or "None"?), etc.
 rule plot_sys_id_data:
     input:
         paths_for_params("sys_id_data.pkl", n_trials_sys_id=n_trials_sys_id_max),
@@ -216,21 +233,14 @@ rule plot_sys_id_data:
 
 rule sys_id_expts:
     input:
-        f"results/{params_str}/cleo_prep.pkl",
+        paths_for_params("cleo_prep.pkl", n_trials_sys_id=NA, latency=NA, control=NA),
     params:
         **params_from_cfg("u_max_mWmm2"),
-        task_specific=params_from_cfg_with_wildcards(
+        expts=params_from_cfg_with_wildcards(
             "task_specific/{task}/expts", keep_target_key=False
         ),
-        # params_from_cfg_with_wildcards("task_specific/{task}/expts"),
-        # n_trials_sys_id_max=config["star_sweep_conds"]["n_trials_sys_id"][-1],
     output:
         f"results/{params_str}/sys_id_data.pkl",
-        # just run once with maximum number of trials
-        # split up later during fit
-        # paths_for_params("sys_id_data.pkl", n_trials_sys_id="all"),
-        # this produces an error. leave wildcard, but n_trials_sys_id='all' should
-        # be the only thing this rule produces
     script:
         "../src/scripts/sys_id_expts.py"
 
@@ -248,7 +258,10 @@ rule plot_cleo:
 
 rule cleo_prep:
     input:
-        f"results/{params_str}/trained_fsnn.pkl",
+        # use NA for wildcards that were irrelevant before this step
+        paths_for_params(
+            "trained_fsnn.pkl", beam_width_um=NA, beam_spacing=NA, k=NA, m=NA
+        ),
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
         "src/interface_array.py",
