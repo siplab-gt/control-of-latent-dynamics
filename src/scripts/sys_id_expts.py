@@ -17,16 +17,20 @@ class ExptData(BaseDataClass):
 
     Uopto: Float[np.ndarray, "T k"]
     """Control input in mW/mm2, shape (T, k) array"""
+    t_opto_ms: Float[np.ndarray, "T"]
+    """Time of optogenetic input samples in ms, shape (T,) array"""
     Utask: Float[np.ndarray, "T n_task_inputs"]
     """Task-related inputs, shape (T, n_task_inputs) array"""
     Y: Float[np.ndarray, "T n"]
     """Experimental measurements, shape (T, n) array"""
     Z: Float[np.ndarray, "T n_behavior"]
     """Behavioral measurements, shape (T, n_behavior) array"""
+    t_ms: Float[np.ndarray, "T"]
+    """Time of state_mon (recording Y, Z) in ms, shape (T,) array"""
     spikes: UInt[np.ndarray, "T m"]
     """Spike counts across channels, shape (T, m) array"""
-    t_ms: Float[np.ndarray, "T"]
-    """Time in ms, shape (T,) array"""
+    t_samp_ms: Float[np.ndarray, "T_samp"]
+    """Time of spike count samples in ms, shape (T_samp,) array"""
     i_trial_boundaries: UInt[np.ndarray, "n_trials 2"]
     """Trial (start, ..., end) indices, shape (n_trials, 2) array"""
 
@@ -41,7 +45,9 @@ class ExptData(BaseDataClass):
     ]:
         """Get the control input, experimental measurements, and time for a specific trial."""
         start, end = self.i_trial_boundaries[trial_idx]
-        return self.U[start:end], self.Y[start:end], self.t_ms[start:end]
+        t_start, t_end = self.t_ms[start], self.t_ms[end]
+        start_end_opto = slice(*np.searchsorted(self.t_opto_ms, (t_start, t_end)))
+        return self.U[start_end_opto], self.Y[start:end], self.t_ms[start:end]
 
     # def save(self, filename):
     #     np.savez_compressed(
@@ -72,8 +78,8 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     k = int(cond_params["k"])
     u_max = float(base_params["u_max_mWmm2"])
-    t_intertrial_ms = float(base_params.expts["t_intertrial_ms"]) // 5
-    t_trial_ms = float(base_params.expts["t_trial_ms"]) // 5
+    t_intertrial_ms = float(base_params.expts["t_intertrial_ms"])
+    t_trial_ms = float(base_params.expts["t_trial_ms"])
     n_trials = int(cond_params["n_trials_sys_id"])
 
     cleo_prep = CleoPrep.load(cleo_prep_file)
@@ -92,7 +98,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     # b2.prefs.codegen.target = "cython"
     conditions = []
     i_trial_boundaries = []
-    for i_trial in range(12):
+    for i_trial in range(n_trials):
         print(f"running sys ID trial {i_trial}")
         cleo_prep.run(
             t_intertrial_ms * b2.ms,  # TODO
@@ -118,12 +124,14 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     expt_data = ExptData(
         Uopto=cleo_prep.light.irradiance_[1:],
+        t_opto_ms=cleo_prep.light.t[1:] / b2.ms,
         # stand-in for task-related inputs for now
         Utask=cleo_prep.light.irradiance_[1:],
         Y=cleo_prep.fsnn.state_mon.Y.T[:, :10],
         Z=cleo_prep.fsnn.state_mon.Z.T[:, :10],
-        spikes=spike_count_array,
         t_ms=cleo_prep.fsnn.state_mon.t / b2.ms,
+        spikes=spike_count_array,
+        t_samp_ms=cleo_prep.sim.io_processor.t_samp / b2.ms,
         i_trial_boundaries=np.array(i_trial_boundaries),
     )
     # save dict to

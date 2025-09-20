@@ -1,18 +1,28 @@
+import os
 import random
 from dataclasses import dataclass
 
+import BRAID
 import dill
 import numpy as np
-import tensorflow as tf
-from BRAID.BRAIDModel import BRAIDModel
-from BRAID.MainModel import MainModel, MainModelPrepareArgs
 from matplotlib import pyplot as plt
 
 from src.helpers import str2bool
 from src.scripts.sys_id_expts import ExptData
 
 
-def model_fit(cond_params, base_params, expt_data_file, outfiles):
+def model_fit(cond_params, base_params, expt_data_file, outfiles, config):
+    use_cpu = config["model_fit_device"].lower() == "cpu"
+    if use_cpu:
+        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+        print("Using CPU for model fitting")
+    else:
+        print("Using GPU for model fitting")
+    BRAID.tools.tf_tools.setupTensorflow(cpu=use_cpu)
+    import tensorflow as tf
+    from BRAID.BRAIDModel import BRAIDModel
+    from BRAID.MainModel import MainModel, MainModelPrepareArgs
+
     extra_seed_int = sum(ord(c) for c in "model_fit")
     seed = int(cond_params["seed"]) + extra_seed_int
     print(f"Seeding with {seed}")
@@ -25,7 +35,7 @@ def model_fit(cond_params, base_params, expt_data_file, outfiles):
 
     # numpy instead of ExptData to be able to run in isolated env
     expt_data = ExptData.load(expt_data_file)
-    n_trials = str(cond_params.n_trials_sys_id)
+    n_trials = int(cond_params.n_trials_sys_id)
     assert n_trials <= expt_data.n_trials
     # cut data to end of last trial
     T = expt_data.i_trial_boundaries[n_trials, -1]
@@ -95,5 +105,9 @@ if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
     model_fit(
-        snakemake.wildcards, snakemake.params, snakemake.input[0], snakemake.output
+        snakemake.wildcards,
+        snakemake.params,
+        snakemake.input[0],
+        snakemake.output,
+        snakemake.config,
     )

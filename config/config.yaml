@@ -17,9 +17,11 @@ grid_sweep_conds:
 ###################################################
 star_sweep_conds:
   n_trials_sys_id:
-    - 10
-    - 50
-    - 100
+    # - 10
+    # - 50
+    # - 100
+    - 12
+    - 14
   latent_dim: # only possible on integration?
     - 1
     - 2
@@ -87,7 +89,7 @@ manual_sweep_conds:
     # - cycling
     - reaching
     # - integration
-  control:
+  ctrl_type:
     - OL
     - LQMPC
   k: "depends on setting"
@@ -116,6 +118,8 @@ reference_conds:
 #########################################
 
 train_device: cython
+# TODO: switch to gpu later
+model_fit_device: cpu
 
 power_per_neuron_uW: 1 # when normalizing power
 # L5 is the sparsest, serves as base.
@@ -164,8 +168,10 @@ task_specific:
     t_trial_ms: 100
   reaching:
     expts:
-      t_intertrial_ms: 10
-      t_trial_ms: 100
+      # t_intertrial_ms: 10
+      # t_trial_ms: 100
+      t_intertrial_ms: 2
+      t_trial_ms: 10
     model_fit:
       n_x1: 3
       epochs: 100
@@ -177,17 +183,17 @@ sys_id:
 
 u_max_mWmm2: 75
 
-# control
+# controller
 #########
-control:
+controller:
   Q: 1
   R: 0.1
   dt_ms: 5
-
   ctrl_horizon_ms: 50
   pred_horizon_ms: 100
-
-  n_trials_ctrl: 100
+  # n_trials_ctrl: 100
+  n_trials_ctrl: 12
+  baseline_latency_ms: 1
 
 # Q3: how do results change with increasing realism?
 ####################################################
@@ -221,3 +227,8 @@ realism_features:
   # TODO: num_tasks
   # - num_tasks
   - dales_law
+
+# non-essential stuff, don't need to pass in as params
+######################################################
+# for brian report printing frequency
+report_period_s: 50

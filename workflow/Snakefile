@@ -94,11 +94,12 @@ rule test:
             setting="sufficient_stim",
             task="reaching",
             latency=False,
-            control="OL",
+            ctrl_type="OL",
             k=4,
             m=0,
             seed=0,
             layeredness=1,
+            n_trials_sys_id=12,
         ),
     output:
         "results/test/{file}",
@@ -124,7 +125,7 @@ rule sufficient_stim_tabulate:
                 file="summary.csv",
                 setting="sufficient_stim",
                 latency=latency,
-                control=ctrl,
+                ctrl_type=ctrl,
                 m=0,
                 k=config["q1"]["k"],
                 seed=config["grid_sweep_conds"]["seed"],
@@ -137,7 +138,7 @@ rule sufficient_stim_tabulate:
                 file="summary.csv",
                 setting="sufficient_stim",
                 latency=latency,
-                control=ctrl,
+                ctrl_type=ctrl,
                 k=config["q1"]["k"],
                 m=0,
                 seed=config["grid_sweep_conds"]["seed"],
@@ -169,22 +170,31 @@ rule analyze_ctrl_data:
         f"results/{params_str}/summary.csv",
 
 
+rule plot_ctrl_data_wide:
+    input:
+        paths_for_params("ctrl_data.pkl"),
+        "src/plot_style.py",
+    output:
+        f"results/{params_str}/ctrl_data_wide_plot.png",
+    localrule: True
+    script:
+        "../src/scripts/plot_expt_data.py"
+
+
 # whatever the output is, ask for the fit from non-control-relevant parameters (latency, control)
 rule ctrl_expts:
     input:
-        paths_for_params("braid_model.pkl", latency=NA, control=NA),
-        paths_for_params(
+        cleo_prep=paths_for_params(
             "cleo_prep.pkl",
             latency=NA,
-            control=NA,
+            ctrl_type=NA,
             n_trials_sys_id=NA,
             model_task_inputs=NA,
         ),
-        # NOTE: if fSNN is big, maybe store separately from Cleo prep 
-        # to avoid redundancy
+        braid_model=paths_for_params("braid_model.pkl", latency=NA, ctrl_type=NA),
     params:
         **params_from_cfg("u_max_mWmm2"),
-        **params_from_cfg("control"),
+        **params_from_cfg("controller", keep_target_key=False),
         expts=params_from_cfg_with_wildcards(
             "task_specific/{task}/expts", keep_target_key=False
         ),
@@ -218,22 +228,41 @@ rule model_fit:
         "../src/scripts/model_fit.py"
 
 
-rule plot_sys_id_data:
+rule plot_sys_id_data_trials:
     input:
-        paths_for_params("sys_id_data.pkl", n_trials_sys_id=n_trials_sys_id_max),
+        paths_for_params(
+            "sys_id_data.pkl",
+            n_trials_sys_id=n_trials_sys_id_max,
+            model_task_inputs=NA,
+        ),
         "src/plot_style.py",
     params:
         params_from_cfg("sys_id"),
     output:
-        multiext(f"results/{params_str}/sys_id_plot", ".png"),
+        multiext(f"results/{params_str}/sys_id_trials_plot", ".png"),
     localrule: True
     script:
         "../src/scripts/plot_sys_id_data.py"
 
 
+rule plot_sys_id_data_wide:
+    input:
+        paths_for_params(
+            "sys_id_data.pkl",
+            n_trials_sys_id=n_trials_sys_id_max,
+            model_task_inputs=NA,
+        ),
+        "src/plot_style.py",
+    output:
+        f"results/{params_str}/sys_id_data_wide_plot.png",
+    localrule: True
+    script:
+        "../src/scripts/plot_expt_data.py"
+
+
 rule sys_id_expts:
     input:
-        paths_for_params("cleo_prep.pkl", n_trials_sys_id=NA, latency=NA, control=NA),
+        paths_for_params("cleo_prep.pkl", n_trials_sys_id=NA, latency=NA, ctrl_type=NA),
     params:
         **params_from_cfg("u_max_mWmm2"),
         expts=params_from_cfg_with_wildcards(

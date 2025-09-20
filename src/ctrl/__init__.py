@@ -1,24 +1,41 @@
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from collections.abc import Callable
 
 import cleo
 import numpy as np
+from attrs import define, field
+from BRAID.BRAIDModel import BRAIDModel
 from brian2 import Quantity, mm2, ms, mwatt, second
 
 
-@dataclass
-@ABC
+@define
 class Controller(cleo.ioproc.LatencyIOProcessor):
-    k: int
-    m: int
-    rng: np.random.Generator
-    u_max_mWmm2: float
-    baseline_latency: Quantity
+    k_opto: int = None
+    """number of optogenetic inputs"""
+    k_task: int = None
+    """number of task-related inputs"""
+    m: int = None
+    """number of measured outputs (e.g. spike channels)"""
+    rng: np.random.Generator = None
+    u_max_mWmm2: float = None
+    baseline_latency: Quantity = None
+    braid_model: BRAIDModel = None
     compute_latency: Quantity = None
-    spike_counts: list = field(default_factory=list)
+    spike_counts: list = field(factory=list)
+    xpred: np.ndarray = None
+    reference: Callable[[Quantity], Quantity] = field(default=lambda t: 0)
+    u_task: Callable[[Quantity], np.ndarray] = field(default=lambda t: np.zeros(0))
+    """callable with signature t -> task inputs (shape ([T], k_task) array)"""
 
-    def measure_and_set_latency(self):
+    # don't know why I need to make this a field to avoid attrs error
+    _needs_off_schedule_sample: bool = False
+
+    @property
+    def k(self):
+        return self.k_opto + self.k_task
+
+    def measure_latency(self):
         durations = []
         xpred = np.zeros(self.m)
         u = self.rng.uniform(0, self.u_max_mWmm2, self.k) * mwatt / mm2
@@ -33,17 +50,17 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             end = time.perf_counter()
             durations.append(end - start)
 
-        self.compute_latency = np.mean(durations) * second
+        return np.mean(durations) * second
 
     @abstractmethod
     def update_state(self, xpred, y):
         # Placeholder: simple identity filter
-        return xpred
+        pass
 
     @abstractmethod
     def predict_state(self, xhat, u):
         # Placeholder: simple identity prediction
-        return xhat
+        pass
 
     @abstractmethod
     def compute_control(self, y_hat):
@@ -52,5 +69,13 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     def process(self, state_dict, t_samp):
         t, i, counts = state_dict["Probe"]["mua"]
         self.spike_counts.append(counts)
-        value = self.rng.uniform(0, self.u_max_mWmm2, self.k) * mwatt / mm2
-        return {"light array": value}, t_samp
+        xhat = self.update_state(self.xpred, counts)
+        uopto = self.compute_control(xhat)
+        uopto = np.clip(uopto, 0, self.u_max_mWmm2)
+        u = np.concatenate((uopto, self.u_task(t_samp)))
+        self.xpred = self.predict_state(xhat, u)
+        return {"light array": uopto * mwatt / mm2}, t_samp + self.latency
+
+    @property
+    def latency(self):
+        return self.baseline_latency + self.compute_latency

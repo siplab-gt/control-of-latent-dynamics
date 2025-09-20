@@ -20,6 +20,26 @@ class fSNN(BaseDataClass):
     state_mon: b2.StateMonitor
     v_mon: b2.StateMonitor
 
+    @property
+    def k_task(self) -> int:
+        return 3  # TODO: get from network
+
+    def u_task(self, t: b2.Quantity) -> np.ndarray:
+        """task-related inputs, shape ([T], n_task_inputs) array"""
+        # TODO: get from network
+        return np.array(
+            [
+                20 * np.sin(2 * np.pi * t / (100 * b2.ms)),
+                20 * np.sin(2 * np.pi * t / (200 * b2.ms) + np.pi / 4),
+                20 * np.sin(2 * np.pi * t / (300 * b2.ms) + np.pi / 2),
+            ]
+        )
+
+    @property
+    def u_task_(self):
+        """callable with signature t -> task-related input"""
+        return lambda t: self.u_task(t)
+
     def refresh_monitors_for_run(self) -> None:
         """since weakref after unserializing breaks the monitors"""
         new_clock = b2.Clock(dt=self.state_mon.clock.dt)
