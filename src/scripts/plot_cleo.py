@@ -2,7 +2,7 @@ import brian2.only as b2
 import cleo
 import matplotlib.pyplot as plt
 
-from src.data_classes import CleoPrep
+from src.scripts.cleo_prep import CleoPrep
 from src.plot_style import style_plots
 
 

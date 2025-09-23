@@ -1,3 +1,4 @@
+import copy
 import importlib
 import random
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from matplotlib import pyplot as plt
 from snakemake.script import snakemake
 
 from src.ctrl import Controller
-from src.helpers import seed_everything
+from src.helpers import seed_everything, str2bool
 from src.scripts.cleo_prep import CleoPrep
 from src.scripts.sys_id_expts import ExptData
 
@@ -27,7 +28,7 @@ def ctrl_expts(
     tf.random.set_seed(seed)
     rng = np.random.default_rng(seed)
 
-    k = int(cond_params["k"])
+    k_opto = int(cond_params["k"])
     u_max = float(base_params["u_max_mWmm2"])
     t_intertrial = float(base_params.expts["t_intertrial_ms"]) * b2.ms
     t_trial = float(base_params.expts["t_trial_ms"]) * b2.ms
@@ -39,6 +40,17 @@ def ctrl_expts(
 
     # Load trained BRAID model
     braid_model: BRAIDModel = BRAIDModel.loadFromFile(braid_model_file)
+    braid_model.sId.print_summary()
+
+    lssm = braid_model.getLSSM()
+    lssm.Q = braid_model.Q
+    lssm.R = braid_model.R
+
+    if str2bool(cond_params.model_task_inputs):
+        k_task = cleo_prep.fsnn.k_task
+    else:
+        k_task = 0
+    assert k_opto + k_task == braid_model.nu, f"{braid_model.nu=} {k_opto=} {k_task=}"
 
     # separate files so one can change without causing the other to be rerun
     ctrl_type = cond_params["ctrl_type"]
@@ -47,48 +59,52 @@ def ctrl_expts(
         f"{ctrl_type.upper()}Controller",
     )
     ctrl_proc: Controller = ControllerType(
-        k_opto=k,
-        k_task=cleo_prep.fsnn.k_task,
+        k_opto=k_opto,
+        k_task=k_task,
         m=braid_model.ny,
         rng=rng,
         u_max_mWmm2=u_max,
         braid_model=braid_model,
+        lssm=lssm,
+        add_latency=str2bool(cond_params.latency),
         baseline_latency=float(base_params["baseline_latency_ms"]) * b2.ms,
-        sample_period=float(base_params["dt_ms"]) * b2.ms,
+        sample_period=float(base_params["sample_period_ms"]) * b2.ms,
         u_task=cleo_prep.fsnn.u_task_,
+        # horizon will be overwritten in OL to cover whole trial
+        horizon=int(base_params["ctrl_horizon_ms"])
+        // int(base_params["sample_period_ms"]),
+        Qcost=float(base_params.Q_cost),
+        Rcost=float(base_params.R_cost),
     )
 
-    ctrl_proc.compute_latency = ctrl_proc.measure_latency()
-    print(f"measured control computation latency: {ctrl_proc.compute_latency}")
+    if ctrl_proc.add_latency:
+        ctrl_proc.compute_latency = ctrl_proc.measure_latency()
+        print(f"measured control computation latency: {ctrl_proc.compute_latency}")
 
     cleo_prep.sim.set_io_processor(ctrl_proc)
 
     i_trial_boundaries = []
     for i_trial in range(n_trials):
         print(f"running control trial {i_trial}")
+        t_now = cleo_prep.sim.network.t
+        ctrl_proc.update_with_trial_info(
+            t_now, t_now + t_intertrial, t_now + t_intertrial + t_trial
+        )
         cleo_prep.run(t_intertrial, report_period=report_period)
-        i_start = cleo_prep.fsnn.state_mon.Y.shape[1]
+        i_start = cleo_prep.fsnn.state_mon.X.shape[1]
         condition = cleo_prep.fsnn.sample_condition(rng)
         cleo_prep.fsnn.set_condition(condition)
         cleo_prep.run(t_trial, report_period=report_period)
-        i_end = cleo_prep.fsnn.state_mon.Y.shape[1]
+        i_end = cleo_prep.fsnn.state_mon.X.shape[1]
         i_trial_boundaries.append((i_start, i_end))
 
-    expt_data = ExptData(
-        Uopto=cleo_prep.light.irradiance_[1:],
-        t_opto_ms=cleo_prep.light.t[1:] / b2.ms,
-        # stand-in for task-related inputs for now
-        Utask=cleo_prep.light.irradiance_[1:],
-        Y=cleo_prep.fsnn.state_mon.Y.T[:, :10],
-        Z=cleo_prep.fsnn.state_mon.Z.T[:, :10],
-        t_ms=cleo_prep.fsnn.state_mon.t / b2.ms,
-        spikes=np.array(ctrl_proc.spike_counts),
-        t_samp_ms=ctrl_proc.t_samp / b2.ms,
-        i_trial_boundaries=np.array(i_trial_boundaries),
+    expt_data = ExptData.from_cleo_prep(
+        cleo_prep,
+        np.array(ctrl_proc.spike_counts),
+        cleo_prep.sim.io_processor.t_samp,
+        i_trial_boundaries,
     )
     expt_data.save(outfile)
-
-    expt_data.plot_all(outfile.replace(".pkl", "_plots.png"))
 
 
 if __name__ == "__main__" and "snakemake" in locals():

@@ -4,9 +4,9 @@ from jaxtyping import Float
 
 
 def light_and_probe_coords(
-    grid: Quantity, k: int
+    grid: Quantity, k: int, m: int
 ) -> tuple[Quantity, Float[np.ndarray, "k 3"], Quantity]:
-    coords = grid
-    groups = np.arange(len(coords)).reshape(k, -1)
+    light_coords = grid
+    light_groups = np.arange(len(light_coords)).reshape(k, -1)
     probe_coords = None
-    return coords, groups, probe_coords
+    return light_coords, light_groups, probe_coords

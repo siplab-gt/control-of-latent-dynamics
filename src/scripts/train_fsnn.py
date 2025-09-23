@@ -19,6 +19,7 @@ class fSNN(BaseDataClass):
     syn: b2.Synapses
     state_mon: b2.StateMonitor
     v_mon: b2.StateMonitor
+    n_pcs: int
 
     @property
     def k_task(self) -> int:
@@ -27,13 +28,16 @@ class fSNN(BaseDataClass):
     def u_task(self, t: b2.Quantity) -> np.ndarray:
         """task-related inputs, shape ([T], n_task_inputs) array"""
         # TODO: get from network
-        return np.array(
+        out = np.array(
             [
                 20 * np.sin(2 * np.pi * t / (100 * b2.ms)),
                 20 * np.sin(2 * np.pi * t / (200 * b2.ms) + np.pi / 4),
                 20 * np.sin(2 * np.pi * t / (300 * b2.ms) + np.pi / 2),
             ]
-        )
+        ).T
+        T = len(t) if hasattr(t, "__len__") else 1
+        assert out.shape == (T, self.k_task), f"{out.shape=} {T=} {self.k_task=}"
+        return out
 
     @property
     def u_task_(self):
@@ -87,12 +91,12 @@ def main(cond_params, base_params, train_device, fsnn_outfile):
     ng = b2.NeuronGroup(
         n_ng,
         """dv/dt = (-(v + 70*mvolt) + (Iopto_exc + Iopto_inh)*500*Mohm) / (10*ms) : volt
-        dY/dt = (-Y + i + 10*xi*sqrt(10*ms) + (v/mvolt + 70)) / (20*ms) : 1
+        dX/dt = (-X + i + 10*xi*sqrt(10*ms) + (v/mvolt + 70)) / (20*ms) : 1
         # dY/dt = 1 / ms : 1
         # Y = i + t / ms : 1
         Iopto_exc : amp
         Iopto_inh : amp
-        Z = cos(Y) : 1  # "behavior"
+        Z = cos(X) : 1  # "behavior"
         condition : 1
         """,
         threshold="v > -50*mvolt",
@@ -113,7 +117,8 @@ def main(cond_params, base_params, train_device, fsnn_outfile):
     syn.w = 0.5
 
     print(f"{ng.N=}")
-    state_mon = b2.StateMonitor(ng, ["Y", "Z"], record=np.arange(10), dt=1 * b2.ms)
+    samp_period = float(base_params["sample_period_ms"]) * b2.ms
+    state_mon = b2.StateMonitor(ng, ["X", "Z"], record=np.arange(10), dt=samp_period)
     v_mon = b2.StateMonitor(ng, "v", record=np.arange(10))
 
     net = b2.Network(ng, syn, state_mon, v_mon)
@@ -131,13 +136,13 @@ def main(cond_params, base_params, train_device, fsnn_outfile):
 
     syn.w = rng.normal(0, 1, size=len(syn))
     print("done running")
-    print(f"{ng.Y[0:10]=}")
-    plt.plot(state_mon.t / b2.ms, state_mon.Y.T)
-    plt.savefig(f"{outdir}/example_Y.png")
+    print(f"{ng.X[0:10]=}")
+    plt.plot(state_mon.t / b2.ms, state_mon.X.T)
+    plt.savefig(f"{outdir}/example_X.png")
     plt.close()
     plt.plot(v_mon.t / b2.ms, v_mon.v.T / b2.mV)
     plt.savefig(f"{outdir}/example_v.png")
-    fsnn = fSNN(net, ng, syn, state_mon, v_mon)
+    fsnn = fSNN(net, ng, syn, state_mon, v_mon, int(cond_params["n_pcs"]))
     print(fsnn)
     fsnn.save(fsnn_outfile)
     print(f"saved to {fsnn_outfile}")

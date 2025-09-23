@@ -151,6 +151,7 @@ q1:
     - 16
     - 32
     - 64
+  m: 64
 
 # Q2: optimal stim/rec balance
 ##############################
@@ -176,21 +177,25 @@ task_specific:
       n_x1: 3
       epochs: 100
 
+# common to sys ID and ctrl expts
+################################
+expts:
+  u_max_mWmm2: 75
+  sample_period_ms: 1
+
 # sys ID parameters
 ####################
 sys_id:
   foo: bar
 
-u_max_mWmm2: 75
-
 # controller
 #########
 controller:
-  Q: 1
-  R: 0.1
-  dt_ms: 5
-  ctrl_horizon_ms: 50
-  pred_horizon_ms: 100
+  Q_cost: 1
+  R_cost: 0.1
+  # ctrl_horizon_ms: 50
+  ctrl_horizon_ms: 20
+  # pred_horizon_ms: 100
   # n_trials_ctrl: 100
   n_trials_ctrl: 12
   baseline_latency_ms: 1

@@ -1,4 +1,5 @@
 import brian2.only as b2
+import numpy as np
 from attrs import define, field
 
 from src.ctrl import Controller
@@ -6,13 +7,7 @@ from src.ctrl import Controller
 
 @define
 class LQMPCController(Controller):
-    def update_state(self, xpred, y):
-        return xpred
-
-    def predict_state(self, xhat, u):
-        return xhat
-
     def compute_control(self, xhat):
-        # Placeholder: random control
-        u = self.rng.uniform(0, self.u_max_mWmm2, self.k_opto)
-        return u
+        self.update_opt_problem(xhat, self.sim.network.t)
+        self.prob.solve(warm_start=True)
+        return self.Uopt_opto.values[0]

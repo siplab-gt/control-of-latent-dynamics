@@ -61,7 +61,7 @@ def main(cond_params, base_params, fsnn_file, outfile):
     light_and_probe_coords = module.light_and_probe_coords
 
     light_coords, light_groups, probe_coords = light_and_probe_coords(
-        grid, int(cond_params["k"])
+        grid, int(cond_params["k"]), int(cond_params["m"])
     )
 
     light_array = GroupedLight(

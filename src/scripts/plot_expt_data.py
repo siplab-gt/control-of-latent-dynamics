@@ -9,7 +9,7 @@ def plot_all(expt_data, outfile):
     fig, axs = plt.subplots(4, 1, figsize=(figwidth, 8), sharex=True)
     for ax, varname, t in zip(
         axs,
-        ["Y", "Z", "spikes", "Uopto"],
+        ["X", "Z", "spikes", "Uopto"],
         [expt_data.t_ms, expt_data.t_ms, expt_data.t_samp_ms, expt_data.t_opto_ms],
     ):
         print(f"plotting {varname}")
@@ -30,6 +30,7 @@ def plot_all(expt_data, outfile):
         )
 
     plt.savefig(outfile)
+    return fig, axs
 
 
 if __name__ == "__main__" and "snakemake" in locals():

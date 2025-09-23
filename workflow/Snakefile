@@ -83,6 +83,10 @@ def params_from_cfg_with_wildcards(
     return replace_wildcards
 
 
+m_sufficient_stim = int(config["q1"]["m"])
+m_sufficient_stim = 16
+
+
 rule test:
     # for easily running one reference condition
     # (doesn't require a super long path with all wildcards)
@@ -96,7 +100,7 @@ rule test:
             latency=False,
             ctrl_type="OL",
             k=4,
-            m=0,
+            m=m_sufficient_stim,
             seed=0,
             layeredness=1,
             n_trials_sys_id=12,
@@ -126,7 +130,7 @@ rule sufficient_stim_tabulate:
                 setting="sufficient_stim",
                 latency=latency,
                 ctrl_type=ctrl,
-                m=0,
+                m=m_sufficient_stim,
                 k=config["q1"]["k"],
                 seed=config["grid_sweep_conds"]["seed"],
             )
@@ -193,7 +197,7 @@ rule ctrl_expts:
         ),
         braid_model=paths_for_params("braid_model.pkl", latency=NA, ctrl_type=NA),
     params:
-        **params_from_cfg("u_max_mWmm2"),
+        **params_from_cfg("expts", keep_target_key=False),
         **params_from_cfg("controller", keep_target_key=False),
         expts=params_from_cfg_with_wildcards(
             "task_specific/{task}/expts", keep_target_key=False
@@ -224,6 +228,7 @@ rule model_fit:
     output:
         braid_model=f"results/{params_str}/braid_model.pkl",
         logs_plot=f"results/{params_str}/braid_model_logs.png",
+        pred_plot=f"results/{params_str}/braid_model_pred_plot.png",
     script:
         "../src/scripts/model_fit.py"
 
@@ -264,7 +269,7 @@ rule sys_id_expts:
     input:
         paths_for_params("cleo_prep.pkl", n_trials_sys_id=NA, latency=NA, ctrl_type=NA),
     params:
-        **params_from_cfg("u_max_mWmm2"),
+        **params_from_cfg("expts", keep_target_key=False),
         expts=params_from_cfg_with_wildcards(
             "task_specific/{task}/expts", keep_target_key=False
         ),
@@ -332,6 +337,7 @@ rule train_fsnn:
             "layer_density_ratios",
             "layer_boundaries_um",
             "array_side_length_mm",
+            "expts/sample_period_ms",
         ),
     log:
         **standard_log_kwargs("train_fsnn"),
