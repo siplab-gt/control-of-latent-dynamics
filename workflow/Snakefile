@@ -97,8 +97,8 @@ rule test:
             file="{file}",
             setting="sufficient_stim",
             task="reaching",
-            latency=False,
-            ctrl_type="OL",
+            latency=True,
+            ctrl_type="LQMPC",
             k=4,
             m=m_sufficient_stim,
             seed=0,
@@ -180,22 +180,39 @@ rule plot_ctrl_data_wide:
         "src/plot_style.py",
     output:
         f"results/{params_str}/ctrl_data_wide_plot.png",
+        f"results/{params_str}/ctrl_data_wide_plot_exploded.png",
     localrule: True
     script:
-        "../src/scripts/plot_expt_data.py"
+        "../src/scripts/plot_ctrl_data.py"
+
+
+def na_wildcards_before_step(desired_step):
+    """returns a {wc: "NA"} dict for all wildcards that are irrelevant before
+    the desired step. e.g., for model fit, the WCs introduced by model_fit and later"""
+    irrelevant_wcs = []
+    for step, step_irrs in [
+        ("ctrl_expts", ["latency", "ctrl_type"]),
+        ("model_fit", ["n_trials_sys_id", "model_task_inputs"]),
+        ("sys_id_expts", []),
+        ("cleo_prep", ["beam_width_um", "beam_spacing", "k", "m"]),
+    ]:
+        irrelevant_wcs += step_irrs
+        if step == desired_step:
+            break
+    return {wc: NA for wc in irrelevant_wcs}
 
 
 # whatever the output is, ask for the fit from non-control-relevant parameters (latency, control)
 rule ctrl_expts:
     input:
+        "src/ctrl/__init__.py",
+        "src/ctrl/{ctrl_type}.py",
         cleo_prep=paths_for_params(
-            "cleo_prep.pkl",
-            latency=NA,
-            ctrl_type=NA,
-            n_trials_sys_id=NA,
-            model_task_inputs=NA,
+            "cleo_prep.pkl", **na_wildcards_before_step("sys_id_expts")
         ),
-        braid_model=paths_for_params("braid_model.pkl", latency=NA, ctrl_type=NA),
+        braid_model=paths_for_params(
+            "braid_model.pkl", **na_wildcards_before_step("ctrl_expts")
+        ),
     params:
         **params_from_cfg("expts", keep_target_key=False),
         **params_from_cfg("controller", keep_target_key=False),
@@ -210,16 +227,9 @@ rule ctrl_expts:
         "../src/scripts/ctrl_expts.py"
 
 
-n_trials_sys_id_max = config["star_sweep_conds"]["n_trials_sys_id"][-1]
-
-
 rule model_fit:
     input:
-        paths_for_params(
-            "sys_id_data.pkl",
-            n_trials_sys_id=n_trials_sys_id_max,
-            model_task_inputs=NA,
-        ),
+        paths_for_params("sys_id_data.pkl", **na_wildcards_before_step("model_fit")),
     params:
         model_fit=params_from_cfg_with_wildcards(
             "task_specific/{task}/model_fit", keep_target_key=False
@@ -235,11 +245,7 @@ rule model_fit:
 
 rule plot_sys_id_data_trials:
     input:
-        paths_for_params(
-            "sys_id_data.pkl",
-            n_trials_sys_id=n_trials_sys_id_max,
-            model_task_inputs=NA,
-        ),
+        paths_for_params("sys_id_data.pkl", **na_wildcards_before_step("model_fit")),
         "src/plot_style.py",
     params:
         params_from_cfg("sys_id"),
@@ -252,11 +258,7 @@ rule plot_sys_id_data_trials:
 
 rule plot_sys_id_data_wide:
     input:
-        paths_for_params(
-            "sys_id_data.pkl",
-            n_trials_sys_id=n_trials_sys_id_max,
-            model_task_inputs=NA,
-        ),
+        paths_for_params("sys_id_data.pkl", **na_wildcards_before_step("model_fit")),
         "src/plot_style.py",
     output:
         f"results/{params_str}/sys_id_data_wide_plot.png",
@@ -267,12 +269,13 @@ rule plot_sys_id_data_wide:
 
 rule sys_id_expts:
     input:
-        paths_for_params("cleo_prep.pkl", n_trials_sys_id=NA, latency=NA, ctrl_type=NA),
+        paths_for_params("cleo_prep.pkl", **na_wildcards_before_step("sys_id_expts")),
     params:
         **params_from_cfg("expts", keep_target_key=False),
         expts=params_from_cfg_with_wildcards(
             "task_specific/{task}/expts", keep_target_key=False
         ),
+        n_trials_sys_id_max=config["star_sweep_conds"]["n_trials_sys_id"][-1],
     output:
         f"results/{params_str}/sys_id_data.pkl",
     script:
@@ -293,9 +296,7 @@ rule plot_cleo:
 rule cleo_prep:
     input:
         # use NA for wildcards that were irrelevant before this step
-        paths_for_params(
-            "trained_fsnn.pkl", beam_width_um=NA, beam_spacing=NA, k=NA, m=NA
-        ),
+        paths_for_params("trained_fsnn.pkl", **na_wildcards_before_step("cleo_prep")),
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
         "src/interface_array.py",

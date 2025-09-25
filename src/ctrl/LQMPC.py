@@ -8,6 +8,6 @@ from src.ctrl import Controller
 @define
 class LQMPCController(Controller):
     def compute_control(self, xhat):
-        self.update_opt_problem(xhat, self.sim.network.t)
+        self.update_opt_problem(xhat, self.t_now)
         self.prob.solve(warm_start=True)
-        return self.Uopt_opto.values[0]
+        return self.Uopt_opto.value[0]

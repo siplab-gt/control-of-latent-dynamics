@@ -4,13 +4,22 @@ from src.plot_style import style_plots
 from src.scripts.sys_id_expts import ExptData
 
 
-def plot_all(expt_data, outfile):
+def plot_all(expt_data: ExptData, outfile):
+    vars = ["X", "Z", "spikes", "Uopto", "Utask"]
+    nrows = len(vars)
     figwidth = 1 * expt_data.n_trials
-    fig, axs = plt.subplots(4, 1, figsize=(figwidth, 8), sharex=True)
+    figheight = 2 * nrows
+    fig, axs = plt.subplots(nrows, 1, figsize=(figwidth, figheight), sharex=True)
     for ax, varname, t in zip(
         axs,
-        ["X", "Z", "spikes", "Uopto"],
-        [expt_data.t_ms, expt_data.t_ms, expt_data.t_samp_ms, expt_data.t_opto_ms],
+        vars,
+        [
+            expt_data.t_ms,
+            expt_data.t_ms,
+            expt_data.t_samp_ms,
+            expt_data.t_opto_ms,
+            expt_data.t_ms,
+        ],
     ):
         print(f"plotting {varname}")
         ax.plot(t, getattr(expt_data, varname))

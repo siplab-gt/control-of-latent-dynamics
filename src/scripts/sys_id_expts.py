@@ -45,9 +45,10 @@ class ExptData(BaseDataClass):
     ]:
         """Get the control input, experimental measurements, and time for a specific trial."""
         start, end = self.i_trial_boundaries[trial_idx]
-        t_start, t_end = self.t_ms[start], self.t_ms[end]
+        t_start = self.t_ms[start]
+        t_end = self.t_ms[end] if end < len(self.t_ms) else self.t_ms[-1] + 1
         start_end_opto = slice(*np.searchsorted(self.t_opto_ms, (t_start, t_end)))
-        return self.U[start_end_opto], self.X[start:end], self.t_ms[start:end]
+        return self.Uopto[start_end_opto], self.X[start:end], self.t_ms[start:end]
 
     @classmethod
     def from_cleo_prep(
@@ -58,7 +59,7 @@ class ExptData(BaseDataClass):
             t_opto_ms=cleo_prep.light.t[1:] / b2.ms,
             # stand-in for task-related inputs for now
             Utask=cleo_prep.fsnn.u_task(t_samp),
-            X=cleo_prep.fsnn.state_mon.X.T[:, cleo_prep.fsnn.n_pcs],
+            X=cleo_prep.fsnn.state_mon.X.T[:, : cleo_prep.fsnn.n_pcs],
             Z=cleo_prep.fsnn.state_mon.Z.T[:, :4],
             t_ms=cleo_prep.fsnn.state_mon.t / b2.ms,
             spikes=spike_counts,
@@ -99,7 +100,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     u_max = float(base_params["u_max_mWmm2"])
     t_intertrial_ms = float(base_params.expts["t_intertrial_ms"])
     t_trial_ms = float(base_params.expts["t_trial_ms"])
-    n_trials = int(cond_params["n_trials_sys_id"])
+    n_trials = int(base_params["n_trials_sys_id_max"])
 
     cleo_prep = CleoPrep.load(cleo_prep_file)
     cleo_prep.reset()
@@ -121,6 +122,8 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     i_trial_boundaries = []
     for i_trial in range(n_trials):
         print(f"running sys ID trial {i_trial}")
+        # TODO: likely will sample trials at the very beginning, not on the go.
+        # needed for standalone mode
         cleo_prep.run(
             t_intertrial_ms * b2.ms,  # TODO
             report_period=50 * b2.second,
@@ -151,7 +154,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     )
     expt_data.save(outfile)
 
-    plt.plot(cleo_prep.fsnn.v_mon.t / b2.ms, cleo_prep.fsnn.v_mon.v.T / b2.mV)
+    plt.plot(cleo_prep.fsnn.v_mon.t / b2.ms, cleo_prep.fsnn.v_mon.v.T[:, :10] / b2.mV)
     plt.savefig(outfile.replace(".pkl", "_v.png"))
 
 

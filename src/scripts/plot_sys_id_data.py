@@ -17,18 +17,18 @@ def main(cond_params, base_params, data_file, outfiles):
 
     for row in range(rows):
         subfig = subfigs[row]
-        axs_Y, axs_U = subfig.subplots(2, trials_per_row, sharex="col", sharey="row")
-        axs_Y[0].set(ylabel="Y (a.u.)")
+        axs_X, axs_U = subfig.subplots(2, trials_per_row, sharex="col", sharey="row")
+        axs_X[0].set(ylabel="X (a.u.)")
         axs_U[0].set(ylabel="U (mW/mm²)")
         for col in range(trials_per_row):
             i = row * trials_per_row + col
             if i >= n_trials:
                 break
             print(f"plotting sys ID trial {i}")
-            U, Y, t_ms = expt_data.get_trial_UYt(i)
+            U, X, t_ms = expt_data.get_trial_UXt(i)
             axs_U[col].plot(t_ms, U)
-            axs_Y[col].plot(t_ms, Y)
-            axs_Y[col].set(title=f"trial {i}")
+            axs_X[col].plot(t_ms, X)
+            axs_X[col].set(title=f"trial {i}")
             axs_U[col].set(xlabel="t (ms)")
 
     for f in outfiles:

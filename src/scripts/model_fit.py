@@ -68,8 +68,11 @@ def model_fit(cond_params, base_params, expt_data_file, outfiles, config):
 
     # Normalize data (removing the mean is essential before training):
     yMean, yStd = np.mean(Y, axis=0), np.std(Y, axis=0)
+    # ensure no zero stds
+    yStd[yStd == 0] = 1.0
     # YtrainN, YtestN = (Ytrain - yMean) / yStd, (Ytest - yMean) / yStd
     YN = (Y - yMean) / yStd
+    assert np.all(np.isnan(YN) == False)
     zMean, zStd = np.mean(Z, axis=0), np.std(Z, axis=0)
     # ZtrainN, ZtestN = (Ztrain - zMean) / zStd, (Ztest - zMean) / zStd
     ZN = (Z - zMean) / zStd
@@ -108,9 +111,9 @@ def model_fit(cond_params, base_params, expt_data_file, outfiles, config):
     # Here we are only looking at 1-step-ahead predictions i.e., the lists only have one element:
     zPred, yPred, xPred = zPred[0], yPred[0], xPred[0]
     print(f"{zPred.shape=}, {yPred.shape=}, {xPred.shape=}")
-    # problem with yPred. Will recalculate instead of debugging
     lssm = braid_model.getLSSM()
-    yPred = xPred @ lssm.C.T  # should be normalized
+    # problem with yPred. Will recalculate instead of debugging
+    # yPred = xPred @ lssm.C.T  # should be normalized
     yres = YN - yPred
     braid_model.R = np.cov(yres, rowvar=False)
     # again, work in normalized space
@@ -129,9 +132,10 @@ def model_fit(cond_params, base_params, expt_data_file, outfiles, config):
     # linear regression
     braid_model.linreg_braid2fsnn = LinearRegression().fit(xPred, X)
     xPred_braid2fsnn = braid_model.linreg_braid2fsnn.predict(xPred)
-    axs[0].plot(expt_data.t_ms, xPred_braid2fsnn, linestyle="--")
-    axs[1].plot(expt_data.t_ms, zPred, linestyle="--")
-    axs[2].plot(expt_data.t_ms, yPred * yStd + yMean, linestyle="--")
+    t_ms = expt_data.t_ms[: len(xPred)]
+    axs[0].plot(t_ms, xPred_braid2fsnn, linestyle="--")
+    axs[1].plot(t_ms, zPred, linestyle="--")
+    axs[2].plot(t_ms, yPred * yStd + yMean, linestyle="--")
     fig.savefig(outfiles.pred_plot)
 
     braid_model.saveToFile(outfiles.braid_model)

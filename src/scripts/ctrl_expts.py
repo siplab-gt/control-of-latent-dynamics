@@ -1,4 +1,3 @@
-import copy
 import importlib
 import random
 from dataclasses import dataclass
@@ -8,13 +7,44 @@ import cleo
 import numpy as np
 import tensorflow as tf
 from BRAID.BRAIDModel import BRAIDModel
+from jaxtyping import Float
 from matplotlib import pyplot as plt
+from sklearn.linear_model import LinearRegression
 from snakemake.script import snakemake
 
 from src.ctrl import Controller
 from src.helpers import seed_everything, str2bool
 from src.scripts.cleo_prep import CleoPrep
 from src.scripts.sys_id_expts import ExptData
+
+
+@dataclass
+class CtrlData(ExptData):
+    Xref_braid: Float[np.ndarray, "T nx"] = None
+    Xhat_braid: Float[np.ndarray, "T nx"] = None
+    Zhat: Float[np.ndarray, "T n_behavior"] = None
+    Zref: Float[np.ndarray, "T n_behavior"] = None
+    linreg_braid2fsnn: LinearRegression = None
+    """to go from BRAID X (stored here) to fSNN X (ground truth)"""
+    C: Float[np.ndarray, "m n"] = None
+    yStd: Float[np.ndarray, "m"] = None
+    yMean: Float[np.ndarray, "m"] = None
+
+    @property
+    def Xref_fsnn(self) -> Float[np.ndarray, "T n"]:
+        return self.linreg_braid2fsnn.predict(self.Xref_braid)
+
+    @property
+    def Xhat_fsnn(self) -> Float[np.ndarray, "T n"]:
+        return self.linreg_braid2fsnn.predict(self.Xhat_braid)
+
+    @property
+    def Yhat(self) -> Float[np.ndarray, "T m"]:
+        return self.Xhat_braid @ self.C.T * self.yStd + self.yMean
+
+    @property
+    def Yref(self) -> Float[np.ndarray, "T m"]:
+        return self.Xref_braid @ self.C.T * self.yStd + self.yMean
 
 
 def ctrl_expts(
@@ -63,6 +93,7 @@ def ctrl_expts(
         k_task=k_task,
         m=braid_model.ny,
         rng=rng,
+        sim=cleo_prep.sim,
         u_max_mWmm2=u_max,
         braid_model=braid_model,
         lssm=lssm,
@@ -75,6 +106,7 @@ def ctrl_expts(
         // int(base_params["sample_period_ms"]),
         Qcost=float(base_params.Q_cost),
         Rcost=float(base_params.R_cost),
+        reference=lambda t: np.zeros((np.size(t), braid_model.nx)),
     )
 
     if ctrl_proc.add_latency:
@@ -98,13 +130,22 @@ def ctrl_expts(
         i_end = cleo_prep.fsnn.state_mon.X.shape[1]
         i_trial_boundaries.append((i_start, i_end))
 
-    expt_data = ExptData.from_cleo_prep(
+    ctrl_data = CtrlData.from_cleo_prep(
         cleo_prep,
         np.array(ctrl_proc.spike_counts),
         cleo_prep.sim.io_processor.t_samp,
         i_trial_boundaries,
     )
-    expt_data.save(outfile)
+    ctrl_data.Xref_braid = ctrl_proc.Xref
+    ctrl_data.Xhat_braid = ctrl_proc.Xhat
+    ctrl_data.linreg_braid2fsnn = braid_model.linreg_braid2fsnn
+    ctrl_data.Zref = braid_model.sId.model2_Cz.predict(
+        ctrl_proc.Xref.T, prior_pred=None
+    ).T
+    ctrl_data.Zhat = braid_model.sId.model2_Cz.predict(
+        ctrl_proc.Xhat.T, prior_pred=None
+    ).T
+    ctrl_data.save(outfile)
 
 
 if __name__ == "__main__" and "snakemake" in locals():

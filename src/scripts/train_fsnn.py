@@ -35,8 +35,6 @@ class fSNN(BaseDataClass):
                 20 * np.sin(2 * np.pi * t / (300 * b2.ms) + np.pi / 2),
             ]
         ).T
-        T = len(t) if hasattr(t, "__len__") else 1
-        assert out.shape == (T, self.k_task), f"{out.shape=} {T=} {self.k_task=}"
         return out
 
     @property
@@ -90,8 +88,8 @@ def main(cond_params, base_params, train_device, fsnn_outfile):
     print(f"side_length_um: {side_length_um}, volume: {vol}, n_ng: {n_ng}")
     ng = b2.NeuronGroup(
         n_ng,
-        """dv/dt = (-(v + 70*mvolt) + (Iopto_exc + Iopto_inh)*500*Mohm) / (10*ms) : volt
-        dX/dt = (-X + i + 10*xi*sqrt(10*ms) + (v/mvolt + 70)) / (20*ms) : 1
+        """dv/dt = (-(v + 70*mvolt) + 1000*abs(X)*mvolt + (Iopto_exc + Iopto_inh)*500*Mohm) / (10*ms) : volt
+        dX/dt = (-X + i + 10*xi*sqrt(10*ms)) / (20*ms) : 1
         # dY/dt = 1 / ms : 1
         # Y = i + t / ms : 1
         Iopto_exc : amp
@@ -100,6 +98,7 @@ def main(cond_params, base_params, train_device, fsnn_outfile):
         condition : 1
         """,
         threshold="v > -50*mvolt",
+        reset="v = -70*mvolt",
     )
     hor_lim = (-side_length_um / 2, side_length_um / 2)
     assign_coords_rand_rect_prism(
