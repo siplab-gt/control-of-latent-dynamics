@@ -54,7 +54,7 @@ class ExptData(BaseDataClass):
     def from_cleo_prep(
         cls, cleo_prep: CleoPrep, spike_counts, t_samp, i_trial_boundaries
     ):
-        expt_data = ExptData(
+        expt_data = cls(
             Uopto=cleo_prep.light.irradiance_[1:],
             t_opto_ms=cleo_prep.light.t[1:] / b2.ms,
             # stand-in for task-related inputs for now

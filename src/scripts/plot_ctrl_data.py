@@ -6,7 +6,7 @@ from src.scripts.ctrl_expts import CtrlData
 
 
 def plot_all(ctrl_data: CtrlData, outfile, explode=False):
-    vars = ["X", "Xhat_braid", "Z", "spikes", "Uopto", "Utask"]
+    vars = ["X_fsnn", "Xhat_braid", "Z", "spikes", "Uopto", "Utask"]
     dashed_vars = ["Xref_fsnn", "Xref_braid", "Zref", "Yref", None, None]
     light_vars = ["Xhat_fsnn", None, "Zhat", "Yhat", None, None]
     nrows = len(vars)
@@ -15,12 +15,17 @@ def plot_all(ctrl_data: CtrlData, outfile, explode=False):
         figheight = 2 * nrows
         kwargs = {}
     elif explode:
-        ht_per_series = 0.2
+        ht_per_series = 0.3
         num_series_per_row = [getattr(ctrl_data, v).shape[1] for v in vars]
         figheight = ht_per_series * sum(num_series_per_row)
         kwargs = {"height_ratios": num_series_per_row}
     fig, axs = plt.subplots(
-        nrows, 1, figsize=(figwidth, figheight), sharex=True, **kwargs
+        nrows,
+        1,
+        figsize=(figwidth, figheight),
+        sharex=True,
+        layout="compressed",
+        **kwargs,
     )
     for ax, varname, t, dashed_varname, light_varname in zip(
         axs,
@@ -38,22 +43,21 @@ def plot_all(ctrl_data: CtrlData, outfile, explode=False):
     ):
         print(f"plotting {varname}")
         data = getattr(ctrl_data, varname)
-        ddata = getattr(ctrl_data, dashed_varname) if dashed_varname else None
-        ldata = getattr(ctrl_data, light_varname) if light_varname else None
-        pctl = 90
-        if explode:
-            data += np.arange(data.shape[1]) * np.percentile(data, pctl)
-            if ddata is not None:
-                ddata += np.arange(ddata.shape[1]) * np.percentile(ddata, pctl)
-            if ldata is not None:
-                ldata += np.arange(ldata.shape[1]) * np.percentile(ldata, pctl)
+        offsets = (
+            np.arange(data.shape[1]) * np.percentile(np.ptp(data), 60) if explode else 0
+        )
 
-        ax.plot(t, data)
+        ax.plot(t, data + offsets)
+        ax.set_prop_cycle(None)  # reset color cycler
         if dashed_varname is not None:
-            ax.plot(t, ddata, ls="--")
+            ax.plot(t, getattr(ctrl_data, dashed_varname) + offsets, ls="--")
+            ax.set_prop_cycle(None)  # reset color cycler
         if light_varname is not None:
-            ax.plot(t, ldata, alpha=0.5)
-        ax.set(ylabel=f"{varname}, {dashed_varname} dashed, {light_varname} light")
+            ax.plot(t, getattr(ctrl_data, light_varname) + offsets, alpha=0.5)
+        ax.set(
+            title=f"{varname}, {dashed_varname} dashed, {light_varname} light",
+            ylabel=varname,
+        )
 
     axs[-1].set(xlabel="time (ms)")
     for i, (i_start, _) in enumerate(ctrl_data.i_trial_boundaries):
@@ -65,9 +69,11 @@ def plot_all(ctrl_data: CtrlData, outfile, explode=False):
             xytext=(0, 5),
             textcoords="offset points",
             ha="center",
-            va="bottom",
+            va="top",
             annotation_clip=False,
         )
+        for ax in axs:
+            ax.axvline(t_start, color="xkcd:light gray", lw=0.5)
 
     plt.savefig(outfile)
     return fig, axs

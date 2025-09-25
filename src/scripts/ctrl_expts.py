@@ -3,12 +3,8 @@ import random
 from dataclasses import dataclass
 
 import brian2.only as b2
-import cleo
 import numpy as np
-import tensorflow as tf
-from BRAID.BRAIDModel import BRAIDModel
 from jaxtyping import Float
-from matplotlib import pyplot as plt
 from sklearn.linear_model import LinearRegression
 from snakemake.script import snakemake
 
@@ -30,6 +26,10 @@ class CtrlData(ExptData):
     yStd: Float[np.ndarray, "m"] = None
     yMean: Float[np.ndarray, "m"] = None
 
+    def set(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
     @property
     def Xref_fsnn(self) -> Float[np.ndarray, "T n"]:
         return self.linreg_braid2fsnn.predict(self.Xref_braid)
@@ -46,10 +46,18 @@ class CtrlData(ExptData):
     def Yref(self) -> Float[np.ndarray, "T m"]:
         return self.Xref_braid @ self.C.T * self.yStd + self.yMean
 
+    @property
+    def X_fsnn(self) -> Float[np.ndarray, "T n"]:
+        return self.X
+
 
 def ctrl_expts(
     cond_params, base_params, cleo_prep_file, braid_model_file, outfile, config
 ):
+    # import here so not needed to use CtrlData class
+    import tensorflow as tf
+    from BRAID.BRAIDModel import BRAIDModel
+
     print(f"{base_params=}")
     print(base_params.keys())
     seed = seed_everything(int(cond_params["seed"]), "ctrl_expts")
@@ -106,7 +114,7 @@ def ctrl_expts(
         // int(base_params["sample_period_ms"]),
         Qcost=float(base_params.Q_cost),
         Rcost=float(base_params.R_cost),
-        reference=lambda t: np.zeros((np.size(t), braid_model.nx)),
+        reference=lambda t: np.zeros((np.size(t), braid_model.nx)).squeeze(),
     )
 
     if ctrl_proc.add_latency:
@@ -136,15 +144,20 @@ def ctrl_expts(
         cleo_prep.sim.io_processor.t_samp,
         i_trial_boundaries,
     )
-    ctrl_data.Xref_braid = ctrl_proc.Xref
-    ctrl_data.Xhat_braid = ctrl_proc.Xhat
-    ctrl_data.linreg_braid2fsnn = braid_model.linreg_braid2fsnn
-    ctrl_data.Zref = braid_model.sId.model2_Cz.predict(
-        ctrl_proc.Xref.T, prior_pred=None
-    ).T
-    ctrl_data.Zhat = braid_model.sId.model2_Cz.predict(
-        ctrl_proc.Xhat.T, prior_pred=None
-    ).T
+    x2z_model = braid_model.sId.model1.rnn.cell.Cfw
+    print("computing Zref and Zhat from Xref and Xhat")
+    Zref = x2z_model.predict(ctrl_proc.Xref.T).T
+    Zhat = x2z_model.predict(ctrl_proc.Xhat.T).T
+    ctrl_data.set(
+        C=lssm.C,
+        Xref_braid=ctrl_proc.Xref,
+        Xhat_braid=ctrl_proc.Xhat,
+        linreg_braid2fsnn=braid_model.linreg_braid2fsnn,
+        yStd=braid_model.yStd,
+        yMean=braid_model.yMean,
+        Zhat=Zhat * braid_model.zStd + braid_model.zMean,
+        Zref=Zref * braid_model.zStd + braid_model.zMean,
+    )
     ctrl_data.save(outfile)
 
 

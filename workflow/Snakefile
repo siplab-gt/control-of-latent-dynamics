@@ -172,6 +172,8 @@ rule analyze_ctrl_data:
         f"results/{params_str}/ctrl_data.pkl",
     output:
         f"results/{params_str}/summary.csv",
+    script:
+        "../src/scripts/analyze_ctrl_data.py"
 
 
 rule plot_ctrl_data_wide:

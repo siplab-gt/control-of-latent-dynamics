@@ -53,7 +53,7 @@ def model_fit(cond_params, base_params, expt_data_file, outfiles, config):
 
     braid_model: BRAIDModel = BRAIDModel()
     methodCode = (
-        "BRAID_Cz1HL68U"  # Only Cz will be nonlinear, 1 Hidden layer with 64 Units.
+        "BRAID_Cz1HL64U"  # Only Cz will be nonlinear, 1 Hidden layer with 64 Units.
     )
     args = MainModelPrepareArgs(methodCode)
     args["epochs"] = int(base_params.model_fit["epochs"])
@@ -103,6 +103,12 @@ def model_fit(cond_params, base_params, expt_data_file, outfiles, config):
 
     assert braid_model.n1 == braid_model.nx == n_x
 
+    mm = braid_model.sId
+    print(f"{mm.model2_Cz=}, {mm.model2_Cz_fw=}, {mm.nz=}, {mm.ZPrepMap=}")
+    if hasattr(mm, "multi_step_with_data_gen"):
+        print(f"{mm.multi_step_with_data_gen=}")
+    print()
+
     # estimate Q, R
     zPred, yPred, xPred, _, _, _ = runPredict(
         braid_model, Y, Z, U, YType="cont", ZType="cont"
@@ -138,6 +144,7 @@ def model_fit(cond_params, base_params, expt_data_file, outfiles, config):
     axs[2].plot(t_ms, yPred * yStd + yMean, linestyle="--")
     fig.savefig(outfiles.pred_plot)
 
+    braid_model.sId.print_summary()
     braid_model.saveToFile(outfiles.braid_model)
 
 
