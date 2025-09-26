@@ -103,12 +103,6 @@ def model_fit(cond_params, base_params, expt_data_file, outfiles, config):
 
     assert braid_model.n1 == braid_model.nx == n_x
 
-    mm = braid_model.sId
-    print(f"{mm.model2_Cz=}, {mm.model2_Cz_fw=}, {mm.nz=}, {mm.ZPrepMap=}")
-    if hasattr(mm, "multi_step_with_data_gen"):
-        print(f"{mm.multi_step_with_data_gen=}")
-    print()
-
     # estimate Q, R
     zPred, yPred, xPred, _, _, _ = runPredict(
         braid_model, Y, Z, U, YType="cont", ZType="cont"

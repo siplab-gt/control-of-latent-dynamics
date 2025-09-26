@@ -188,15 +188,21 @@ rule plot_ctrl_data_wide:
         "../src/scripts/plot_ctrl_data.py"
 
 
-def na_wildcards_before_step(desired_step):
-    """returns a {wc: "NA"} dict for all wildcards that are irrelevant before
-    the desired step. e.g., for model fit, the WCs introduced by model_fit and later"""
+def na_wildcards_through_step(desired_step):
+    """returns a {wc: "NA"} dict for all wildcards that are irrelevant at and before
+    the desired step, i.e., they are introduced later.
+    e.g., for model fit, the WCs introduced by ctrl_expts"""
     irrelevant_wcs = []
     for step, step_irrs in [
-        ("ctrl_expts", ["latency", "ctrl_type"]),
-        ("model_fit", ["n_trials_sys_id", "model_task_inputs"]),
-        ("sys_id_expts", []),
-        ("cleo_prep", ["beam_width_um", "beam_spacing", "k", "m"]),
+        ("ctrl_expts", []),
+        # introduced by ctrl_expts:
+        ("model_fit", ["latency", "ctrl_type"]),
+        # introduced by model_fit:
+        ("sys_id_expts", ["n_trials_sys_id", "model_task_inputs"]),
+        # introduced by sys_id_expts:
+        ("cleo_prep", []),
+        # introduced by cleo_prep:
+        ("train_fsnn", ["beam_width_um", "beam_spacing", "k", "m"]),
     ]:
         irrelevant_wcs += step_irrs
         if step == desired_step:
@@ -210,10 +216,10 @@ rule ctrl_expts:
         "src/ctrl/__init__.py",
         "src/ctrl/{ctrl_type}.py",
         cleo_prep=paths_for_params(
-            "cleo_prep.pkl", **na_wildcards_before_step("sys_id_expts")
+            "cleo_prep.pkl", **na_wildcards_through_step("cleo_prep")
         ),
         braid_model=paths_for_params(
-            "braid_model.pkl", **na_wildcards_before_step("ctrl_expts")
+            "braid_model.pkl", **na_wildcards_through_step("model_fit")
         ),
     params:
         **params_from_cfg("expts", keep_target_key=False),
@@ -231,7 +237,7 @@ rule ctrl_expts:
 
 rule model_fit:
     input:
-        paths_for_params("sys_id_data.pkl", **na_wildcards_before_step("model_fit")),
+        paths_for_params("sys_id_data.pkl", **na_wildcards_through_step("sys_id_expts")),
     params:
         model_fit=params_from_cfg_with_wildcards(
             "task_specific/{task}/model_fit", keep_target_key=False
@@ -247,7 +253,7 @@ rule model_fit:
 
 rule plot_sys_id_data_trials:
     input:
-        paths_for_params("sys_id_data.pkl", **na_wildcards_before_step("model_fit")),
+        paths_for_params("sys_id_data.pkl", **na_wildcards_through_step("sys_id_expts")),
         "src/plot_style.py",
     params:
         params_from_cfg("sys_id"),
@@ -260,7 +266,7 @@ rule plot_sys_id_data_trials:
 
 rule plot_sys_id_data_wide:
     input:
-        paths_for_params("sys_id_data.pkl", **na_wildcards_before_step("model_fit")),
+        paths_for_params("sys_id_data.pkl", **na_wildcards_through_step("sys_id_expts")),
         "src/plot_style.py",
     output:
         f"results/{params_str}/sys_id_data_wide_plot.png",
@@ -271,7 +277,7 @@ rule plot_sys_id_data_wide:
 
 rule sys_id_expts:
     input:
-        paths_for_params("cleo_prep.pkl", **na_wildcards_before_step("sys_id_expts")),
+        paths_for_params("cleo_prep.pkl", **na_wildcards_through_step("cleo_prep")),
     params:
         **params_from_cfg("expts", keep_target_key=False),
         expts=params_from_cfg_with_wildcards(
@@ -298,7 +304,7 @@ rule plot_cleo:
 rule cleo_prep:
     input:
         # use NA for wildcards that were irrelevant before this step
-        paths_for_params("trained_fsnn.pkl", **na_wildcards_before_step("cleo_prep")),
+        paths_for_params("trained_fsnn.pkl", **na_wildcards_through_step("train_fsnn")),
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
         "src/interface_array.py",

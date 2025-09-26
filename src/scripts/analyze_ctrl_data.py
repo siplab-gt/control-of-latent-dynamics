@@ -8,7 +8,9 @@ def analyze_ctrl_data(ctrl_data: CtrlData, outfile):
     # TODO: implement analysis logic
     # compute R2...
     results = {}
-    results["R2"]
+    results["R2_ctrl_Z_Zref"]
+    results["R2_ctrl_Xhat_Xref_braid"]
+
     pass
 
 

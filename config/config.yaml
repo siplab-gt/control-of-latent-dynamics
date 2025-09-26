@@ -124,7 +124,7 @@ model_fit_device: cpu
 power_per_neuron_uW: 1 # when normalizing power
 # L5 is the sparsest, serves as base.
 # from Narayanan 2017:
-base_neuron_density: 65 # neurons per mm^3. 65k is realistic
+base_neuron_density: 650 # neurons per mm^3. 65k is realistic
 layer_density_ratios:
   - 1.231 # L2/3, =80/65
   - 1.539 # L4, =100/65
