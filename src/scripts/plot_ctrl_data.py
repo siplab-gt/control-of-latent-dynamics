@@ -6,8 +6,8 @@ from src.scripts.ctrl_expts import CtrlData
 
 
 def plot_all(ctrl_data: CtrlData, outfile, explode=False):
-    vars = ["X_fsnn", "Xhat_braid", "Z", "spikes", "Uopto", "Utask"]
-    dashed_vars = ["Xref_fsnn", "Xref_braid", "Zref", "Yref", None, None]
+    vars = ["X_fsnn", "Xhat_lds", "Z", "spikes", "Uopto", "Utask"]
+    dashed_vars = ["Xref_fsnn", "Xref_lds", "Zref", "Yref", None, None]
     light_vars = ["Xhat_fsnn", None, "Zhat", "Yhat", None, None]
     nrows = len(vars)
     figwidth = 1 * ctrl_data.n_trials
@@ -50,9 +50,11 @@ def plot_all(ctrl_data: CtrlData, outfile, explode=False):
         ax.plot(t, data + offsets)
         ax.set_prop_cycle(None)  # reset color cycler
         if dashed_varname is not None:
+            print(f" with {dashed_varname}")
             ax.plot(t, getattr(ctrl_data, dashed_varname) + offsets, ls="--")
             ax.set_prop_cycle(None)  # reset color cycler
         if light_varname is not None:
+            print(f" and {light_varname}")
             ax.plot(t, getattr(ctrl_data, light_varname) + offsets, alpha=0.5)
         ax.set(
             title=f"{varname}, {dashed_varname} dashed, {light_varname} light",

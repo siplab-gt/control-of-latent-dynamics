@@ -6,28 +6,22 @@ import cleo
 import cvxpy as cp
 import numpy as np
 from attrs import define, field
-from BRAID.BRAIDModel import BRAIDModel
-from BRAID.tools.LSSM import LSSM
 from brian2 import Quantity, mm2, ms, mwatt, second
 from jaxtyping import Float
+
+from src.model_fit import LDS
+from src.scripts.cleo_prep import CleoPrep
 
 
 @define
 class Controller(cleo.ioproc.LatencyIOProcessor):
-    k_opto: int = None
-    """number of optogenetic inputs"""
-    k_task: int = None
-    """number of task-related inputs"""
-    m: int = None
-    """number of measured outputs (e.g. spike channels)"""
     rng: np.random.Generator = None
     sim: cleo.CLSimulator = None
     u_max_mWmm2: float = None
     add_latency: bool = True
     baseline_latency: Quantity = None
-    braid_model: BRAIDModel = None
-    lssm: LSSM = None
     compute_latency: Quantity = None
+    lds: LDS = None
     reference: Callable[[Quantity], Quantity] = None
     u_task: Callable[[Quantity], np.ndarray] = field(default=lambda t: np.zeros(0))
     """callable with signature t -> task inputs (shape ([T], k_task) array)"""
@@ -35,6 +29,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     """control horizon (number of time steps)"""
     Qcost: float = None
     Rcost: float = None
+    cleo_prep: CleoPrep = None
+    state_estimation: str = None
 
     spike_counts: list = field(factory=list)
     _Xhat: list = field(factory=list)
@@ -68,8 +64,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     def reset(self):
         super().reset()
-        self.xpred = np.zeros(self.nx)
-        self.Ppred = np.eye(self.nx)  # initial covariance
+        self.xpred = np.zeros(self.n)
+        self.Ppred = np.eye(self.n)  # initial covariance
         self.spike_counts = []
         self._Xhat = []
         self._Xref = []
@@ -79,11 +75,11 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     def init_optimization(self):
         self.Uopt_opto = cp.Variable((self.horizon, self.k_opto), nonneg=True)
         self.Uopt_task = cp.Parameter((self.horizon, self.k_task))
-        self.Xopt = cp.Variable((self.horizon + 1, self.nx))
-        self.Xopt_ref = cp.Parameter((self.horizon, self.nx))
-        self.x0opt = cp.Parameter(self.nx)
+        self.Xopt = cp.Variable((self.horizon + 1, self.n))
+        self.Xopt_ref = cp.Parameter((self.horizon, self.n))
+        self.x0opt = cp.Parameter(self.n)
         cost = (
-            cp.sum_squares(self.Xopt[1:] - self.Xopt_ref) * self.Qcost / self.nx
+            cp.sum_squares(self.Xopt[1:] - self.Xopt_ref) * self.Qcost / self.n
             + cp.sum_squares(self.Uopt_opto) * self.Rcost / self.k_opto
         )
         if self.k_task > 0:
@@ -103,7 +99,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         self.prob = cp.Problem(cp.Minimize(cost), constraints)
 
         self.Uopt_opto.value = np.zeros((self.horizon, self.k_opto))
-        self.Xopt.value = np.zeros((self.horizon + 1, self.nx))
+        self.Xopt.value = np.zeros((self.horizon + 1, self.n))
 
         assert self.prob.is_dcp(dpp=False), "problem not DCP"
         assert self.prob.is_dcp(dpp=True), "problem not DPP"
@@ -118,11 +114,11 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         )
 
     @property
-    def Xhat(self) -> Float[np.ndarray, "T nx"]:
+    def Xhat(self) -> Float[np.ndarray, "T n"]:
         return np.array(self._Xhat)
 
     @property
-    def Xref(self) -> Float[np.ndarray, "T nx"]:
+    def Xref(self) -> Float[np.ndarray, "T n"]:
         return np.array(self._Xref)
 
     @property
@@ -130,37 +126,14 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         return self.unzscore(self.Xhat @ self.C.T, "y")
 
     @property
-    def k(self):
-        return self.k_opto + self.k_task
-
-    @property
-    def u_max_zscored(self):
-        return (
-            self.u_max_mWmm2 - self.braid_model.uMean[: self.k_opto]
-        ) / self.braid_model.uStd[: self.k_opto]
-
-    @property
-    def B_opto(self):
-        return self.B[:, : self.k_opto]
-
-    @property
-    def B_task(self) -> Float[np.ndarray, "nx {self.k_task}"]:
-        return self.B[:, self.k_opto :]
-
-    @property
-    def nx(self) -> int:
-        return self.braid_model.nx
-
-    @property
     def t_now(self) -> Quantity:
         return self.sim.network.t
 
     def measure_latency(self):
         durations = []
-        xpred = np.zeros(self.nx)
-        Ppred = np.eye(self.nx)
-        u = self.rng.uniform(0, self.u_max_mWmm2, self.k) * mwatt / mm2
-        u = self.rng.normal(self.braid_model.uMean, self.braid_model.uStd, self.k)
+        xpred = np.zeros(self.n)
+        Ppred = np.eye(self.n)
+        u = self.rng.normal(self.lds.u_mean, self.lds.u_std, self.k)
         for i in range(100):
             avg_rate = 20 / second
             y = self.rng.poisson(lam=avg_rate * self.sample_period)
@@ -177,13 +150,13 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         return np.array(durations)[5:].mean() * second
 
     def zscore(self, var: np.ndarray, varname: str):
-        mean = getattr(self.braid_model, f"{varname}Mean")
-        std = getattr(self.braid_model, f"{varname}Std")
+        mean = getattr(self.lds, f"{varname}_mean")
+        std = getattr(self.lds, f"{varname}_std")
         return (var - mean) / std
 
     def unzscore(self, var: np.ndarray, varname: str):
-        mean = getattr(self.braid_model, f"{varname}Mean")
-        std = getattr(self.braid_model, f"{varname}Std")
+        mean = getattr(self.lds, f"{varname}_mean")
+        std = getattr(self.lds, f"{varname}_std")
         return var * std + mean
 
     def update_state(self, xpred, y, Ppred) -> tuple[np.ndarray, np.ndarray]:
@@ -194,7 +167,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         # use pinv instead of inv in case of singular matrix (where C has an all-0 zero)
         K = Ppred @ self.C.T @ np.linalg.pinv(self.C @ Ppred @ self.C.T + self.R)
         xhat = xpred + K @ yerr
-        P = (np.eye(self.nx) - K @ self.C) @ Ppred
+        P = (np.eye(self.n) - K @ self.C) @ Ppred
         return xhat, P
 
     def predict_state(self, xhat, u, P):
@@ -212,12 +185,19 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     def process(self, state_dict, t_samp):
         t, i, counts = state_dict["Probe"]["mua"]
         self.spike_counts.append(counts)
-        xhat, P = self.update_state(self.xpred, counts, self.Ppred)
+
+        if self.state_estimation == "kalman":
+            xhat, P = self.update_state(self.xpred, counts, self.Ppred)
+        elif self.state_estimation == "ground truth":
+            xhat = self.cleo_prep.fsnn.ng.X[: self.n]  # TODO
+
         self._Xhat.append(xhat)
         self._Xref.append(self.reference(t_samp))
         uopto = self.compute_control(xhat)
         u = np.concatenate((uopto, self.u_task_zscored(t_samp)))
-        self.xpred, self.Ppred = self.predict_state(xhat, u, P)
+
+        if self.state_estimation == "kalman":
+            self.xpred, self.Ppred = self.predict_state(xhat, u, P)
 
         uopto = self.unzscore(u, "u")[: self.k_opto]
         uopto = np.clip(uopto, 0, self.u_max_mWmm2)
@@ -236,9 +216,15 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         if self.k_task == 0:
             return np.zeros(np.shape(t))
         u_task = self.u_task(t)
-        u_task_mean = self.braid_model.uMean[self.k_opto :]
-        u_task_std = self.braid_model.uStd[self.k_opto :]
+        u_task_mean = self.lds.u_mean[self.k_opto :]
+        u_task_std = self.lds.u_std[self.k_opto :]
         return (u_task - u_task_mean) / u_task_std
+
+    @property
+    def u_max_zscored(self):
+        return (self.u_max_mWmm2 - self.lds.u_mean[: self.k_opto]) / self.lds.u_std[
+            : self.k_opto
+        ]
 
     def update_with_trial_info(
         self, t_prev_trial_end: Quantity, t_trial_start: Quantity, t_trial_end: Quantity
@@ -250,9 +236,22 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         self.t_trial_end = t_trial_end
 
 
-for attrib in ["C", "R", "A", "B", "Q"]:
+for attrib in [
+    "C",
+    "R",
+    "A",
+    "B",
+    "Q",
+    "n",
+    "m",
+    "k",
+    "k_task",
+    "k_opto",
+    "B_opto",
+    "B_task",
+]:
     setattr(
         Controller,
         attrib,
-        property(lambda self, attrib=attrib: getattr(self.lssm, attrib)),
+        property(lambda self, attrib=attrib: getattr(self.lds, attrib)),
     )

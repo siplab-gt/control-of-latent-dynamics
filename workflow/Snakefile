@@ -36,11 +36,14 @@ def paths_for_params(file: list | str, fill_in_ref=False, **kwargs) -> str:
     params_str_masked = params_str
     for wc in wildcards:
         params_str_masked = params_str_masked.replace(f"{{{wc}}}", f"{{{{{wc}}}}}")
-    return expand(
+    out = expand(
         f"results/{params_str_masked}/{{file}}",
         file=file,
         **params,
     )
+    if len(out) == 1:
+        return out[0]
+    return out
 
 
 NA = "NA"  # when a parameter is not applicable (e.g. latency for open-loop control)
@@ -218,8 +221,8 @@ rule ctrl_expts:
         cleo_prep=paths_for_params(
             "cleo_prep.pkl", **na_wildcards_through_step("cleo_prep")
         ),
-        braid_model=paths_for_params(
-            "braid_model.pkl", **na_wildcards_through_step("model_fit")
+        lds_model=paths_for_params(
+            "model_fit_lds.pkl", **na_wildcards_through_step("model_fit")
         ),
     params:
         **params_from_cfg("expts", keep_target_key=False),
@@ -237,16 +240,22 @@ rule ctrl_expts:
 
 rule model_fit:
     input:
-        paths_for_params("sys_id_data.pkl", **na_wildcards_through_step("sys_id_expts")),
+        method=branch(
+            lambda wc: wc.setting == "sufficient_stim",
+            then="src/model_fit/known_factors.py",
+            otherwise="src/model_fit/braid.py",
+        ),
+        sys_id_data=paths_for_params(
+            "sys_id_data.pkl", **na_wildcards_through_step("sys_id_expts")
+        ),
     params:
         model_fit=params_from_cfg_with_wildcards(
             "task_specific/{task}/model_fit", keep_target_key=False
         ),
-        comp_graph_plot_basename=f"results/{params_str}/model_graph",
+        braid_basename=f"results/{params_str}/model_fit_braid",
     output:
-        braid_model=f"results/{params_str}/braid_model.pkl",
-        logs_plot=f"results/{params_str}/braid_model_logs.png",
-        pred_plot=f"results/{params_str}/braid_model_pred_plot.png",
+        pred_plot=f"results/{params_str}/model_fit_pred_plot.png",
+        lds_model=f"results/{params_str}/model_fit_lds.pkl",
     script:
         "../src/scripts/model_fit.py"
 
