@@ -3,7 +3,9 @@ import random
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
 
 from src.helpers import str2bool
 from src.model_fit import LDS
@@ -78,10 +80,21 @@ def model_fit(
     Xhat_lds2fsnn = lds.linreg_lds2fsnn.predict(Xhat)
     t_ms = expt_data.t_ms[: len(Xhat_lds2fsnn)]
     axs[0].plot(t_ms, Xhat_lds2fsnn, linestyle="--")
-    axs[1].plot(t_ms, Zhat, linestyle="--")
+    axs[1].plot(t_ms, Zhat * z_std + z_mean, linestyle="--")
     axs[2].plot(t_ms, Yhat * y_std + y_mean, linestyle="--")
     fig.savefig(outfiles.pred_plot)
 
+    # save R2 for model fit quality
+    r2s = {
+        "R2_model_fit_Xhat_Xfsnn": r2_score(X, Xhat_lds2fsnn),
+        "R2_model_fit_Zhat_Z": r2_score(Z, Zhat * z_std + z_mean),
+        "R2_model_fit_Yhat_Y": r2_score(Y, Yhat * y_std + y_mean),
+    }
+    print(r2s)
+    print(f"Saving R2 values to {outfiles.analysis}")
+    pd.DataFrame([r2s]).to_csv(outfiles.analysis, index=False)
+
+    print(f"Saving model to {outfiles.lds_model}")
     lds.save(outfiles.lds_model)
 
 

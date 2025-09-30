@@ -1,4 +1,5 @@
 import types
+
 import numpy as np
 
 from src.helpers import seed_everything
@@ -9,9 +10,7 @@ def fit_lds_to_data(
     YN, ZN, UN, X_fsnn, n_x, config, cond_params, base_params, outfiles
 ) -> tuple[LDS, np.ndarray, np.ndarray, np.ndarray]:
     pass
-    seed_everything(
-        int(cond_params["seed"]) + sum(ord(c) for c in "model_fit"), "model_fit"
-    )
+    seed_everything(int(cond_params["seed"]), "model_fit")
 
     X_minus = X_fsnn[:-1]
     X_plus = X_fsnn[1:]

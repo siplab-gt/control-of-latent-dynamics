@@ -170,27 +170,6 @@ def standard_log_kwargs(log_name):
     }
 
 
-rule analyze_ctrl_data:
-    input:
-        f"results/{params_str}/ctrl_data.pkl",
-    output:
-        f"results/{params_str}/summary.csv",
-    script:
-        "../src/scripts/analyze_ctrl_data.py"
-
-
-rule plot_ctrl_data_wide:
-    input:
-        paths_for_params("ctrl_data.pkl"),
-        "src/plot_style.py",
-    output:
-        f"results/{params_str}/ctrl_data_wide_plot.png",
-        f"results/{params_str}/ctrl_data_wide_plot_exploded.png",
-    localrule: True
-    script:
-        "../src/scripts/plot_ctrl_data.py"
-
-
 def na_wildcards_through_step(desired_step):
     """returns a {wc: "NA"} dict for all wildcards that are irrelevant at and before
     the desired step, i.e., they are introduced later.
@@ -211,6 +190,30 @@ def na_wildcards_through_step(desired_step):
         if step == desired_step:
             break
     return {wc: NA for wc in irrelevant_wcs}
+
+
+rule analyze_ctrl_data:
+    input:
+        f"results/{params_str}/ctrl_data.pkl",
+        paths_for_params(
+            "model_fit_analysis.csv", **na_wildcards_through_step("model_fit")
+        ),
+    output:
+        f"results/{params_str}/summary.csv",
+    script:
+        "../src/scripts/analyze_ctrl_data.py"
+
+
+rule plot_ctrl_data_wide:
+    input:
+        paths_for_params("ctrl_data.pkl"),
+        "src/plot_style.py",
+    output:
+        f"results/{params_str}/ctrl_data_wide_plot.png",
+        f"results/{params_str}/ctrl_data_wide_plot_exploded.png",
+    localrule: True
+    script:
+        "../src/scripts/plot_ctrl_data.py"
 
 
 # whatever the output is, ask for the fit from non-control-relevant parameters (latency, control)
@@ -256,6 +259,7 @@ rule model_fit:
     output:
         pred_plot=f"results/{params_str}/model_fit_pred_plot.png",
         lds_model=f"results/{params_str}/model_fit_lds.pkl",
+        analysis=f"results/{params_str}/model_fit_analysis.csv",
     script:
         "../src/scripts/model_fit.py"
 
