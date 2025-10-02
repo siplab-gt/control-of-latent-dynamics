@@ -43,6 +43,9 @@ def plot_all(ctrl_data: CtrlData, outfile, explode=False):
     ):
         print(f"plotting {varname}")
         data = getattr(ctrl_data, varname)
+        if data.size == 0:
+            print(f"skipping {varname} since empty")
+            continue
         offsets = (
             np.arange(data.shape[1]) * np.percentile(np.ptp(data), 60) if explode else 0
         )
@@ -75,7 +78,11 @@ def plot_all(ctrl_data: CtrlData, outfile, explode=False):
             annotation_clip=False,
         )
         for ax in axs:
-            ax.axvline(t_start, color="xkcd:light gray", lw=0.5)
+            try:
+                ax.axvline(t_start, color="xkcd:light gray", lw=0.5)
+            except Exception as e:
+                # probably when missing data
+                pass
 
     plt.savefig(outfile)
     return fig, axs

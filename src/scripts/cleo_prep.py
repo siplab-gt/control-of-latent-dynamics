@@ -26,12 +26,15 @@ class CleoPrep(BaseDataClass):
         self.fsnn.refresh_monitors_for_run()
         self.refresh_monitors_for_run()
         self.light.reset()
-        self.probe.reset()
+        if self.probe is not None:
+            self.probe.reset()
         assert self.fsnn.net == self.sim.network
 
     def refresh_monitors_for_run(self) -> None:
         """since weakref after unserializing breaks the monitors"""
         # spkmon in MUA
+        if self.probe is None:
+            return
         assert len(self.mua._monitors) == 1
         spkmon = self.mua._monitors[0]
         new_spkmon = b2.SpikeMonitor(spkmon.source)
@@ -60,8 +63,12 @@ def main(cond_params, base_params, fsnn_file, outfile):
     module = importlib.import_module(module_name)
     light_and_probe_coords = module.light_and_probe_coords
 
+    if cond_params["m"] == "NA":
+        m = 0
+    else:
+        m = int(cond_params["m"])
     light_coords, light_groups, probe_coords = light_and_probe_coords(
-        grid, int(cond_params["k"]), int(cond_params["m"])
+        grid, int(cond_params["k"]), m
     )
 
     light_array = GroupedLight(
@@ -79,6 +86,7 @@ def main(cond_params, base_params, fsnn_file, outfile):
         sim.inject(probe, fsnn.ng)
     else:
         probe = None
+        mua = None
 
     cleo_expt = CleoPrep(fsnn, light_array, probe, mua, sim)
     cleo_expt.save(outfile)

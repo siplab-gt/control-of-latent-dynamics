@@ -11,38 +11,40 @@ from jaxtyping import Float
 def light_and_probe_coords(
     grid: Quantity, k: int, m: int
 ) -> tuple[Quantity, Float[np.ndarray, "k 3"], Quantity]:
-    light_coords = grid
-
-    # Subdivide the grid into k square groups (k must be a perfect square)
-    assert np.sqrt(k).is_integer(), "k must be a perfect square"
-    n_side_grid = int(np.sqrt(len(light_coords)))
-    n_side_group = int(np.sqrt(k))
-    assert n_side_grid % n_side_group == 0, "k must divide total number of grid points"
-    group_size = n_side_grid // n_side_group
-
-    # Assign group indices in square blocks
-    group_indices = np.arange(len(light_coords)).reshape(n_side_grid, n_side_grid)
-    light_groups = []
-    for i in range(n_side_group):
-        for j in range(n_side_group):
-            block = group_indices[
-                i * group_size : (i + 1) * group_size,
-                j * group_size : (j + 1) * group_size,
-            ].reshape(-1)
-            light_groups.append(block)
-    light_groups = np.array(light_groups)
-
-    # make evenly spaced grid over same space as light coords
-    assert np.sqrt(m).is_integer(), "m must be a perfect square"
+    # only going to be light coords, since no probe on sufficient_stim
     n_side_grid = int(np.sqrt(len(grid)))
-    assert n_side_grid % np.sqrt(m) == 0, "m must divide total number of grid points"
-    n_side_probe = int(np.sqrt(m))
-    grid_mm = grid / b2.mm
-    probe_coords = (
-        grid_mm.reshape(n_side_grid, n_side_grid, 3)[
-            :: n_side_grid // n_side_probe, :: n_side_grid // n_side_probe, :
-        ].reshape(-1, 3)
-        * b2.mm
-    )
+    i_grid = np.arange(len(grid)).reshape(n_side_grid, n_side_grid)
 
-    return light_coords, light_groups, probe_coords
+    # Keeping cutting groups in half to get k square/rectangular groups
+    assert np.log2(k).is_integer(), "k must be a power of 2"
+    n_cuts = int(np.log2(k))
+    groups = [i_grid]
+    for i_cut in range(n_cuts):
+        axis = i_cut % 2  # alternate between x and y axis
+        if axis == 0:
+            # cut by rows (horizontally)
+            mid = groups[0].shape[0] // 2
+            new_groups = [g[0:mid, :] for g in groups] + [g[mid:, :] for g in groups]
+        elif axis == 1:
+            # cut by columns (vertically)
+            mid = groups[0].shape[1] // 2
+            new_groups = [g[:, 0:mid] for g in groups] + [g[:, mid:] for g in groups]
+        groups = new_groups
+    groups = [g.flatten() for g in groups]
+
+    # no probe on sufficient_stim
+    assert m == "NA" or m == 0
+    # make evenly spaced grid over same space as light coords
+    # assert np.sqrt(m).is_integer(), "m must be a perfect square"
+    # n_side_grid = int(np.sqrt(len(grid)))
+    # assert n_side_grid % np.sqrt(m) == 0, "m must divide total number of grid points"
+    # n_side_probe = int(np.sqrt(m))
+    # grid_mm = grid / b2.mm
+    # probe_coords = (
+    #     grid_mm.reshape(n_side_grid, n_side_grid, 3)[
+    #         :: n_side_grid // n_side_probe, :: n_side_grid // n_side_probe, :
+    #     ].reshape(-1, 3)
+    #     * b2.mm
+    # )
+
+    return grid, groups, None

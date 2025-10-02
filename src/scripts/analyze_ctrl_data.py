@@ -14,6 +14,8 @@ def analyze_ctrl_data(ctrl_data: CtrlData, model_fit_analysis_file, outfile):
         ctrl_data.Xref_fsnn, ctrl_data.Xhat_fsnn
     )
 
+    results["ctrl_compute_latency_ms"] = ctrl_data.compute_latency_ms
+
     results |= pd.read_csv(model_fit_analysis_file).iloc[0].to_dict()
     print(results)
 

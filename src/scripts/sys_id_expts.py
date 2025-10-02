@@ -109,8 +109,9 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     class SysIDProcessor(cleo.LatencyIOProcessor):
         def process(self, state_dict, t_samp):
-            t, i, counts = state_dict["Probe"]["mua"]
-            spike_counts.append(counts)
+            if cleo_prep.probe is not None:
+                t, i, counts = state_dict["Probe"]["mua"]
+                spike_counts.append(counts)
             value = rng.uniform(0, u_max, k) * b2.mwatt / b2.mm2
             return {"light array": value}, t_samp
 
@@ -137,18 +138,23 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         i_trial_boundaries.append((i_start, i_end))
     print("successfully ran")
 
-    spike_count_array = np.array(spike_counts)
-    assert spike_count_array.shape == (
-        len(cleo_prep.fsnn.state_mon.t),
-        cleo_prep.probe.signals[0].n,
-    )
+    if cleo_prep.probe is not None:
+        spike_count_array = np.array(spike_counts)
+        assert spike_count_array.shape == (
+            len(cleo_prep.fsnn.state_mon.t),
+            cleo_prep.probe.signals[0].n,
+        )
+    else:
+        spike_count_array = np.zeros(
+            (len(cleo_prep.fsnn.state_mon.t), 0), dtype=np.uint32
+        )
 
     # skip first sample from Cleo devices since there's a repeat after reset
     assert np.all(cleo_prep.light.t[1:] == cleo_prep.fsnn.state_mon.t)
 
     expt_data = ExptData.from_cleo_prep(
         cleo_prep,
-        np.array(spike_counts),
+        spike_count_array,
         cleo_prep.sim.io_processor.t_samp,
         i_trial_boundaries,
     )

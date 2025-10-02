@@ -24,23 +24,23 @@ star_sweep_conds:
     - 14
   latent_dim: # only possible on integration?
     - 1
-    - 2
-    - 4
-    - 8
+    # - 2
+    # - 4
+    # - 8
     - 16
   total_scale:
     - 0.1
-    - 1
+    # - 1
     - 10
   network_area_scale: # proportional to array area
     - 1
-    - 2
-    - 3
+    # - 2
+    # - 3
     - 4
   beam_width_um:
     - 10
-    - 50
-    - 100
+    # - 50
+    # - 100
     - 200
   beam_spacing:
     - 0.5
@@ -50,30 +50,30 @@ star_sweep_conds:
     - 10
   connection_distance_penalty:
     - 0
-    - 0.001
-    - 0.01
+    # - 0.001
+    # - 0.01
     - 0.1
   connection_l2_penalty:
     - 0
-    - 0.001
-    - 0.01
+    # - 0.001
+    # - 0.01
     - 0.1
   # keep the same L4-L2/3-L5 structure everywhere, but alter weights
   # single "layeredness" variable that controls both layer connectivity penalty
   # and density variation by layer
   layeredness:
     - 0
-    - 0.33
-    - 0.67
+    # - 0.33
+    # - 0.67
     - 1
   dales_law:
     - false
     - true
   n_pcs:
     - 1
-    - 5
+    # - 5
     - 10
-    - 15
+    # - 15
     - 20
   model_task_inputs:
     - false
@@ -99,7 +99,8 @@ manual_sweep_conds:
     - false
 
 reference_conds:
-  n_trials_sys_id: 50
+  # n_trials_sys_id: 50
+  n_trials_sys_id: 12  # TODO
   latent_dim: 2
   total_scale: 1
   network_area_scale: 2
@@ -146,12 +147,12 @@ q1:
   k:
     - 1
     - 2
-    - 4
+    # - 4
     - 8
-    - 16
-    - 32
+    # - 16
+    # - 32
     - 64
-  m: 64
+  m: NA
 
 # Q2: optimal stim/rec balance
 ##############################

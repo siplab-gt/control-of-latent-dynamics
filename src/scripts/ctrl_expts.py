@@ -105,7 +105,7 @@ def ctrl_expts(
         // int(base_params["sample_period_ms"]),
         Qcost=float(base_params.Q_cost),
         Rcost=float(base_params.R_cost),
-        reference=lambda t: np.zeros((np.size(t), lds.n)).squeeze(),
+        reference=lambda t: np.zeros((*np.shape(t), lds.n)),
         cleo_prep=cleo_prep,
         state_estimation="ground truth"
         if cond_params.setting == "sufficient_stim"
@@ -151,6 +151,9 @@ def ctrl_expts(
         y_mean=lds.y_mean,
         Zhat=Zhat,
         Zref=Zref,
+        compute_latency_ms=ctrl_proc.compute_latency / b2.ms
+        if ctrl_proc.add_latency
+        else 0,
     )
     ctrl_data.save(outfile)
 

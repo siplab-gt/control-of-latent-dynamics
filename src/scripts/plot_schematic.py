@@ -36,7 +36,7 @@ def main(cond_params, base_params, outfiles):
         from src.cleo_prep_optimal_stim_rec import light_and_probe_coords
 
     light_coords, light_groups, probe_coords = light_and_probe_coords(
-        grid, int(cond_params["k"])
+        grid, int(cond_params["k"]), cond_params["m"]
     )
     # TODO: two opsins/lights
     beam_width_mm = float(cond_params["beam_width_um"]) / 1000

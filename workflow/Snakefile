@@ -1,4 +1,5 @@
 import pandas as pd
+import itertools
 
 # Main entrypoint of the workflow.
 # Please follow the best practices:
@@ -12,11 +13,13 @@ configfile: "config/config.yaml"
 rule all:
     input:
         expand(
-            "results/figs/sufficient_stim-{task}.svg",
+            "results/figs/sufficient_stim_{task}.svg",
             task=config["manual_sweep_conds"]["task"],
         ),
-        # "results/figs/stim-rec-balance.svg",
-        # "results/figs/realism.svg",
+
+
+"results/figs/stim-rec-balance.svg",
+"results/figs/realism.svg",
 
 
 cond_params = [
@@ -29,7 +32,7 @@ params_str = "/".join(f"{par}_{{{par}}}" for par in cond_params)
 
 
 def paths_for_params(file: list | str, fill_in_ref=False, **kwargs) -> str:
-    params = config["reference_conds"] if fill_in_ref else {}
+    params = config["reference_conds"].copy() if fill_in_ref else {}
     params |= kwargs
     wildcards = set(cond_params) - params.keys()
     # need to mask wildcards we want to keep with double braces
@@ -86,10 +89,6 @@ def params_from_cfg_with_wildcards(
     return replace_wildcards
 
 
-m_sufficient_stim = int(config["q1"]["m"])
-m_sufficient_stim = 16
-
-
 rule test:
     # for easily running one reference condition
     # (doesn't require a super long path with all wildcards)
@@ -103,10 +102,11 @@ rule test:
             latency=True,
             ctrl_type="LQMPC",
             k=4,
-            m=m_sufficient_stim,
+            m=NA,
             seed=0,
             layeredness=1,
             n_trials_sys_id=12,
+            model_task_inputs=True,
         ),
     output:
         "results/test/{file}",
@@ -116,11 +116,84 @@ rule test:
 
 rule sufficient_stim_fig:
     input:
-        "results/sufficient_stim-{task}.csv",
+        "results/sufficient_stim_{task}.csv",
     output:
-        "results/figs/sufficient_stim-{task}.svg",
+        "results/figs/sufficient_stim_{task}.svg",
     script:
         "../src/scripts/sufficient_stim_fig.py"
+
+
+rule testdag:
+    run:
+        # res1 = [
+        #     paths_for_params(
+        #         file="summary.csv",
+        #         setting="sufficient_stim",
+        #         latency=latency,
+        #         ctrl_type=ctrl,
+        #         m=NA,
+        #         k=config["q1"]["k"],
+        #         seed=config["grid_sweep_conds"]["seed"],
+        #         fill_in_ref=True,
+        #     )
+        #     for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
+        # ]
+        # res1 = list(itertools.chain.from_iterable(res1))
+        # print(res1[:5])
+        # print(res1[-5:])
+        # print(len(res1))
+        # # exploratory variables
+        # # var = "beam_spacing"
+        # res2 = [
+        #     paths_for_params(
+        #         file="summary.csv",
+        #         setting="sufficient_stim",
+        #         latency=latency,
+        #         ctrl_type=ctrl,
+        #         k=config["q1"]["k"],
+        #         m=0,
+        #         seed=config["grid_sweep_conds"]["seed"],
+        #         # **{var: config["star_sweep_conds"][var]},
+        #         **{var: "bar"},
+        #         fill_in_ref=True,
+        #     )
+        #     for ctrl, latency in [("OL", False), ("LQMPC", True)]
+        #     for var in config["star_sweep_conds"]
+        # ]
+        # res2 = list(itertools.chain.from_iterable(res2))
+        # print(res2[:5])
+        # print(res2[-5:])
+        # print(len(res2))
+
+        res3 = []
+        for var in config["star_sweep_conds"]:
+            # outer product of k, seed, ctrl/latency
+            var_vals = {var: config["star_sweep_conds"][var]}
+            # var_vals = {var: "bar"}
+            print(var_vals)
+
+            res3_var = [
+                paths_for_params(
+                    file="summary.csv",
+                    setting="sufficient_stim",
+                    latency=latency,
+                    ctrl_type=ctrl,
+                    k=config["q1"]["k"],
+                    m=0,
+                    seed=config["grid_sweep_conds"]["seed"],
+                    # **{var: config["star_sweep_conds"][var]},
+                    # **{var: "foo"},
+                    **var_vals,
+                    fill_in_ref=True,
+                )
+                for ctrl, latency in [("OL", False), ("LQMPC", True)]
+                # for var in config["star_sweep_conds"]
+            ]
+            res3 += itertools.chain.from_iterable(res3_var)
+            # res3 = list(itertools.chain.from_iterable(res3))
+        print(res3[:5])
+        print(res3[-5:])
+        print(len(res3))
 
 
 rule sufficient_stim_tabulate:
@@ -133,9 +206,10 @@ rule sufficient_stim_tabulate:
                 setting="sufficient_stim",
                 latency=latency,
                 ctrl_type=ctrl,
-                m=m_sufficient_stim,
+                m=NA,
                 k=config["q1"]["k"],
                 seed=config["grid_sweep_conds"]["seed"],
+                fill_in_ref=True,
             )
             for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
         ],
@@ -150,12 +224,13 @@ rule sufficient_stim_tabulate:
                 m=0,
                 seed=config["grid_sweep_conds"]["seed"],
                 **{var: config["star_sweep_conds"][var]},
+                fill_in_ref=True,
             )
             for var in config["star_sweep_conds"]
             for ctrl, latency in [("OL", False), ("LQMPC", True)]
         ],
     output:
-        "results/sufficient_stim-{task}.csv",
+        "results/sufficient_stim_{task}.csv",
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -243,6 +318,7 @@ rule ctrl_expts:
 
 rule model_fit:
     input:
+        'src/model_fit/__init__.py',
         method=branch(
             lambda wc: wc.setting == "sufficient_stim",
             then="src/model_fit/known_factors.py",

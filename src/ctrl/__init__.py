@@ -74,7 +74,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     def init_optimization(self):
         self.Uopt_opto = cp.Variable((self.horizon, self.k_opto), nonneg=True)
-        self.Uopt_task = cp.Parameter((self.horizon, self.k_task))
+        if self.k_task > 0:
+            self.Uopt_task = cp.Parameter((self.horizon, self.k_task))
         self.Xopt = cp.Variable((self.horizon + 1, self.n))
         self.Xopt_ref = cp.Parameter((self.horizon, self.n))
         self.x0opt = cp.Parameter(self.n)
@@ -106,9 +107,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     def update_opt_problem(self, xhat, t_samp):
         self.x0opt.value = xhat
-        self.Uopt_task.value = self.u_task_zscored(
-            t_samp + np.arange(self.horizon) * self.sample_period
-        )
+        if self.k_task > 0:
+            self.Uopt_task.value = self.u_task_zscored(
+                t_samp + np.arange(self.horizon) * self.sample_period
+            )
         self.Xopt_ref.value = self.reference(
             self.t_now + np.arange(1, self.horizon + 1) * self.sample_period
         )
@@ -183,7 +185,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         pass
 
     def process(self, state_dict, t_samp):
-        t, i, counts = state_dict["Probe"]["mua"]
+        if self.cleo_prep.probe is not None:
+            t, i, counts = state_dict["Probe"]["mua"]
+        else:
+            counts = np.zeros(0, dtype=np.uint32)
         self.spike_counts.append(counts)
 
         if self.state_estimation == "kalman":
@@ -214,7 +219,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     def u_task_zscored(self, t: Quantity) -> np.ndarray:
         """returns task inputs at time t, z-scored"""
         if self.k_task == 0:
-            return np.zeros(np.shape(t))
+            return np.empty((np.size(t), 0)).squeeze()
         u_task = self.u_task(t)
         u_task_mean = self.lds.u_mean[self.k_opto :]
         u_task_std = self.lds.u_std[self.k_opto :]

@@ -26,9 +26,9 @@ def model_fit(
 
     expt_data = ExptData.load(expt_data_file)
     n_trials = int(cond_params.n_trials_sys_id)
-    assert n_trials <= expt_data.n_trials
+    assert n_trials <= expt_data.n_trials, f"{n_trials=} > {expt_data.n_trials=}"
     # cut data to end of last trial
-    T = expt_data.i_trial_boundaries[n_trials, -1]
+    T = expt_data.i_trial_boundaries[n_trials - 1, -1]
     X = expt_data.X[:T]
     Y = expt_data.spikes[:T]
     Z = expt_data.Z[:T]
@@ -88,7 +88,9 @@ def model_fit(
     r2s = {
         "R2_model_fit_Xhat_Xfsnn": r2_score(X, Xhat_lds2fsnn),
         "R2_model_fit_Zhat_Z": r2_score(Z, Zhat * z_std + z_mean),
-        "R2_model_fit_Yhat_Y": r2_score(Y, Yhat * y_std + y_mean),
+        "R2_model_fit_Yhat_Y": r2_score(Y, Yhat * y_std + y_mean)
+        if Y.shape[1] > 0
+        else np.nan,
     }
     print(r2s)
     print(f"Saving R2 values to {outfiles.analysis}")
