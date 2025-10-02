@@ -2,6 +2,7 @@ import warnings
 
 import matplotlib.pyplot as plt
 from matplotlib.rcsetup import cycler
+import seaborn as sns
 
 c = {
     "dark": "#004d3d",
@@ -14,6 +15,14 @@ c = {
     "opto1": "#72b5f2",
     "opto2": "#FF6145",
 }
+c["mpc"] = c["main"]
+c["ol"] = c["a1"]
+c["y"] = c["a2"]
+c["z"] = c["a3"]
+
+cmap = sns.light_palette(c["dark"], as_cmap=True)
+
+double_col_width = 17 / 2.54
 
 
 def style_plots(fontscale=5 / 6):
