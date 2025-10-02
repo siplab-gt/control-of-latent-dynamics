@@ -14,7 +14,7 @@ rule all:
     input:
         expand(
             "results/figs/sufficient_stim_{task}.svg",
-            task=config["manual_sweep_conds"]["task"],
+            task=config["manual_sweep_params"]["task"],
         ),
 
 
@@ -24,7 +24,7 @@ rule all:
 
 cond_params = [
     param
-    for param_type in ["manual_sweep_conds", "grid_sweep_conds", "star_sweep_conds"]
+    for param_type in ["manual_sweep_params", "grid_sweep_params", "star_sweep_params"]
     for param in config[param_type].keys()
 ]
 
@@ -32,7 +32,7 @@ params_str = "/".join(f"{par}_{{{par}}}" for par in cond_params)
 
 
 def paths_for_params(file: list | str, fill_in_ref=False, **kwargs) -> str:
-    params = config["reference_conds"].copy() if fill_in_ref else {}
+    params = config["reference_params"].copy() if fill_in_ref else {}
     params |= kwargs
     wildcards = set(cond_params) - params.keys()
     # need to mask wildcards we want to keep with double braces
@@ -133,7 +133,7 @@ rule testdag:
         #         ctrl_type=ctrl,
         #         m=NA,
         #         k=config["q1"]["k"],
-        #         seed=config["grid_sweep_conds"]["seed"],
+        #         seed=config["grid_sweep_params"]["seed"],
         #         fill_in_ref=True,
         #     )
         #     for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
@@ -152,13 +152,13 @@ rule testdag:
         #         ctrl_type=ctrl,
         #         k=config["q1"]["k"],
         #         m=0,
-        #         seed=config["grid_sweep_conds"]["seed"],
-        #         # **{var: config["star_sweep_conds"][var]},
+        #         seed=config["grid_sweep_params"]["seed"],
+        #         # **{var: config["star_sweep_params"][var]},
         #         **{var: "bar"},
         #         fill_in_ref=True,
         #     )
         #     for ctrl, latency in [("OL", False), ("LQMPC", True)]
-        #     for var in config["star_sweep_conds"]
+        #     for var in config["star_sweep_params"]
         # ]
         # res2 = list(itertools.chain.from_iterable(res2))
         # print(res2[:5])
@@ -166,9 +166,9 @@ rule testdag:
         # print(len(res2))
 
         res3 = []
-        for var in config["star_sweep_conds"]:
+        for var in config["star_sweep_params"]:
             # outer product of k, seed, ctrl/latency
-            var_vals = {var: config["star_sweep_conds"][var]}
+            var_vals = {var: config["star_sweep_params"][var]}
             # var_vals = {var: "bar"}
             print(var_vals)
 
@@ -180,14 +180,14 @@ rule testdag:
                     ctrl_type=ctrl,
                     k=config["q1"]["k"],
                     m=0,
-                    seed=config["grid_sweep_conds"]["seed"],
-                    # **{var: config["star_sweep_conds"][var]},
+                    seed=config["grid_sweep_params"]["seed"],
+                    # **{var: config["star_sweep_params"][var]},
                     # **{var: "foo"},
                     **var_vals,
                     fill_in_ref=True,
                 )
                 for ctrl, latency in [("OL", False), ("LQMPC", True)]
-                # for var in config["star_sweep_conds"]
+                # for var in config["star_sweep_params"]
             ]
             res3 += itertools.chain.from_iterable(res3_var)
             # res3 = list(itertools.chain.from_iterable(res3))
@@ -208,7 +208,7 @@ rule sufficient_stim_tabulate:
                 ctrl_type=ctrl,
                 m=NA,
                 k=config["q1"]["k"],
-                seed=config["grid_sweep_conds"]["seed"],
+                seed=config["grid_sweep_params"]["seed"],
                 fill_in_ref=True,
             )
             for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
@@ -222,11 +222,11 @@ rule sufficient_stim_tabulate:
                 ctrl_type=ctrl,
                 k=config["q1"]["k"],
                 m=0,
-                seed=config["grid_sweep_conds"]["seed"],
-                **{var: config["star_sweep_conds"][var]},
+                seed=config["grid_sweep_params"]["seed"],
+                **{var: config["star_sweep_params"][var]},
                 fill_in_ref=True,
             )
-            for var in config["star_sweep_conds"]
+            for var in config["star_sweep_params"]
             for ctrl, latency in [("OL", False), ("LQMPC", True)]
         ],
     output:
@@ -372,7 +372,7 @@ rule sys_id_expts:
         expts=params_from_cfg_with_wildcards(
             "task_specific/{task}/expts", keep_target_key=False
         ),
-        n_trials_sys_id_max=config["star_sweep_conds"]["n_trials_sys_id"][-1],
+        n_trials_sys_id_max=config["star_sweep_params"]["n_trials_sys_id"][-1],
     output:
         f"results/{params_str}/sys_id_data.pkl",
     script:

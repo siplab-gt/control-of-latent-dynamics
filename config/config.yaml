@@ -1,10 +1,10 @@
-###############################
-# condition parameters to sweep
-###############################
+#####################################################################
+# parameters to sweep, constituting different experimental conditions
+#####################################################################
 
 # to automatically sweep all combinations
 #########################################
-grid_sweep_conds:
+grid_sweep_params:
   seed:
     - 17230616
     - 18051223
@@ -15,7 +15,7 @@ grid_sweep_conds:
 # exploratory vars to sweep one at a time in Q1, Q2
 # i.e., explore space in star pattern
 ###################################################
-star_sweep_conds:
+star_sweep_params:
   n_trials_sys_id:
     # - 10
     # - 50
@@ -81,7 +81,7 @@ star_sweep_conds:
 
 # don't automatically sweep these, will be handled manually in Snakefile
 ########################################################################
-manual_sweep_conds:
+manual_sweep_params:
   setting:
     - sufficient_stim
     - optimal_stim_rec
@@ -98,7 +98,7 @@ manual_sweep_conds:
     - true
     - false
 
-reference_conds:
+reference_params:
   # n_trials_sys_id: 50
   n_trials_sys_id: 12  # TODO
   latent_dim: 2
