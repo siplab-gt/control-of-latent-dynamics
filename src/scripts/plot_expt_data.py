@@ -38,7 +38,8 @@ def plot_all(expt_data: ExptData, outfile):
             annotation_clip=False,
         )
 
-    plt.savefig(outfile)
+    if outfile:
+        plt.savefig(outfile)
     return fig, axs
 
 

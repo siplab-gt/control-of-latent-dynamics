@@ -3,15 +3,21 @@ import random
 from dataclasses import dataclass
 
 import numpy as np
-import pandas as pd
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score
 
+from src.data_classes import BaseDataClass
 from src.helpers import str2bool
 from src.model_fit import LDS
-from src.plot_style import style_plots
-from src.scripts.plot_expt_data import plot_all
 from src.scripts.sys_id_expts import ExptData
+
+
+@dataclass
+class ModelFitPredData(BaseDataClass):
+    Xhat_lds: np.ndarray
+    Xhat_lds2fsnn: np.ndarray
+    Zhat: np.ndarray
+    Yhat: np.ndarray
+    t_ms: np.ndarray
 
 
 def model_fit(
@@ -68,33 +74,21 @@ def model_fit(
         lds.u_std,
     ) = y_mean, y_std, z_mean, z_std, u_mean, u_std
 
-    style_plots()
-    fig, axs = plot_all(expt_data, outfiles.pred_plot)
-    # plot predictions on top of previous plots
-    # predict true factors X from BRAID's inferred X
-    # TODO
     assert len(X) == len(Xhat)
 
     # linear regression to map
     lds.linreg_lds2fsnn = LinearRegression().fit(Xhat, X)
     Xhat_lds2fsnn = lds.linreg_lds2fsnn.predict(Xhat)
     t_ms = expt_data.t_ms[: len(Xhat_lds2fsnn)]
-    axs[0].plot(t_ms, Xhat_lds2fsnn, linestyle="--")
-    axs[1].plot(t_ms, Zhat * z_std + z_mean, linestyle="--")
-    axs[2].plot(t_ms, Yhat * y_std + y_mean, linestyle="--")
-    fig.savefig(outfiles.pred_plot)
-
-    # save R2 for model fit quality
-    r2s = {
-        "R2_model_fit_Xhat_Xfsnn": r2_score(X, Xhat_lds2fsnn),
-        "R2_model_fit_Zhat_Z": r2_score(Z, Zhat * z_std + z_mean),
-        "R2_model_fit_Yhat_Y": r2_score(Y, Yhat * y_std + y_mean)
-        if Y.shape[1] > 0
-        else np.nan,
-    }
-    print(r2s)
-    print(f"Saving R2 values to {outfiles.analysis}")
-    pd.DataFrame([r2s]).to_csv(outfiles.analysis, index=False)
+    model_fit_pred_data = ModelFitPredData(
+        Xhat_lds=Xhat,
+        Xhat_lds2fsnn=Xhat_lds2fsnn,
+        Zhat=Zhat * z_std + z_mean,
+        Yhat=Yhat * y_std + y_mean,
+        t_ms=t_ms,
+    )
+    print(f"Saving predictions to {outfiles.pred_data}")
+    model_fit_pred_data.save(outfiles.pred_data)
 
     print(f"Saving model to {outfiles.lds_model}")
     lds.save(outfiles.lds_model)

@@ -93,7 +93,7 @@ rule test:
     # for easily running one reference condition
     # (doesn't require a super long path with all wildcards)
     input:
-        # f"results/{params_str}/cleo_prep.pkl",
+        # f"results/{params_str}/cleo_prep.pkl.gz",
         paths_for_params(
             fill_in_ref=True,
             file="{file}",
@@ -199,11 +199,16 @@ def na_wildcards_through_step(desired_step):
 
 rule analyze_ctrl_data:
     input:
-        f"results/{params_str}/ctrl_data.pkl",
+        f"results/{params_str}/ctrl_data.pkl.gz",
+        paths_for_params(
+            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
+        ),
+        paths_for_params(
+            "model_fit_pred_data.pkl.gz", **na_wildcards_through_step("model_fit")
+        ),
         paths_for_params(
             "model_fit_analysis.csv", **na_wildcards_through_step("model_fit")
         ),
-        paths_for_params("sys_id_data.pkl", **na_wildcards_through_step("sys_id_expts")),
     output:
         f"results/{params_str}/summary.csv",
     script:
@@ -212,7 +217,7 @@ rule analyze_ctrl_data:
 
 rule plot_ctrl_data_wide:
     input:
-        paths_for_params("ctrl_data.pkl"),
+        paths_for_params("ctrl_data.pkl.gz"),
         "src/plot_style.py",
     output:
         f"results/{params_str}/ctrl_data_wide_plot.png",
@@ -228,10 +233,10 @@ rule ctrl_expts:
         "src/ctrl/__init__.py",
         "src/ctrl/{ctrl_type}.py",
         cleo_prep=paths_for_params(
-            "cleo_prep.pkl", **na_wildcards_through_step("cleo_prep")
+            "cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")
         ),
         lds_model=paths_for_params(
-            "model_fit_lds.pkl", **na_wildcards_through_step("model_fit")
+            "model_fit_lds.pkl.gz", **na_wildcards_through_step("model_fit")
         ),
     params:
         **params_from_cfg("expts", keep_target_key=False),
@@ -240,11 +245,45 @@ rule ctrl_expts:
             "task_specific/{task}/expts", keep_target_key=False
         ),
     output:
-        f"results/{params_str}/ctrl_data.pkl",
+        f"results/{params_str}/ctrl_data.pkl.gz",
         # NOTE: maybe instead of just data.npz have separate files U.npy, R.npy, etc.?
         # or a CtrlData dataclass
     script:
         "../src/scripts/ctrl_expts.py"
+
+
+rule plot_model_fit_pred:
+    input:
+        paths_for_params(
+            "model_fit_pred_data.pkl.gz", **na_wildcards_through_step("model_fit")
+        ),
+        paths_for_params(
+            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
+        ),
+        "src/plot_style.py",
+    output:
+        f"results/{params_str}/model_fit_pred_plot.png",
+    localrule: True
+    group:
+        "model_fit"
+    script:
+        "../src/scripts/plot_model_fit_pred.py"
+
+
+rule analyze_model_fit_data:
+    input:
+        paths_for_params(
+            "model_fit_pred_data.pkl.gz", **na_wildcards_through_step("model_fit")
+        ),
+        paths_for_params(
+            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
+        ),
+    output:
+        f"results/{params_str}/model_fit_analysis.csv",
+    group:
+        "model_fit"
+    script:
+        "../src/scripts/analyze_model_fit_data.py"
 
 
 rule model_fit:
@@ -256,7 +295,7 @@ rule model_fit:
             otherwise="src/model_fit/braid.py",
         ),
         sys_id_data=paths_for_params(
-            "sys_id_data.pkl", **na_wildcards_through_step("sys_id_expts")
+            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
         ),
     params:
         model_fit=params_from_cfg_with_wildcards(
@@ -264,40 +303,49 @@ rule model_fit:
         ),
         braid_basename=f"results/{params_str}/model_fit_braid",
     output:
-        pred_plot=f"results/{params_str}/model_fit_pred_plot.png",
-        lds_model=f"results/{params_str}/model_fit_lds.pkl",
-        analysis=f"results/{params_str}/model_fit_analysis.csv",
+        lds_model=f"results/{params_str}/model_fit_lds.pkl.gz",
+        pred_data=f"results/{params_str}/model_fit_pred_data.pkl.gz",
+    group:
+        "model_fit"
     script:
         "../src/scripts/model_fit.py"
 
 
 rule plot_sys_id_data_trials:
     input:
-        paths_for_params("sys_id_data.pkl", **na_wildcards_through_step("sys_id_expts")),
+        paths_for_params(
+            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
+        ),
         "src/plot_style.py",
     params:
         params_from_cfg("sys_id"),
     output:
         multiext(f"results/{params_str}/sys_id_trials_plot", ".png"),
     localrule: True
+    group:
+        "sys_id"
     script:
         "../src/scripts/plot_sys_id_data.py"
 
 
 rule plot_sys_id_data_wide:
     input:
-        paths_for_params("sys_id_data.pkl", **na_wildcards_through_step("sys_id_expts")),
+        paths_for_params(
+            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
+        ),
         "src/plot_style.py",
     output:
         f"results/{params_str}/sys_id_data_wide_plot.png",
     localrule: True
+    group:
+        "sys_id"
     script:
         "../src/scripts/plot_expt_data.py"
 
 
 rule sys_id_expts:
     input:
-        paths_for_params("cleo_prep.pkl", **na_wildcards_through_step("cleo_prep")),
+        paths_for_params("cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")),
     params:
         **params_from_cfg("expts", keep_target_key=False),
         expts=params_from_cfg_with_wildcards(
@@ -305,18 +353,22 @@ rule sys_id_expts:
         ),
         n_trials_sys_id_max=config["star_sweep_params"]["n_trials_sys_id"][-1],
     output:
-        f"results/{params_str}/sys_id_data.pkl",
+        f"results/{params_str}/sys_id_data.pkl.gz",
+    group:
+        "sys_id"
     script:
         "../src/scripts/sys_id_expts.py"
 
 
 rule plot_cleo:
     input:
-        f"results/{params_str}/cleo_prep.pkl",
+        f"results/{params_str}/cleo_prep.pkl.gz",
         "src/plot_style.py",
     output:
         multiext(f"results/{params_str}/cleo_plot", ".png", ".svg"),
     localrule: True
+    group:
+        "prep_fsnn"
     script:
         "../src/scripts/plot_cleo.py"
 
@@ -324,25 +376,31 @@ rule plot_cleo:
 rule cleo_prep:
     input:
         # use NA for wildcards that were irrelevant before this step
-        paths_for_params("trained_fsnn.pkl", **na_wildcards_through_step("train_fsnn")),
+        paths_for_params(
+            "trained_fsnn.pkl.gz", **na_wildcards_through_step("train_fsnn")
+        ),
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
         "src/interface_array.py",
     params:
         **params_from_cfg("array_side_length_mm", "array_n_per_side"),
     output:
-        f"results/{params_str}/cleo_prep.pkl",
+        f"results/{params_str}/cleo_prep.pkl.gz",
+    group:
+        "prep_fsnn"
     script:
         "../src/scripts/cleo_prep.py"
 
 
 rule plot_fsnn:
     input:
-        f"results/{params_str}/trained_fsnn.pkl",
+        f"results/{params_str}/trained_fsnn.pkl.gz",
         "src/plot_style.py",
     output:
         f"results/{params_str}/fsnn_plot.png",
     localrule: True
+    group:
+        "prep_fsnn"
     script:
         "../src/scripts/plot_fsnn.py"
 
@@ -358,8 +416,8 @@ rule plot_fsnn:
 
 rule train_fsnn:
     output:
-        f"results/{params_str}/trained_fsnn.pkl",
-        # f"results/{params_str}/small_worldness.pkl",
+        f"results/{params_str}/trained_fsnn.pkl.gz",
+        # f"results/{params_str}/small_worldness.pkl.gz",
     params:
         **params_from_cfg(
             "base_neuron_density",
@@ -370,6 +428,8 @@ rule train_fsnn:
         ),
     log:
         **standard_log_kwargs("train_fsnn"),
+    group:
+        "prep_fsnn"
     script:
         "../src/scripts/train_fsnn.py"
 

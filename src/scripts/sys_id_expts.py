@@ -161,7 +161,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     expt_data.save(outfile)
 
     plt.plot(cleo_prep.fsnn.v_mon.t / b2.ms, cleo_prep.fsnn.v_mon.v.T[:, :10] / b2.mV)
-    plt.savefig(outfile.replace(".pkl", "_v.png"))
+    plt.savefig(outfile.replace(".pkl.gz", "_v.png"))
 
 
 if __name__ == "__main__" and "snakemake" in locals():
