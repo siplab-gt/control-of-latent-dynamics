@@ -1,5 +1,6 @@
 name: cold
 channels:
+  - bioconda
   - conda-forge
 dependencies:
   - python=3.12.7
@@ -25,7 +26,7 @@ dependencies:
   # - scikit-learn=0.24.2
   - pip:
     - -e ../..
-    - git+https://github.com/kjohnsen/BRAID.git@b0e1435#subdirectory=source
+    - git+https://github.com/kjohnsen/BRAID.git@56a68e#subdirectory=source
     # tensorflow[and-cuda]  # to get cuda to work for TF
     - pydot
     - absl-py==0.15.0

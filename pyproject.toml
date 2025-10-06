@@ -7,7 +7,17 @@ build-backend = "setuptools.build_meta"
 name = "control_latent_dynamics"
 version = "0.1.0"
 description = "Source code for Control of Latent Dynamics"
-dependencies = ['numpy', 'pandas', 'matplotlib', 'cleosim==0.18.2', 'dill']
+dependencies = [
+    'numpy',
+    'pandas',
+    'matplotlib',
+    'cleosim==0.18.2',
+    'dill',
+    'seaborn',
+    'scikit-learn',
+    'braid @ git+https://github.com/kjohnsen/BRAID.git@56a68e#subdirectory=source',
+    'cvxpy',
+]
 
 [tool.setuptools]
 packages = ["src"]
