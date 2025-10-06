@@ -13,7 +13,7 @@ configfile: "config/config.yaml"
 rule all:
     input:
         expand(
-            "results/figs/sufficient_stim_{task}.svg",
+            "results/figs/sufficient_stim_{task}.pdf",
             task=config["manual_sweep_params"]["task"],
         ),
 
@@ -117,83 +117,11 @@ rule test:
 rule sufficient_stim_fig:
     input:
         "results/sufficient_stim_{task}.csv",
+        "src/plot_style.py",
     output:
-        "results/figs/sufficient_stim_{task}.svg",
+        multiext("results/figs/sufficient_stim_{task}", ".png", ".svg", ".pdf"),
     script:
         "../src/scripts/sufficient_stim_fig.py"
-
-
-rule testdag:
-    run:
-        # res1 = [
-        #     paths_for_params(
-        #         file="summary.csv",
-        #         setting="sufficient_stim",
-        #         latency=latency,
-        #         ctrl_type=ctrl,
-        #         m=NA,
-        #         k=config["q1"]["k"],
-        #         seed=config["grid_sweep_params"]["seed"],
-        #         fill_in_ref=True,
-        #     )
-        #     for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
-        # ]
-        # res1 = list(itertools.chain.from_iterable(res1))
-        # print(res1[:5])
-        # print(res1[-5:])
-        # print(len(res1))
-        # # exploratory variables
-        # # var = "beam_spacing"
-        # res2 = [
-        #     paths_for_params(
-        #         file="summary.csv",
-        #         setting="sufficient_stim",
-        #         latency=latency,
-        #         ctrl_type=ctrl,
-        #         k=config["q1"]["k"],
-        #         m=0,
-        #         seed=config["grid_sweep_params"]["seed"],
-        #         # **{var: config["star_sweep_params"][var]},
-        #         **{var: "bar"},
-        #         fill_in_ref=True,
-        #     )
-        #     for ctrl, latency in [("OL", False), ("LQMPC", True)]
-        #     for var in config["star_sweep_params"]
-        # ]
-        # res2 = list(itertools.chain.from_iterable(res2))
-        # print(res2[:5])
-        # print(res2[-5:])
-        # print(len(res2))
-
-        res3 = []
-        for var in config["star_sweep_params"]:
-            # outer product of k, seed, ctrl/latency
-            var_vals = {var: config["star_sweep_params"][var]}
-            # var_vals = {var: "bar"}
-            print(var_vals)
-
-            res3_var = [
-                paths_for_params(
-                    file="summary.csv",
-                    setting="sufficient_stim",
-                    latency=latency,
-                    ctrl_type=ctrl,
-                    k=config["q1"]["k"],
-                    m=0,
-                    seed=config["grid_sweep_params"]["seed"],
-                    # **{var: config["star_sweep_params"][var]},
-                    # **{var: "foo"},
-                    **var_vals,
-                    fill_in_ref=True,
-                )
-                for ctrl, latency in [("OL", False), ("LQMPC", True)]
-                # for var in config["star_sweep_params"]
-            ]
-            res3 += itertools.chain.from_iterable(res3_var)
-            # res3 = list(itertools.chain.from_iterable(res3))
-        print(res3[:5])
-        print(res3[-5:])
-        print(len(res3))
 
 
 rule sufficient_stim_tabulate:
@@ -235,7 +163,9 @@ rule sufficient_stim_tabulate:
     run:
         dfs = [pd.read_csv(infile) for infile in input]
         df = pd.concat(dfs, ignore_index=True)
-        df.write_csv(output[0], index=False)
+        print("concatenated sufficient stim DFs")
+        df.to_csv(output[0], index=False)
+        print(f"wrote sufficient stim results to {output[0]}")
 
 
 def standard_log_kwargs(log_name):
@@ -273,6 +203,7 @@ rule analyze_ctrl_data:
         paths_for_params(
             "model_fit_analysis.csv", **na_wildcards_through_step("model_fit")
         ),
+        paths_for_params("sys_id_data.pkl", **na_wildcards_through_step("sys_id_expts")),
     output:
         f"results/{params_str}/summary.csv",
     script:
@@ -318,7 +249,7 @@ rule ctrl_expts:
 
 rule model_fit:
     input:
-        'src/model_fit/__init__.py',
+        "src/model_fit/__init__.py",
         method=branch(
             lambda wc: wc.setting == "sufficient_stim",
             then="src/model_fit/known_factors.py",
