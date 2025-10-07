@@ -15,8 +15,9 @@ dependencies = [
     'dill',
     'seaborn',
     'scikit-learn',
-    'braid @ git+https://github.com/kjohnsen/BRAID.git@56a68e#subdirectory=source',
+    'BRAID @ git+https://github.com/kjohnsen/BRAID.git@56a68e#subdirectory=source',
     'cvxpy',
+    'brian2cuda',
 ]
 
 [tool.setuptools]

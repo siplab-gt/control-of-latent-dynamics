@@ -26,26 +26,63 @@ def main(cfg, results_csv, outfiles):
         ax.remove()
     axs_grid = axs[1:]
 
-    # Example plot for the top subfigure
-    ax_top.plot([1, 2, 4, 8])
-    ax_top.set(title=df["task"][0])
-
     ref_condition = cfg["reference_params"]
+
+    # Example plot for the top subfigure
+    metric = "Q_track_Xref_X_fsnn"
+    # top plot
+    ref_cond_except_latency = ref_condition.copy()
+    del ref_cond_except_latency["latency"]
+    ref_data = df.query(
+        " and ".join([f"{k} == {v}" for k, v in ref_cond_except_latency.items()])
+    ).copy()
+
+    # Create a combined key for hue
+    ref_data["ctrl_latency"] = ref_data["ctrl_type"] + ref_data["latency"].map(
+        {True: ", w/ latency", False: ""}
+    )
+    sns.lineplot(
+        data=ref_data,
+        x="k",
+        y=metric,
+        hue="ctrl_latency",
+        # size="ctrl_latency",
+        ax=ax_top,
+        marker=".",
+        # errorbar=("pi", 95),
+        errorbar=None,
+        units="seed",
+        estimator=None,
+        lw=0.4,
+        legend=False,
+    )
+    sns.lineplot(
+        data=ref_data,
+        x="k",
+        y=metric,
+        hue="ctrl_latency",
+        # size="ctrl_latency",
+        ax=ax_top,
+        # marker="o",
+        # errorbar=("pi", 95),
+        errorbar=None,
+        # units="seed",
+        # estimator=None,
+        lw=2,
+    )
 
     vmin, vmax = 0, 1
     # TODO: use 0, 1 for real, but using data range for now to see more variation
-    vmin, vmax = df.R2_ctrl_Xhat_Xref_fsnn.min(), df.R2_ctrl_Xhat_Xref_fsnn.max()
+    vmin, vmax = df[metric].min(), df[metric].max()
     for ep, ax in zip(expl_params, axs_grid.flatten()):
         conds2keep = ref_condition.copy()
         del conds2keep[ep]
         query_str = " and ".join([f"{k} == {v}" for k, v in conds2keep.items()])
         subset = df.query(query_str)
         # average over seeds
-        subset = (
-            subset.groupby([ep, "k"])[["R2_ctrl_Xhat_Xref_fsnn"]].mean().reset_index()
-        )
-        subset = subset.pivot(index="k", columns=ep, values="R2_ctrl_Xhat_Xref_fsnn")
-        sns.heatmap(subset, ax=ax, vmin=0, vmax=1, cmap=psty.cmap, cbar=False)
+        subset = subset.groupby([ep, "k"])[[metric]].mean().reset_index()
+        subset = subset.pivot(index="k", columns=ep, values=metric)
+        sns.heatmap(subset, ax=ax, vmin=vmin, vmax=vmax, cmap=psty.cmap, cbar=False)
 
     for ax in axs_grid[:, 1:].flatten():
         ax.set(ylabel="")
@@ -53,7 +90,7 @@ def main(cfg, results_csv, outfiles):
     fig.colorbar(
         axs_grid[0, 0].collections[0],
         ax=axs_grid,
-        label=r"$R^2\left(X_\text{ref} \sim X_\text{hat}\right)$",
+        label=r"$Q_\text{track}\left(X_\text{ref}, X\right)$",
     )
     for f in outfiles:
         print(f"Saving figure to {f}")
