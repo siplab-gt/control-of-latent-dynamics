@@ -61,6 +61,11 @@ def ctrl_expts(
 
     print(f"{base_params=}")
     print(base_params.keys())
+
+    # careful to load before setting seed, since loading sets seed as side effect
+    cleo_prep = CleoPrep.load(cleo_prep_file)
+    cleo_prep.reset()
+
     seed = seed_everything(int(cond_params["seed"]), "ctrl_expts")
     random.seed(seed)
     np.random.seed(seed)
@@ -73,9 +78,6 @@ def ctrl_expts(
     t_trial = float(base_params.expts["t_trial_ms"]) * b2.ms
     n_trials = int(base_params["n_trials_ctrl"])
     report_period = config["report_period_s"] * b2.second
-
-    cleo_prep = CleoPrep.load(cleo_prep_file)
-    cleo_prep.reset()
 
     lds = LDS.load(lds_model_file)
 

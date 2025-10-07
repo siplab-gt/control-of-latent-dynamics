@@ -93,6 +93,13 @@ class ExptData(BaseDataClass):
 def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     print(f"{base_params=}")
     print(base_params.keys())
+
+    # careful to load before setting seed, since loading sets seed as side effect
+    cleo_prep = CleoPrep.load(cleo_prep_file)
+    cleo_prep.reset()
+    print("loaded cleo_prep before sys_id_expts", cleo_prep)
+    assert cleo_prep.sim.network == cleo_prep.fsnn.net
+
     seed = seed_everything(int(cond_params["seed"]), "sys_id_expts")
     rng = np.random.default_rng(seed)
 
@@ -101,9 +108,6 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     t_intertrial_ms = float(base_params.expts["t_intertrial_ms"])
     t_trial_ms = float(base_params.expts["t_trial_ms"])
     n_trials = int(base_params["n_trials_sys_id_max"])
-
-    cleo_prep = CleoPrep.load(cleo_prep_file)
-    cleo_prep.reset()
 
     spike_counts = []
 

@@ -118,7 +118,7 @@ reference_params:
 # base parameters, used across conditions
 #########################################
 
-train_device: cython
+train_device: cuda
 # TODO: switch to gpu later
 model_fit_device: cpu
 
