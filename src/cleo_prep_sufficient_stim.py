@@ -10,7 +10,7 @@ from jaxtyping import Float
 
 def light_and_probe_coords(
     grid: Quantity, k: int, m: int
-) -> tuple[Quantity, Float[np.ndarray, "k 3"], Quantity]:
+) -> tuple[Quantity, list[list[int]], Quantity]:
     # only going to be light coords, since no probe on sufficient_stim
     n_side_grid = int(np.sqrt(len(grid)))
     i_grid = np.arange(len(grid)).reshape(n_side_grid, n_side_grid)

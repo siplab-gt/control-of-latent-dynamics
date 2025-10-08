@@ -58,8 +58,10 @@ def fit_lds_to_data(
     # runPredict function outputs are lists of length= #steps_ahead desired for inference which is taken from the field: idSysF.step_ahead
     # Here we are only looking at 1-step-ahead predictions i.e., the lists only have one element:
     Zhat, Yhat, Xhat = Zhat[0], Yhat[0], Xhat[0]
-    print(f"{Zhat.shape=}, {Yhat.shape=}, {Xhat.shape=}")
+    # Yhat has wrong shape for some reason
     lssm = braid_model.getLSSM()
+    Yhat = Xhat @ lssm.C.T
+    print(f"{Zhat.shape=}, {Yhat.shape=}, {Xhat.shape=}")
     yres = YN - Yhat
     R = np.cov(yres, rowvar=False)
     # again, work in normalized space

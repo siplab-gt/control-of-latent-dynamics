@@ -98,11 +98,13 @@ rule test:
             fill_in_ref=True,
             file="{file}",
             setting="sufficient_stim",
+            # setting="optimal_stim_rec",
             task="reaching",
             latency=True,
             ctrl_type="LQMPC",
             k=4,
             m=NA,
+            # m=16,
             seed=0,
             layeredness=1,
             n_trials_sys_id=12,
@@ -110,6 +112,25 @@ rule test:
         ),
     output:
         "results/test/{file}",
+    shell:
+        "cp $(dirname {input})/* $(dirname {output})"
+
+rule testq2:
+    input:
+        paths_for_params(
+            fill_in_ref=True,
+            file="{file}",
+            setting="optimal_stim_rec",
+            task="reaching",
+            ctrl_type="LQMPC",
+            # k=48,
+            k=16,
+            # m=16,
+            m=48,
+            seed=0,
+        ),
+    output:
+        "results/testq2/{file}",
     shell:
         "cp $(dirname {input})/* $(dirname {output})"
 

@@ -10,7 +10,9 @@ def main(cleo_file, outfiles):
     style_plots()
     plt.switch_backend("agg")
     cleo_expt = CleoPrep.load(cleo_file)
-    fig, ax = cleo.viz.plot(sim=cleo_expt.sim, scatterargs={"s": 1, "rasterized": True})
+    fig, ax = cleo.viz.plot(
+        sim=cleo_expt.sim, scatterargs={"s": 0.1, "rasterized": True}
+    )
     for i_group, group in enumerate(cleo_expt.light.groups):
         for i_channel in group:
             ax.text(
@@ -18,6 +20,7 @@ def main(cleo_file, outfiles):
                 f"{i_group + 1}",
                 fontsize=6,
                 ha="center",
+                zorder=10,
             )
     for f in outfiles:
         fig.savefig(f)

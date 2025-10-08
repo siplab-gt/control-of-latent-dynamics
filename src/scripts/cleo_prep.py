@@ -90,7 +90,7 @@ def main(cond_params, base_params, fsnn_file, outfile):
     fsnn = fSNN.load(fsnn_file)
     print(f"{fsnn=}")
     cleo_expt = CleoPrep.build(fsnn, cond_params, base_params)
-    print(f"{cleo_expt=}")
+    # print(f"{cleo_expt=}")
     cleo_expt.save(outfile)
 
 

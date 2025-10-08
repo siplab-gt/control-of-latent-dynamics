@@ -69,26 +69,6 @@ class ExptData(BaseDataClass):
         assert np.all(expt_data.t_ms == expt_data.t_samp_ms)
         return expt_data
 
-    # def save(self, filename):
-    #     np.savez_compressed(
-    #         filename,
-    #         U=self.U,
-    #         X=self.X,
-    #         spikes=self.spikes,
-    #         t_ms=self.t_ms,
-    #         i_trial_boundaries=self.i_trial_boundaries,
-    #     )
-
-    # def load(cls, filename) -> "ExptData":
-    #     data = np.load(filename)
-    #     return cls(
-    #         U=data["U"],
-    #         X=data["X"],
-    #         spikes=data["spikes"],
-    #         t_ms=data["t_ms"],
-    #         i_trial_boundaries=data["i_trial_boundaries"],
-    #     )
-
 
 def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     print(f"{base_params=}")
