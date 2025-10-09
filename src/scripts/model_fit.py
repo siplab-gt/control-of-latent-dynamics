@@ -20,16 +20,23 @@ class ModelFitPredData(BaseDataClass):
     t_ms: np.ndarray
 
 
+def is_flat(arr, axis=0, thr=0):
+    """Returns a bool array that is True for dimensions of axis=0 val that are flat
+
+    Args:
+        val (np.array): data
+        axis (float, optional): axis over which flatness is evaluated. Defaults to 0.
+        thr (float, optional): Threshold for determining flatness. Defaults to 0.
+
+    Returns:
+        np.array of bool: array of result for whether each dimension was flat or not
+    """
+    return (np.max(arr, axis=axis) - np.min(arr, axis=axis)) <= thr
+
+
 def model_fit(
     cond_params, base_params, expt_data_file, method_module_file, outfiles, config
 ):
-    extra_seed_int = sum(ord(c) for c in "model_fit")
-    seed = int(cond_params["seed"]) + extra_seed_int
-    print(f"Seeding with {seed}")
-    random.seed(seed)
-    np.random.seed(seed)
-    # rng = np.random.default_rng(seed)
-
     expt_data = ExptData.load(expt_data_file)
     n_trials = int(cond_params.n_trials_sys_id)
     assert n_trials <= expt_data.n_trials, f"{n_trials=} > {expt_data.n_trials=}"
@@ -43,6 +50,15 @@ def model_fit(
     else:
         U = expt_data.Uopto
     U = U[:T]
+
+    for arr in ("Y", "Z", "U"):
+        if is_flat(locals()[arr], axis=0).any():
+            print(
+                f"Warning: some dimensions of {arr} are flat. This may cause issues with model fitting."
+            )
+            print(
+                f"Flat dimensions of {arr}: {np.where(is_flat(locals()[arr], axis=0))[0]}"
+            )
 
     n_x = int(cond_params["n_pcs"])  # just assume we know this
 

@@ -1,9 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Self
 
 import brian2.only as b2
 import cleo
-import numpy as np
 
 from src.data_classes import BaseDataClass
 from src.scripts.train_fsnn import fSNN
@@ -20,6 +19,7 @@ class CleoPrep(BaseDataClass):
     sim: cleo.CLSimulator
     _cond_params: dict = None
     _base_params: dict = None
+    _cache: dict = field(repr=False, default_factory=dict)
 
     def reset(self):
         """Resets monitors and device histories for fresh run (without changing network state)"""
@@ -32,13 +32,18 @@ class CleoPrep(BaseDataClass):
         self.sim.run(dt, *args, **kwargs)
 
     @classmethod
-    def build(cls, fsnn, cond_params, base_params) -> Self:
+    def build(cls, fsnn, cond_params, base_params, cache={}) -> Self:
         import importlib
 
         import cleo
+        import numpy as np
 
         from src.grouped_light import GroupedLight
+        from src.helpers import seed_everything
         from src.interface_array import get_interface_array
+
+        seed = seed_everything(int(cond_params["seed"]), "cleo_prep")
+        rng = np.random.default_rng(seed)
 
         light_model = cleo.light.fiber473nm(
             R0=float(cond_params["beam_width_um"]) * b2.um / 2
@@ -49,19 +54,31 @@ class CleoPrep(BaseDataClass):
             int(base_params["array_n_per_side"]),
         )
 
-        # separate files so one can change without causing the other to be rerun
-        setting = cond_params["setting"]
-        module_name = f"src.cleo_prep_{setting}"
-        module = importlib.import_module(module_name)
-        light_and_probe_coords = module.light_and_probe_coords
-
-        if cond_params["m"] == "NA":
-            m = 0
+        # to not have to repeat this step every time we load
+        if "light_coords" in cache and "probe_coords" in cache:
+            light_coords = cache["light_coords"]
+            light_groups = cache["light_groups"]
+            probe_coords = cache["probe_coords"]
+            print("loaded cached light/probe coords")
         else:
-            m = int(cond_params["m"])
-        light_coords, light_groups, probe_coords = light_and_probe_coords(
-            grid, int(cond_params["k"]), m
-        )
+            # separate files so one can change without causing the other to be rerun
+            setting = cond_params["setting"]
+            module_name = f"src.cleo_prep_{setting}"
+            module = importlib.import_module(module_name)
+            light_and_probe_coords = module.light_and_probe_coords
+
+            if cond_params["m"] == "NA":
+                m = 0
+            else:
+                m = int(cond_params["m"])
+            light_coords, light_groups, probe_coords = light_and_probe_coords(
+                grid, int(cond_params["k"]), m, rng=rng
+            )
+            cache = {
+                "light_coords": light_coords,
+                "light_groups": light_groups,
+                "probe_coords": probe_coords,
+            }
 
         light_array = GroupedLight(
             name="light array",
@@ -73,17 +90,21 @@ class CleoPrep(BaseDataClass):
         sim.inject(light_array, fsnn.ng)
 
         if probe_coords is not None:
-            mua = cleo.ephys.MultiUnitActivity(name="mua")
+            # use higher cutoff to avoid memory explosion
+            mua = cleo.ephys.MultiUnitActivity(name="mua", recording_recall_cutoff=0.01)
             probe = cleo.ephys.Probe(probe_coords, signals=[mua])
             sim.inject(probe, fsnn.ng)
         else:
             probe = None
             mua = None
 
-        return cls(fsnn, light_array, probe, mua, sim, cond_params, base_params)
+        return cls(fsnn, light_array, probe, mua, sim, cond_params, base_params, cache)
 
     def __reduce__(self):
-        return (self.__class__.build, (self.fsnn, self._cond_params, self._base_params))
+        return (
+            self.__class__.build,
+            (self.fsnn, self._cond_params, self._base_params, self._cache),
+        )
 
 
 def main(cond_params, base_params, fsnn_file, outfile):

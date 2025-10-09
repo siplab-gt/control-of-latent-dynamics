@@ -35,7 +35,11 @@ def fit_lds_to_data(
         "BRAID_Cz1HL64U"  # Only Cz will be nonlinear, 1 Hidden layer with 64 Units.
     )
     args = MainModelPrepareArgs(methodCode)
+    # args["has_Dyz"] = False
+    assert args["has_Dyz"] is False
     args["epochs"] = int(base_params.model_fit["epochs"])
+    # TODO: BRAID warns about flat dimensions
+    args["remove_flat_dims"] = False
 
     braid_model.fit(
         YN.T,
@@ -47,9 +51,13 @@ def fit_lds_to_data(
         n_pre=None,
         args_base=args,
         create_val_from_training=True,
+        noFT=True,  # don't model feedthrough (Y->Z direct mapping)
     )
 
     assert braid_model.n1 == braid_model.nx == n_x
+    # not modeling D (direct Y->Z mapping)
+    assert braid_model.sId.model1.nft == 0
+    assert braid_model.sId.ny == YN.shape[1], f"{braid_model.sId.ny=} {YN.shape[1]=}"
 
     # estimate Q, R
     Zhat, Yhat, Xhat, _, _, _ = runPredict(
@@ -58,9 +66,10 @@ def fit_lds_to_data(
     # runPredict function outputs are lists of length= #steps_ahead desired for inference which is taken from the field: idSysF.step_ahead
     # Here we are only looking at 1-step-ahead predictions i.e., the lists only have one element:
     Zhat, Yhat, Xhat = Zhat[0], Yhat[0], Xhat[0]
-    # Yhat has wrong shape for some reason
+    # Yhat has wrong shape for some reason?
+    # print(f"{Yhat.shape=}")
     lssm = braid_model.getLSSM()
-    Yhat = Xhat @ lssm.C.T
+    # Yhat = Xhat @ lssm.C.T
     print(f"{Zhat.shape=}, {Yhat.shape=}, {Xhat.shape=}")
     yres = YN - Yhat
     R = np.cov(yres, rowvar=False)
@@ -81,14 +90,33 @@ def fit_lds_to_data(
     comp_graph_plot_basename = base_params.braid_basename + "_comp_graph"
     braid_model.sId.plot_comp_graph(savepath=comp_graph_plot_basename)
     braid_model.sId.print_summary()
+
+    # C instead of Cfw?
+    # store this to use later
+    # lds.x2z_model = braid_model.sId.model1.rnn.cell.Cfw
+    lds._x2z_reconstruction_info = (
+        braid_model.sId.model1.rnn.cell.C.get_recreation_info()
+    )
+    # must get recreation info before calling, since that ruins reconstruction. Don't know why.
+    Zhat_old = braid_model.sId.model1.rnn.cell.C.predict(Xhat.T).T
+    assert np.allclose(Zhat_old, Zhat, rtol=1e-3), f"{Zhat_old[-10:]=}\n{Zhat[-10:]=}"
+    # before BRAID's saveToFile, since it replaces Models with their weights
     braid_model.saveToFile(base_params.braid_basename + "_braid.pkl")
 
-    # store this to use later
-    lds.x2z_model = braid_model.sId.model1.rnn.cell.Cfw
-
     def x2z(self, X):
-        return self.x2z_model.predict(X.T).T
+        # hacky, but this is how BRAID does reconstruction internally
+        x2z_model = BRAID.RegressionModel.RegressionModel(
+            **self._x2z_reconstruction_info.constructor_kwargs
+        ).reconstruct(self._x2z_reconstruction_info)
+        return x2z_model.predict(X.T).T
 
     lds.x2z = types.MethodType(x2z, lds)
+
+    assert np.allclose(Zhat_old, lds.x2z(Xhat), rtol=1e-3), (
+        f"{Zhat_old[:10]=}\n{lds.x2z(Xhat)[:10]=}"
+    )
+    assert np.allclose(Zhat, lds.x2z(Xhat), rtol=1e-3), (
+        f"{Zhat[:10]=}\n{lds.x2z(Xhat)[:10]=}"
+    )
 
     return lds, Zhat, Yhat, Xhat

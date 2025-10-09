@@ -5,67 +5,47 @@ from brian2 import Quantity, mm
 from jaxtyping import Float, UInt
 
 
-def distributed_partition(grid, k, m):
+def force_mix_partition(grid, k, m, rng):
     """returns i_stim, i_rec"""
     assert grid.shape == (k + m, 3)
-    # work with the (n, 3) grid shape, rather than (n, n, 3)
-    # this should be flexible for non-square grids too.
-    n_side = int(np.sqrt(len(grid)))
-    stim_mask = np.indices((n_side, n_side)).sum(0) % 2  # initial checkerboard pattern
-    # stim_mask = np.indices(grid.shape[:-1]).sum(0) % 2  # initial checkerboard pattern
-    stim_mask = stim_mask.astype(bool).reshape((-1,))
-    assert stim_mask.shape == (k + m,)
-    n_stim_init = np.sum(stim_mask)
-    stim_coords = np.argwhere(stim_mask)
-    if n_stim_init > k:
-        print(
-            f"distributing {len(grid)} sites into {k} stim and {m} rec by flipping"
-            f" {n_stim_init - k} stim sites to rec from initial {n_stim_init} stim sites"
+    stim_mask = np.zeros((k + m,), dtype=bool)
+    stim_mask[rng.choice(k + m, k, replace=False)] = True
+    D2 = ((grid[:, None, :] - grid[None, :, :]) ** 2).sum(-1)
+    np.fill_diagonal(D2, np.inf)
+    Dinv = 1.0 / D2
+
+    def energy(mask):
+        same = mask[:, None] == mask[None, :]
+        return (same * Dinv).sum() / 2  # divide by 2 for double count
+
+    iters_since_improvement = 0
+    while iters_since_improvement < 100:
+        # Randomly select a pair of sites to swap
+        s, r = (
+            rng.choice(np.where(stim_mask)[0]),
+            rng.choice(np.where(~stim_mask)[0]),
         )
-        # remove closest stim-stim pairs first
-        dists = np.array(
-            [np.linalg.norm(grid[a] - grid[b]) for a, b in combinations(stim_coords, 2)]
-        )
-        pairs = np.array(list(combinations(range(len(stim_coords)), 2)))
-        order = np.argsort(dists)  # nearest first
-        removed = set()
-        for i, j in pairs[order]:
-            # for idx in (i, j):
-            #     if len(removed) < (n_stim_init - k) and idx not in removed:
-            #         removed.add(idx)
-            if len(removed) < (n_stim_init - k) and i not in removed:
-                removed.add(i)
-            if len(removed) >= (n_stim_init - k):
-                break
-        for idx in removed:
-            stim_mask[stim_coords[idx]] = False
-    elif n_stim_init < k:
-        # add rec sites farthest from existing stim sites
-        print(
-            f"distributing {len(grid)} sites into {k} stim and {m} rec by flipping"
-            f" {k - n_stim_init} rec sites to stim from initial {n_stim_init} stim sites"
-        )
-        rec_coords = np.argwhere(~stim_mask)
-        dists = np.min(
-            np.linalg.norm(
-                grid[rec_coords][:, None, :] - grid[stim_coords][None, :, :], axis=-1
-            ),
-            axis=1,
-        ).flatten()
-        new_stim_coords = rec_coords[np.argsort(dists)[-(k - n_stim_init) :]]
-        print(f"{new_stim_coords=}")
-        for c in new_stim_coords:
-            stim_mask[c] = True
-    assert np.sum(stim_mask) == k
-    assert np.sum(~stim_mask) == m
-    return np.argwhere(stim_mask), np.argwhere(~stim_mask)
+        # Compute the energy difference
+        # compute energy diff efficiently
+        # changing channel s from stim to rec
+        # E change is for new rec site - minus old stim site
+        ds = ((stim_mask == 0) * Dinv[s] - (stim_mask == 1) * Dinv[s]).sum()
+        # changing channel r from rec to stim
+        dr = ((stim_mask == 1) * Dinv[r] - (stim_mask == 0) * Dinv[r]).sum()
+        dE = ds + dr
+        if dE < 0:
+            # Accept the swap
+            stim_mask[s], stim_mask[r] = stim_mask[r], stim_mask[s]
+            iters_since_improvement = 0
+        iters_since_improvement += 1
+    return stim_mask, ~stim_mask
 
 
 def light_and_probe_coords(
-    grid: Quantity, k: int, m: int
+    grid: Quantity, k: int, m: int, rng
 ) -> tuple[Quantity, list[list[int]], Quantity]:
-    i_light, i_probe = distributed_partition(grid / mm, k, m)
+    i_light, i_probe = force_mix_partition(grid / mm, k, m, rng)
     light_coords = grid[i_light]
-    light_groups = list(np.arange(len(light_coords)).reshape(k, -1))
+    light_groups = np.arange(len(light_coords)).reshape(k, -1).tolist()
     probe_coords = grid[i_probe]
     return light_coords, light_groups, probe_coords

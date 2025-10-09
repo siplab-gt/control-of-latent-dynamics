@@ -63,6 +63,7 @@ class fSNN(BaseDataClass):
     def build(cls, cond_params, base_params, net_state={}) -> "fSNN":
         # lame, but need to import inside here for constructor to work when unpickling
         from cleo.coords import assign_coords_rand_rect_prism, coords_from_ng
+        import numpy as np
 
         from src.helpers import seed_everything
 
