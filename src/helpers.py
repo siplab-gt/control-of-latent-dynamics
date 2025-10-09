@@ -36,3 +36,12 @@ def str2bool(value):
     if value in {"false", "0", "no", "n", "off"}:
         return False
     raise ValueError(f"Invalid boolean string: {value!r}")
+
+
+def setup_debugger(port=5678):
+    import debugpy
+
+    debugpy.listen(port)
+    print(f"Waiting for debugger to attach on port {port}...")
+    debugpy.wait_for_client()
+    print("Debugger attached, continuing...")
