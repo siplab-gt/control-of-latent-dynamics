@@ -7,7 +7,7 @@ from jaxtyping import Float, UInt
 from matplotlib import pyplot as plt
 
 from src.data_classes import BaseDataClass
-from src.helpers import seed_everything
+from src.helpers import seed_everything, setup_debugger
 from src.scripts.cleo_prep import CleoPrep
 
 

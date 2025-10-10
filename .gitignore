@@ -9,3 +9,4 @@ logs/**
 report*.html
 .vscode/**
 **/output
+build/**

@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import itertools
 
@@ -115,6 +116,7 @@ rule test:
     shell:
         "cp $(dirname {input})/* $(dirname {output})"
 
+
 rule testq2:
     input:
         paths_for_params(
@@ -134,20 +136,29 @@ rule testq2:
     shell:
         "cp $(dirname {input})/* $(dirname {output})"
 
+fig_exts = [".png", ".pdf"]
 
-rule sufficient_stim_fig:
+rule main_figs:
     input:
-        "results/sufficient_stim_{task}.csv",
+        "results/{setting}__{task}.csv",
         "src/plot_style.py",
     output:
-        multiext("results/figs/sufficient_stim_{task}", ".png", ".svg", ".pdf"),
+        main=multiext("results/figs/{setting}__{task}", *fig_exts),
+        lineplots=multiext(
+            "results/figs/{setting}__{task}_lineplots", *fig_exts
+        ),
+        heatmaps_mean=multiext(
+            "results/figs/{setting}__{task}_heatmaps_mean", *fig_exts
+        ),
+        heatmaps_std=multiext(
+            "results/figs/{setting}__{task}_heatmaps_std", *fig_exts
+        ),
     script:
-        "../src/scripts/sufficient_stim_fig.py"
+        "../src/scripts/{wildcards.setting}_fig.py"
 
 
 rule sufficient_stim_tabulate:
     input:
-        # expand("results/{params}/{file}", params=paramspace.instance_patterns, ext=[""]),
         # to get main fig
         [
             paths_for_params(
@@ -179,7 +190,7 @@ rule sufficient_stim_tabulate:
             for ctrl, latency in [("OL", False), ("LQMPC", True)]
         ],
     output:
-        "results/sufficient_stim_{task}.csv",
+        "results/sufficient_stim__{task}.csv",
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -187,6 +198,57 @@ rule sufficient_stim_tabulate:
         print("concatenated sufficient stim DFs")
         df.to_csv(output[0], index=False)
         print(f"wrote sufficient stim results to {output[0]}")
+
+def get_q2_kms():
+    budget = int(config["q2"]["channel_budget"])
+    kk = np.linspace(1, budget - 1, int(config["q2"]["num_stim_ratio_levels"]), endpoint=True)
+    kk = np.round(kk).astype(int)
+    mm = budget - kk
+    return zip(kk.tolist(), mm.tolist())
+
+rule optimal_stim_rec_tabulate:
+    input:
+        # to get main fig
+        [
+            paths_for_params(
+                file="summary.csv",
+                setting="optimal_stim_rec",
+                latency=latency,
+                ctrl_type=ctrl,
+                k=k,
+                m=m,
+                seed=config["grid_sweep_params"]["seed"],
+                fill_in_ref=True,
+            )
+            for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
+            for k, m in get_q2_kms()
+        ],
+        # exploratory variables
+        [
+            paths_for_params(
+                file="summary.csv",
+                setting="optimal_stim_rec",
+                latency=latency,
+                ctrl_type=ctrl,
+                k=k,
+                m=m,
+                seed=config["grid_sweep_params"]["seed"],
+                **{var: config["star_sweep_params"][var]},
+                fill_in_ref=True,
+            )
+            for var in config["star_sweep_params"]
+            for ctrl, latency in [("OL", False), ("LQMPC", True)]
+            for k, m in get_q2_kms()
+        ],
+    output:
+        "results/optimal_stim_rec__{task}.csv",
+    localrule: True
+    run:
+        dfs = [pd.read_csv(infile) for infile in input]
+        df = pd.concat(dfs, ignore_index=True)
+        print("concatenated optimal stim rec DFs")
+        df.to_csv(output[0], index=False)
+        print(f"wrote optimal stim rec results to {output[0]}")
 
 
 def standard_log_kwargs(log_name):
@@ -232,6 +294,8 @@ rule analyze_ctrl_data:
         ),
     output:
         f"results/{params_str}/summary.csv",
+    log:
+        f'logs/{params_str}/analyze_ctrl_data.log',
     script:
         "../src/scripts/analyze_ctrl_data.py"
 
@@ -248,7 +312,6 @@ rule plot_ctrl_data_wide:
         "../src/scripts/plot_ctrl_data.py"
 
 
-# whatever the output is, ask for the fit from non-control-relevant parameters (latency, control)
 rule ctrl_expts:
     input:
         "src/ctrl/__init__.py",
@@ -267,8 +330,6 @@ rule ctrl_expts:
         ),
     output:
         f"results/{params_str}/ctrl_data.pkl.gz",
-        # NOTE: maybe instead of just data.npz have separate files U.npy, R.npy, etc.?
-        # or a CtrlData dataclass
     script:
         "../src/scripts/ctrl_expts.py"
 

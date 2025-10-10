@@ -17,8 +17,8 @@ def seed_everything(seed: int, extra_seed_str=""):
         don't use identical seeds, by default "".
     """
     extra_seed_int = sum(ord(c) for c in extra_seed_str)
+    print(f"Seeding with {seed} + {extra_seed_int} = {seed + extra_seed_int}")
     seed += extra_seed_int
-    print(f"Seeding with {seed}")
     np.random.seed(seed)
     b2.seed(seed)
     cleo.utilities.set_seed(seed)

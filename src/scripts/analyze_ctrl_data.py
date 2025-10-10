@@ -3,6 +3,7 @@ import pandas as pd
 from sklearn.metrics import r2_score
 from snakemake.script import snakemake
 
+from src.log_redirector import redirect_output_to_file
 from src.scripts.ctrl_expts import CtrlData
 from src.scripts.model_fit import ModelFitPredData
 from src.scripts.sys_id_expts import ExptData
@@ -58,14 +59,15 @@ def analyze_ctrl_data(
 
 
 if __name__ == "__main__" and "snakemake" in locals():
-    ctrl_data = CtrlData.load(snakemake.input[0])
-    sys_id_data = ExptData.load(snakemake.input[1])
-    model_fit_preds = ModelFitPredData.load(snakemake.input[2])
-    analyze_ctrl_data(
-        snakemake.wildcards,
-        ctrl_data,
-        snakemake.input[3],
-        sys_id_data,
-        model_fit_preds,
-        snakemake.output[0],
-    )
+    with redirect_output_to_file(snakemake.log[0]):
+        ctrl_data = CtrlData.load(snakemake.input[0])
+        sys_id_data = ExptData.load(snakemake.input[1])
+        model_fit_preds = ModelFitPredData.load(snakemake.input[2])
+        analyze_ctrl_data(
+            snakemake.wildcards,
+            ctrl_data,
+            snakemake.input[3],
+            sys_id_data,
+            model_fit_preds,
+            snakemake.output[0],
+        )
