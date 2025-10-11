@@ -8,6 +8,7 @@ from matplotlib import pyplot as plt
 
 from src.data_classes import BaseDataClass
 from src.helpers import seed_everything, setup_debugger
+from src.log_redirector import redirect_output_to_file
 from src.scripts.cleo_prep import CleoPrep
 
 
@@ -151,6 +152,10 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    run_sys_id_expts(
-        snakemake.wildcards, snakemake.params, snakemake.input[0], snakemake.output[0]
-    )
+    with redirect_output_to_file(snakemake.log[0]):
+        run_sys_id_expts(
+            snakemake.wildcards,
+            snakemake.params,
+            snakemake.input[0],
+            snakemake.output[0],
+        )

@@ -10,6 +10,7 @@ from snakemake.script import snakemake
 
 from src.ctrl import Controller
 from src.helpers import seed_everything, str2bool
+from src.log_redirector import redirect_output_to_file
 from src.model_fit import LDS
 from src.scripts.cleo_prep import CleoPrep
 from src.scripts.sys_id_expts import ExptData
@@ -161,11 +162,12 @@ def ctrl_expts(
 
 
 if __name__ == "__main__" and "snakemake" in locals():
-    ctrl_expts(
-        snakemake.wildcards,
-        snakemake.params,
-        snakemake.input.cleo_prep,
-        snakemake.input.lds_model,
-        snakemake.output[0],  # outfile
-        snakemake.config,  # for non-essential params
-    )
+    with redirect_output_to_file(snakemake.log[0]):
+        ctrl_expts(
+            snakemake.wildcards,
+            snakemake.params,
+            snakemake.input.cleo_prep,
+            snakemake.input.lds_model,
+            snakemake.output[0],  # outfile
+            snakemake.config,  # for non-essential params
+        )

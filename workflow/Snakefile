@@ -136,7 +136,9 @@ rule testq2:
     shell:
         "cp $(dirname {input})/* $(dirname {output})"
 
+
 fig_exts = [".png", ".pdf"]
+
 
 rule main_figs:
     input:
@@ -144,15 +146,11 @@ rule main_figs:
         "src/plot_style.py",
     output:
         main=multiext("results/figs/{setting}__{task}", *fig_exts),
-        lineplots=multiext(
-            "results/figs/{setting}__{task}_lineplots", *fig_exts
-        ),
+        lineplots=multiext("results/figs/{setting}__{task}_lineplots", *fig_exts),
         heatmaps_mean=multiext(
             "results/figs/{setting}__{task}_heatmaps_mean", *fig_exts
         ),
-        heatmaps_std=multiext(
-            "results/figs/{setting}__{task}_heatmaps_std", *fig_exts
-        ),
+        heatmaps_std=multiext("results/figs/{setting}__{task}_heatmaps_std", *fig_exts),
     script:
         "../src/scripts/{wildcards.setting}_fig.py"
 
@@ -199,12 +197,16 @@ rule sufficient_stim_tabulate:
         df.to_csv(output[0], index=False)
         print(f"wrote sufficient stim results to {output[0]}")
 
+
 def get_q2_kms():
     budget = int(config["q2"]["channel_budget"])
-    kk = np.linspace(1, budget - 1, int(config["q2"]["num_stim_ratio_levels"]), endpoint=True)
+    kk = np.linspace(
+        1, budget - 1, int(config["q2"]["num_stim_ratio_levels"]), endpoint=True
+    )
     kk = np.round(kk).astype(int)
     mm = budget - kk
     return zip(kk.tolist(), mm.tolist())
+
 
 rule optimal_stim_rec_tabulate:
     input:
@@ -251,13 +253,6 @@ rule optimal_stim_rec_tabulate:
         print(f"wrote optimal stim rec results to {output[0]}")
 
 
-def standard_log_kwargs(log_name):
-    return {
-        "stdout": f"logs/{params_str}/{log_name}.log",
-        "stderr": f"logs/{params_str}/{log_name}.log",
-    }
-
-
 def na_wildcards_through_step(desired_step):
     """returns a {wc: "NA"} dict for all wildcards that are irrelevant at and before
     the desired step, i.e., they are introduced later.
@@ -295,7 +290,7 @@ rule analyze_ctrl_data:
     output:
         f"results/{params_str}/summary.csv",
     log:
-        f'logs/{params_str}/analyze_ctrl_data.log',
+        f"logs/{params_str}/analyze_ctrl_data.log",
     script:
         "../src/scripts/analyze_ctrl_data.py"
 
@@ -330,6 +325,8 @@ rule ctrl_expts:
         ),
     output:
         f"results/{params_str}/ctrl_data.pkl.gz",
+    log:
+        f"logs/{params_str}/ctrl_expts.log",
     script:
         "../src/scripts/ctrl_expts.py"
 
@@ -389,6 +386,8 @@ rule model_fit:
         pred_data=f"results/{params_str}/model_fit_pred_data.pkl.gz",
     group:
         "model_fit"
+    log:
+        f"logs/{params_str}/model_fit.log",
     script:
         "../src/scripts/model_fit.py"
 
@@ -438,6 +437,8 @@ rule sys_id_expts:
         f"results/{params_str}/sys_id_data.pkl.gz",
     group:
         "sys_id"
+    log:
+        f"logs/{params_str}/sys_id_expts.log",
     script:
         "../src/scripts/sys_id_expts.py"
 
@@ -468,6 +469,8 @@ rule cleo_prep:
         **params_from_cfg("array_side_length_mm", "array_n_per_side"),
     output:
         f"results/{params_str}/cleo_prep.pkl.gz",
+    log:
+        f"logs/{params_str}/cleo_prep.log",
     group:
         "prep_fsnn"
     script:
@@ -509,7 +512,7 @@ rule train_fsnn:
             "expts/sample_period_ms",
         ),
     log:
-        **standard_log_kwargs("train_fsnn"),
+        f"logs/{params_str}/train_fsnn.log",
     group:
         "prep_fsnn"
     script:

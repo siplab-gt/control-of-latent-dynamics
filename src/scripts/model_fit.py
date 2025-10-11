@@ -7,6 +7,7 @@ from sklearn.linear_model import LinearRegression
 
 from src.data_classes import BaseDataClass
 from src.helpers import str2bool
+from src.log_redirector import redirect_output_to_file
 from src.model_fit import LDS
 from src.scripts.sys_id_expts import ExptData
 
@@ -113,11 +114,12 @@ def model_fit(
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    model_fit(
-        snakemake.wildcards,
-        snakemake.params,
-        snakemake.input.sys_id_data,
-        snakemake.input.method,
-        snakemake.output,
-        snakemake.config,
-    )
+    with redirect_output_to_file(snakemake.log[0]):
+        model_fit(
+            snakemake.wildcards,
+            snakemake.params,
+            snakemake.input.sys_id_data,
+            snakemake.input.method,
+            snakemake.output,
+            snakemake.config,
+        )

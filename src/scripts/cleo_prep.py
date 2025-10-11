@@ -5,6 +5,7 @@ import brian2.only as b2
 import cleo
 
 from src.data_classes import BaseDataClass
+from src.log_redirector import redirect_output_to_file
 from src.scripts.train_fsnn import fSNN
 
 
@@ -118,4 +119,10 @@ def main(cond_params, base_params, fsnn_file, outfile):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    main(snakemake.wildcards, snakemake.params, snakemake.input[0], snakemake.output[0])
+    with redirect_output_to_file(snakemake.log[0]):
+        main(
+            snakemake.wildcards,
+            snakemake.params,
+            snakemake.input[0],
+            snakemake.output[0],
+        )

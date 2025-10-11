@@ -8,6 +8,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from src.data_classes import BaseDataClass
+from src.log_redirector import redirect_output_to_file
 
 
 @dataclass
@@ -62,8 +63,8 @@ class fSNN(BaseDataClass):
     @classmethod
     def build(cls, cond_params, base_params, net_state={}) -> "fSNN":
         # lame, but need to import inside here for constructor to work when unpickling
-        from cleo.coords import assign_coords_rand_rect_prism, coords_from_ng
         import numpy as np
+        from cleo.coords import assign_coords_rand_rect_prism, coords_from_ng
 
         from src.helpers import seed_everything
 
@@ -188,9 +189,10 @@ def main(cond_params, base_params, train_device, fsnn_outfile):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    main(
-        snakemake.wildcards,
-        snakemake.params,
-        snakemake.config["train_device"],
-        snakemake.output[0],
-    )
+    with redirect_output_to_file(snakemake.log[0]):
+        main(
+            snakemake.wildcards,
+            snakemake.params,
+            snakemake.config["train_device"],
+            snakemake.output[0],
+        )
