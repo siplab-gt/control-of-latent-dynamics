@@ -21,4 +21,5 @@ dependencies = [
 ]
 
 [tool.setuptools]
+package-data = { "fsnn" = ["*/npz"] }
 packages = ["src"]

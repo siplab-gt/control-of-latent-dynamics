@@ -75,7 +75,7 @@ def params_from_cfg(*params: str, keep_parent_keys=False, keep_target_key=True) 
 
 def params_from_cfg_with_wildcards(
     *queries: str, keep_parent_keys=False, keep_target_key=True
-) -> dict:
+) -> callable:
     def replace_wildcards(wildcards):
         results = {}
         for query in queries:
@@ -88,6 +88,19 @@ def params_from_cfg_with_wildcards(
         return results
 
     return replace_wildcards
+
+
+def step_params(*steps: str) -> callable:
+    def wc_fn(wildcards):
+        params = {}
+        for step in steps:
+            params |= config[step]
+            if "task_specific" in params:
+                params |= config[step][wildcards.task]
+                del params["task_specific"]
+        return params
+
+    return wc_fn
 
 
 rule test:
@@ -318,11 +331,7 @@ rule ctrl_expts:
             "model_fit_lds.pkl.gz", **na_wildcards_through_step("model_fit")
         ),
     params:
-        **params_from_cfg("expts", keep_target_key=False),
-        **params_from_cfg("controller", keep_target_key=False),
-        expts=params_from_cfg_with_wildcards(
-            "task_specific/{task}/expts", keep_target_key=False
-        ),
+        step_params("expts", "ctrl_expts"),
     output:
         f"results/{params_str}/ctrl_data.pkl.gz",
     log:
@@ -377,9 +386,7 @@ rule model_fit:
             "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
         ),
     params:
-        model_fit=params_from_cfg_with_wildcards(
-            "task_specific/{task}/model_fit", keep_target_key=False
-        ),
+        step_params("model_fit"),
         braid_basename=f"results/{params_str}/model_fit_braid",
     output:
         lds_model=f"results/{params_str}/model_fit_lds.pkl.gz",
@@ -398,8 +405,6 @@ rule plot_sys_id_data_trials:
             "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
         ),
         "src/plot_style.py",
-    params:
-        params_from_cfg("sys_id"),
     output:
         multiext(f"results/{params_str}/sys_id_trials_plot", ".png"),
     localrule: True
@@ -428,10 +433,7 @@ rule sys_id_expts:
     input:
         paths_for_params("cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")),
     params:
-        **params_from_cfg("expts", keep_target_key=False),
-        expts=params_from_cfg_with_wildcards(
-            "task_specific/{task}/expts", keep_target_key=False
-        ),
+        step_params("expts", 'sys_id_expts'),
         n_trials_sys_id_max=config["star_sweep_params"]["n_trials_sys_id"][-1],
     output:
         f"results/{params_str}/sys_id_data.pkl.gz",
@@ -466,7 +468,7 @@ rule cleo_prep:
         "src/cleo_prep_{setting}.py",
         "src/interface_array.py",
     params:
-        **params_from_cfg("array_side_length_mm", "array_n_per_side"),
+        step_params("cleo_prep"),
     output:
         f"results/{params_str}/cleo_prep.pkl.gz",
     log:
@@ -504,13 +506,7 @@ rule train_fsnn:
         f"results/{params_str}/trained_fsnn.pkl.gz",
         # f"results/{params_str}/small_worldness.pkl.gz",
     params:
-        **params_from_cfg(
-            "base_neuron_density",
-            "layer_density_ratios",
-            "layer_boundaries_um",
-            "array_side_length_mm",
-            "expts/sample_period_ms",
-        ),
+        step_params("train_fsnn"),
     log:
         f"logs/{params_str}/train_fsnn.log",
     group:
@@ -528,12 +524,6 @@ rule plot_schematic:
         top=multiext(f"results/{params_str}/top_schematic", ".svg", ".png"),
         side=multiext(f"results/{params_str}/side_schematic", ".svg", ".png"),
     params:
-        **params_from_cfg(
-            "base_neuron_density",
-            "layer_density_ratios",
-            "layer_boundaries_um",
-            "array_side_length_mm",
-            "array_n_per_side",
-        ),
+        step_params("train_fsnn", 'cleo_prep'),
     script:
         "../src/scripts/plot_schematic.py"

@@ -1,3 +1,4 @@
+import importlib
 import os
 import sys
 from dataclasses import dataclass, field
@@ -5,6 +6,7 @@ from dataclasses import dataclass, field
 import brian2.only as b2
 import brian2cuda  # noqa: F401
 import numpy as np
+from jaxtyping import UInt
 from matplotlib import pyplot as plt
 
 from src.data_classes import BaseDataClass
@@ -19,6 +21,10 @@ class fSNN(BaseDataClass):
     state_mon: b2.StateMonitor
     v_mon: b2.StateMonitor
     n_pcs: int
+    i_trial_boundaries: UInt[np.ndarray, "n_trials n_events"]
+    """Trial (start, ..., end) indices, shape (n_trials, n_events) array"""
+    _mode: str = "train"
+    _save_data: bool = True
     _cond_params: dict = None
     _base_params: dict = None
     _state_vars_to_save: list = field(
@@ -52,6 +58,50 @@ class fSNN(BaseDataClass):
     def set_condition(self, condition):
         self.ng.condition = condition
 
+    @property
+    def mode(self):
+        return self._mode
+
+    @mode.setter
+    def mode(self, value):
+        self._mode = value
+
+    @property
+    def condition(self) -> int:
+        return self.ng.condition
+
+    @condition.setter
+    def condition(self, value: int):
+        self.ng.condition = value
+
+    @property
+    def monitors(self):
+        return [self.state_mon, self.v_mon]
+
+    def start_recording(self):
+        self._save_data = True
+        for mon in self.monitors:
+            mon.active = True
+
+    def disable_recording(self):
+        self._save_data = False
+        for mon in self.monitors:
+            mon.active = False
+
+    def run_trial(self, rng=None, condition=None):
+        if condition is None:
+            assert rng is not None
+            condition = self.sample_condition(rng)
+        self.condition = condition
+        iti_min, iti_max = self._base_params["t_intertrial_ms"]
+        t_intertrial = (
+            rng.uniform(
+                self._base_params["t_intertrial_min_ms"],
+                self._base_params["t_intertrial_max_ms"],
+            )
+            * b2.ms
+        )
+
     def __reduce__(self):
         net_state = {}
         for attr, state_vars in self._state_vars_to_save.items():
@@ -68,6 +118,8 @@ class fSNN(BaseDataClass):
 
         from src.helpers import seed_everything
 
+        b2.defaultclock.dt = float(base_params.dt_ms) * b2.ms
+
         seed = seed_everything(int(cond_params["seed"]), "train_fsnn")
         rng = np.random.default_rng(seed)
 
@@ -83,22 +135,10 @@ class fSNN(BaseDataClass):
         n_ng = vol * (base_params["base_neuron_density"] * b2.mm**-3)
         n_ng = int(round(n_ng))
         print(f"side_length_um: {side_length_um}, volume: {vol}, n_ng: {n_ng}")
-        ng = b2.NeuronGroup(
-            n_ng,
-            """dv/dt = (-(v + 70*mvolt) + 1000*abs(X)*mvolt + (Iopto_exc + Iopto_inh)*500*Mohm) / (10*ms) : volt
-            dX/dt = (-X + i + 10*xi*sqrt(10*ms)) / (20*ms) : 1
-            # dY/dt = 1 / ms : 1
-            # Y = i + t / ms : 1
-            Iopto_exc : amp
-            Iopto_inh : amp
-            Z = cos(X) : 1  # "behavior"
-            condition : 1
-            """,
-            threshold="v > -50*mvolt",
-            reset="v = -70*mvolt",
-            name="neurongroup",
-        )
         hor_lim = (-side_length_um / 2, side_length_um / 2)
+
+        ############# start fSNN code ##############
+
         assign_coords_rand_rect_prism(
             ng,
             hor_lim,
@@ -159,10 +199,22 @@ def main(cond_params, base_params, train_device, fsnn_outfile):
         assert train_device == "cython"
         b2.prefs.codegen.target = "cython"
 
-    fsnn = fSNN.build(cond_params, base_params)
-    print(fsnn)
+    # TODO: will have to change for multi-task supposrt
+    factors, emg = importlib.import_module("src.fsnn").load_data(cond_params.task)
 
-    fsnn.net.run(10 * b2.ms)
+    fsnn = fSNN.build(cond_params, base_params, factors, emg)
+
+    fsnn.disable_recording()
+    fsnn.mode = "demean"
+    for i in range(int(base_params["n_trials_demean"])):
+        fsnn.run_trial()
+    fsnn.mode = "train"
+    for i in range(int(base_params["n_trials_train"])):
+        fsnn.run_trial()
+    fsnn.mode = "test"
+    fsnn.start_recording()
+    for i in range(int(base_params["n_trials_test"])):
+        fsnn.run_trial()
 
     if train_device == "cuda":
         print("compiling cuda code")
