@@ -185,12 +185,12 @@ train_fsnn:
   device: cuda # cpu or cuda
   dt_ms: 1
   # from Narayanan 2017:
+  # L5 is the sparsest, serves as base.
   base_neuron_density: 650 # neurons per mm^3. 65k is realistic
   layer_density_ratios:
     - 1.231 # L2/3, =80/65
     - 1.539 # L4, =100/65
     - 1 # L5
-    # L5 is the sparsest, serves as base.
   layer_boundaries_um:
     - 150 # L2/3 start
     - 550 # L4 start
@@ -203,14 +203,16 @@ train_fsnn:
   n_trials_test: 100
   task_specific:
     cycling:
-      t_intertrial_ms: 10
-      t_trial_ms: 100
+      iti_min_s: 0
+      iti_lambda_s: 0
+      t_event_s: [0.5, 1.95]
+      n_conds: 1
     reaching:
-      expts:
-        # t_intertrial_ms: 10
-        # t_trial_ms: 100
-        t_intertrial_ms: [2, 4]
-        t_trial_ms: 10
+      iti_min_s: .4
+      iti_lambda_s: 2
+      t_event_s: [0.35, 0.15, 0.31]
+      n_rate_net_neurons: 800
+      n_conds: 8
 
 cleo_prep:
   array_side_length_mm: 4

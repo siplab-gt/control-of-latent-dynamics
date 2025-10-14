@@ -103,9 +103,6 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     cleo_prep.sim.set_io_processor(
         SysIDProcessor(sample_period=base_params.sample_period_ms * b2.ms)
     )
-    # b2.prefs.codegen.target = "cython"
-    conditions = []
-    i_trial_boundaries = []
     cleo_prep.fsnn.start_recording()
     for i_trial in range(n_trials):
         print(f"running sys ID trial {i_trial}")
@@ -113,17 +110,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         # needed for standalone mode
         # actually maybe not with multple runs, run_args
         cleo_prep.fsnn.run_trial(rng=rng)
-        cleo_prep.run(
-            t_intertrial_ms * b2.ms,  # TODO
-            report_period=50 * b2.second,
-        )
-        i_start = cleo_prep.fsnn.state_mon.X.shape[1]
-        condition = cleo_prep.fsnn.sample_condition(rng)
-        cleo_prep.fsnn.set_condition(condition)
-        conditions.append(condition)
-        cleo_prep.run(t_trial_ms * b2.ms, report_period=50 * b2.second)
-        i_end = cleo_prep.fsnn.state_mon.X.shape[1]
-        i_trial_boundaries.append((i_start, i_end))
+
     print("successfully ran")
 
     if cleo_prep.probe is not None:

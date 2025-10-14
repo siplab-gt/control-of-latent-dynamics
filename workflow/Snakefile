@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import itertools
+from src.helpers import str2bool
 
 # Main entrypoint of the workflow.
 # Please follow the best practices:
@@ -96,7 +97,7 @@ def step_params(*steps: str) -> callable:
         for step in steps:
             params |= config[step]
             if "task_specific" in params:
-                params |= config[step][wildcards.task]
+                params |= config[step]['task_specific'][wildcards.task]
                 del params["task_specific"]
         return params
 
@@ -500,13 +501,29 @@ rule plot_fsnn:
 #     script:
 #         "../src/scripts/plot_fsnn_weights.py"
 
+def get_task_params_for_fsnn(wc):
+    params = config['train_fsnn']
+    try:
+        multitask = str2bool(wc.multitask)
+    except AttributeError:
+        multitask = False
+    if multitask:
+        task_params = config['train_fsnn']['task_specific']
+    else:
+        task_params = {wc.task: config['train_fsnn']['task_specific'][wc.task]}
+    out = params | task_params
+    del out['task_specific']
+    return out
 
 rule train_fsnn:
+    input:
+        "src/fsnn/data_{task}.npz",
+        "src/fsnn/{task}.py",
     output:
         f"results/{params_str}/trained_fsnn.pkl.gz",
         # f"results/{params_str}/small_worldness.pkl.gz",
     params:
-        step_params("train_fsnn"),
+        get_task_params_for_fsnn,
     log:
         f"logs/{params_str}/train_fsnn.log",
     group:

@@ -45,3 +45,18 @@ def setup_debugger(port=5678):
     print(f"Waiting for debugger to attach on port {port}...")
     debugpy.wait_for_client()
     print("Debugger attached, continuing...")
+
+
+def numerize(wildcards_dict):
+    """Convert all values in a wildcards dict to int or float if possible."""
+    new_dict = {}
+    for k, v in wildcards_dict.items():
+        try:
+            new_v = int(v)
+        except (ValueError, TypeError):
+            try:
+                new_v = float(v)
+            except (ValueError, TypeError):
+                new_v = v
+        new_dict[k] = new_v
+    return new_dict
