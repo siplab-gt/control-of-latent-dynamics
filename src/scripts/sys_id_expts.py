@@ -106,9 +106,6 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     cleo_prep.fsnn.start_recording()
     for i_trial in range(n_trials):
         print(f"running sys ID trial {i_trial}")
-        # TODO: likely will sample trials at the very beginning, not on the go.
-        # needed for standalone mode
-        # actually maybe not with multple runs, run_args
         cleo_prep.fsnn.run_trial(rng=rng)
 
     print("successfully ran")

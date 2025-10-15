@@ -1,13 +1,372 @@
 import importlib.resources
+import os
+from dataclasses import dataclass, field
 
+import brian2.only as b2
+import brian2cuda  # noqa: F401
 import numpy as np
+from jaxtyping import UInt
+
+from src.data_classes import BaseDataClass
 
 
-def load_data(task):
-    with (
-        importlib.resources.files(__package__)
-        .joinpath(f"{task}_data.npz")
-        .open("rb") as f
-    ):
-        data = np.load(f)
-    return data["factors"], data["emg"]
+def orth(A, tol=None):
+    # Perform singular value decomposition
+    U, s, Vt = np.linalg.svd(A, full_matrices=False)
+
+    if tol is None:
+        tol = max(A.shape) * np.finfo(s.dtype).eps * np.max(s)
+
+    # Determine the rank based on the given tolerance
+    rank = np.sum(s > tol)
+
+    # Return the orthonormal basis
+    Q = U[:, :rank]
+
+    return Q
+
+
+def run_main(cond_params, base_params, device, fsnn_infile, fsnn_outfile, mode, record):
+    outdir = os.path.dirname(fsnn_outfile)
+    if device == "cuda":
+        b2.set_device("cuda_standalone", build_on_run=False)
+    else:
+        assert device == "cython"
+        b2.prefs.codegen.target = "cython"
+
+    if fsnn_infile is not None:
+        print(f"loading fSNN from {fsnn_infile}")
+        fsnn = fSNN.load(fsnn_infile)
+    else:
+        fsnn = fSNN.build(cond_params, base_params)
+
+    n_trials = base_params["n_trials_" + mode]
+    print(f"preparing {n_trials} {mode} trials")
+    fsnn.run_trials(n_trials, mode=mode, record=record, continue_state=continue_state)
+    if device == "cuda":
+        print("compiling cuda code")
+        b2.device.build(
+            directory=f"{outdir}/brian2cuda_output",
+            results_directory=outdir,
+            run=False,
+        )
+        print("done building")
+
+        b2.device.run()
+
+    print(f"done running {mode} trials")
+
+    if fsnn_outfile is not None:
+        fsnn.save(fsnn_outfile)
+        print(f"saved fSNN to {fsnn_outfile}")
+
+    return fsnn
+
+
+def nsteps_large_timed_arrays(base_params, task_params):
+    largest_n_trials = np.max(
+        [
+            base_params["train_fsnn"][f"n_trials_{phase}"]
+            for phase in ["demean", "train", "test"]
+        ]
+    )
+    largest_n_steps = (
+        (
+            task_params["iti_min_s"]
+            + task_params["iti_lambda_s"] * 1.5
+            + np.sum(task_params["t_event_s"])
+        )
+        * b2.second
+        / (base_params["dt_ms"] * b2.ms)
+    )
+    largest_n_steps = int(np.round(largest_n_steps))
+    return largest_n_trials * largest_n_steps
+
+
+@dataclass
+class fSNN(BaseDataClass):
+    net: b2.Network
+    ng: b2.NeuronGroup
+    syn: b2.Synapses
+    state_mon: b2.StateMonitor
+    v_mon: b2.StateMonitor
+    n_pcs: int
+    i_trial_boundaries: UInt[np.ndarray, "n_trials n_events"] = field(
+        default_factory=list
+    )
+    """Trial (start, ..., end) indices, shape (n_trials, n_events) array"""
+    conditions: list = field(default_factory=list)
+    task_modules: dict = field(default_factory=dict)
+    rng: np.random.Generator = field(default_factory=lambda: np.random.default_rng())
+    _mode: str = "train"
+    _save_data: bool = True
+    _cond_params: dict = None
+    _base_params: dict = None
+    _state_vars_to_save: list = field(
+        default_factory=lambda: {"ng": ["v", "X", "vJsbar"], "syn": ["w"]}
+    )
+
+    @property
+    def k_task(self) -> int:
+        return 3  # TODO: get from network
+
+    def u_task(self, t: b2.Quantity) -> np.ndarray:
+        """task-related inputs, shape ([T], n_task_inputs) array"""
+        # TODO: get from network
+        out = np.array(
+            [
+                20 * np.sin(2 * np.pi * t / (100 * b2.ms)),
+                20 * np.sin(2 * np.pi * t / (200 * b2.ms) + np.pi / 4),
+                20 * np.sin(2 * np.pi * t / (300 * b2.ms) + np.pi / 2),
+            ]
+        ).T
+        return out
+
+    @property
+    def u_task_(self):
+        """callable with signature t -> task-related input"""
+        return lambda t: self.u_task(t)
+
+    @property
+    def mode(self):
+        return self._mode
+
+    @mode.setter
+    def mode(self, value):
+        self._mode = value
+
+    @property
+    def condition(self) -> int:
+        return self.ng.condition
+
+    @condition.setter
+    def set_condition(self, value: int):
+        self.ng.condition = value
+
+    @property
+    def monitors(self):
+        return [self.state_mon, self.v_mon]
+
+    def start_recording(self):
+        self._save_data = True
+        for mon in self.monitors:
+            mon.active = True
+        self.conditions = []
+        self.i_trial_boundaries = []
+
+    def disable_recording(self):
+        self._save_data = False
+        for mon in self.monitors:
+            mon.active = False
+
+    @property
+    def dt(self) -> b2.Quantity:
+        dt = self._base_params["dt_ms"] * b2.ms
+        assert dt == b2.defaultclock.dt
+        return dt
+
+    @property
+    def T_trial(self) -> b2.Quantity:
+        return (
+            np.round(np.sum(self._base_params["t_event_s"]) * b2.second / self.dt)
+            * self.dt
+        )
+
+    def generate_trial(self):
+        """returns fin,fout,TTrial,cond,i_trial_start_end,ITIb,ITI"""
+        if True:  # single-task
+            task = self._cond_params["task"]
+        else:
+            raise NotImplementedError("multi-task not implemented yet")
+        fn = importlib.import_module(task).generate_trial
+        return fn(
+            self.rng,
+            self._base_params,
+            self._base_params["train_fsnn"][task],
+            self.emg[task],
+        )
+
+    def run_trial(self, trial_params=None):
+        if trial_params is None:
+            fin, fout, T_trial, condition, i_trial_bounds, iti_b, iti = (
+                self.generate_trial()
+            )
+        else:
+            fin, fout, T_trial, condition, i_trial_bounds, iti_b, iti = trial_params
+        kwargs = dict(report_period=self._base_params["report_period_s"] * b2.second)
+        self.fin.values = fin
+        self.fout.values = fout
+        # TODO: ytilde TimedArray?
+        # need this so TimedArrays can work with respect to trial start
+        self.ng.t_trial_start = self.net.t
+        self.net.run(T_trial, **kwargs)
+
+        if self._save_data:
+            self.conditions.append(condition)
+            self.i_trial_boundaries.append(i_trial_bounds)
+
+    def run_trials(self, n_trials, mode, record=False):
+        """needed for CUDA standalone training: mainly to prep TimedArrays
+        with all trials in advance"""
+
+        fin_all, fout_all, T_trial_all, condition, i_trial_bounds, iti_b, iti = (
+            self.generate_trial()
+        )
+        for i in range(1, n_trials):
+            nsteps_prev = len(fin_all)
+            fin, fout, T_trial, condition, i_trial_bounds, iti_b, iti = (
+                self.generate_trial()
+            )
+            fin_all = np.vstack([fin_all, fin])
+            fout_all = np.vstack([fout_all, fout])
+            T_trial_all += T_trial
+            if self._save_data:
+                self.conditions.append(condition)
+                i_start = i_trial_bounds[0] + nsteps_prev
+                i_end = i_trial_bounds[1] + nsteps_prev
+                self.i_trial_boundaries.append((i_start, i_end))
+
+        self.fin.values = fin_all
+        self.fout.values = fout_all
+        self.ng.t_trial_start = self.net.t
+
+        self.net.run(
+            T_trial_all, report_period=self._base_params["report_period_s"] * b2.second
+        )
+
+    def __reduce__(self):
+        net_state = {}
+        for attr, state_vars in self._state_vars_to_save.items():
+            net_obj = self.__dict__[attr]
+            net_state[attr] = {var: getattr(net_obj, var) for var in state_vars}
+
+        return (self.__class__.build, (self._cond_params, self._base_params, net_state))
+
+    @classmethod
+    def build(cls, cond_params, base_params, net_state={}) -> "fSNN":
+        # lame, but need to import inside here for constructor to work when unpickling
+        import numpy as np
+        from cleo.coords import assign_coords_rand_rect_prism, coords_from_ng
+
+        from src.helpers import seed_everything
+
+        b2.defaultclock.dt = base_params.dt_ms * b2.ms
+
+        seed = seed_everything(cond_params["seed"], "train_fsnn")
+        rng = np.random.default_rng(seed)
+
+        # TODO: calculate volume, num neurons per layer
+        thickness = (
+            base_params["layer_boundaries_um"][-1]
+            - base_params["layer_boundaries_um"][0]
+        ) * b2.um
+        side_length_um = (
+            base_params.array_side_length_mm
+            * 1000
+            * np.sqrt(cond_params.network_area_scale)
+        )
+        vol = (side_length_um * b2.um) ** 2 * thickness
+        n_ng = vol * (base_params["base_neuron_density"] * b2.mm**-3)
+        n_ng = int(round(n_ng))
+        print(f"side_length_um: {side_length_um}, volume: {vol}, n_ng: {n_ng}")
+        hor_lim = (-side_length_um / 2, side_length_um / 2)
+
+        ############# start fSNN code ##############
+
+        if cond_params.get("multitask", False):
+            tasks = ["reaching", "cycling"]
+            g = 6  # feedback gain in spiking network
+            muf = -0.3  # recurrent inhibition
+            gs = 0.11  # gain of slow random synapses
+            gf = 0.13  # gain of fast random synpases
+        else:
+            tasks = [cond_params.task]
+
+        task_modules = {
+            task: importlib.import_module(f"src.fsnn.{task}") for task in tasks
+        }
+        for task, tm in task_modules.items():
+            tm.init_module(rng, base_params[task], cond_params[task])
+
+        if len(tasks) == 1:
+            g = task_modules[tasks[0]].g
+            muf = task_modules[tasks[0]].muf
+            gs = task_modules[tasks[0]].gs
+            gf = task_modules[tasks[0]].gf
+
+        n_out = sum([task.n_out for task in task_modules.values()])
+        n_in = sum([task.n_in for task in task_modules.values()])
+
+        # this is just N for plain cycling, but Ntilde in reaching and multitask
+        n_tilde = base_params.n_rate_neurons  # TODO
+
+        utilde_in = rng.uniform(-1, 1, (n_tilde, n_in))
+
+        V = np.hstack([task_modules[task].get_V(rng) for task in tasks])
+        assert V.shape == (n_tilde, n_factors)
+
+        # U: orthogonal matrix of norm g that maps from space of Ntilde to N
+        U = g * orth(rng.uniform(-1, 1, (n_ng, n_tilde)))
+        assert U.shape == (n_ng, n_tilde)
+        # input weights for the external input to the spiking model
+        u_in = U @ utilde_in
+        u = U @ V  # mapping from P-space to N-space
+
+        assign_coords_rand_rect_prism(
+            ng,
+            hor_lim,
+            hor_lim,
+            (
+                base_params["layer_boundaries_um"][0],
+                base_params["layer_boundaries_um"][-1],
+            ),
+            unit=b2.um,
+        )
+        print(f"{ng.N=}")
+        syn = b2.Synapses(ng, ng, "w : 1", name="synapses")
+        n_syn = rng.poisson(lam=1e-4 * n_ng * n_ng)
+        print(f"{n_syn=}")
+        i = rng.integers(0, n_ng, size=n_syn)
+        j = rng.integers(0, n_ng, size=n_syn)
+        syn.connect(i=i, j=j)
+        # can't do this, will be different depending on device
+        # syn.connect(p=1e-4)
+        syn.w = 0.5
+
+        samp_period = base_params.sample_period_ms * b2.ms
+        state_mon = b2.StateMonitor(
+            ng, ["X", "Z"], record=np.arange(10), dt=samp_period
+        )
+        v_mon = b2.StateMonitor(ng, "v", record=np.arange(10))
+
+        net = b2.Network(ng, syn, state_mon, v_mon)
+
+        syn.w = "randn()"
+
+        # timed arrays
+        # don't need this? TimedArrays don't need to be included in network construction
+        n_tarr = nsteps_large_timed_arrays(base_params, base_params["train_fsnn"])
+
+        fsnn = cls(
+            net,
+            ng,
+            syn,
+            state_mon,
+            v_mon,
+            cond_params["n_pcs"],
+            cond_params,
+            base_params,
+            rng=rng,
+            tasks=tasks,
+            emg=emg,
+            factors=factors,
+        )
+
+        for attr, state_vars in net_state.items():
+            net_obj = getattr(fsnn, attr)
+            print(f"loading state for {attr}: {list(state_vars.keys())}")
+            for var, values in state_vars.items():
+                getattr(net_obj, var)[:] = values
+
+        print(f"{coords_from_ng(ng)[:10]=}")
+        return fsnn

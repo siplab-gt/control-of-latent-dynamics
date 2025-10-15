@@ -6,7 +6,7 @@ import cleo
 
 from src.data_classes import BaseDataClass
 from src.log_redirector import redirect_output_to_file
-from src.scripts.train_fsnn import fSNN
+from src.fsnn import fSNN
 
 
 @dataclass

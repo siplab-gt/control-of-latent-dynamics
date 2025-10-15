@@ -182,7 +182,6 @@ power_per_neuron_uW: 1 # when normalizing power
 ##################################################################
 
 train_fsnn:
-  device: cuda # cpu or cuda
   dt_ms: 1
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
@@ -206,13 +205,11 @@ train_fsnn:
       iti_min_s: 0
       iti_lambda_s: 0
       t_event_s: [0.5, 1.95]
-      n_conds: 1
     reaching:
       iti_min_s: .4
       iti_lambda_s: 2
       t_event_s: [0.35, 0.15, 0.31]
-      n_rate_net_neurons: 800
-      n_conds: 8
+      n_rate_neurons: 800
 
 cleo_prep:
   array_side_length_mm: 4
@@ -246,3 +243,4 @@ ctrl_expts:
 ######################################################
 # for brian report printing frequency
 report_period_s: 50
+train_device: cuda # cuda or cython

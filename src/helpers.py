@@ -1,3 +1,5 @@
+import importlib
+
 import brian2.only as b2
 import cleo
 import cleo.utilities
@@ -47,16 +49,45 @@ def setup_debugger(port=5678):
     print("Debugger attached, continuing...")
 
 
-def numerize(wildcards_dict):
-    """Convert all values in a wildcards dict to int or float if possible."""
-    new_dict = {}
-    for k, v in wildcards_dict.items():
+class AttrDict(dict):
+    """Dictionary subclass whose entries can be accessed like attributes."""
+
+    def __getattr__(self, item):
         try:
-            new_v = int(v)
-        except (ValueError, TypeError):
+            return self[item]
+        except KeyError:
+            raise AttributeError(f"'AttrDict' object has no attribute '{item}'")
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    def __delattr__(self, item):
+        try:
+            del self[item]
+        except KeyError:
+            raise AttributeError(f"'AttrDict' object has no attribute '{item}'")
+
+
+def numerize_and_attrify(params_dict) -> AttrDict:
+    """Recursively convert all values in a wildcards dict to int or float if possible,
+    and wrap dicts so keys are accessible as attributes."""
+    new_dict = AttrDict()
+    for k, v in params_dict.items():
+        if isinstance(v, dict):
+            new_v = numerize_and_attrify(v)
+        else:
             try:
-                new_v = float(v)
+                new_v = int(v)
             except (ValueError, TypeError):
-                new_v = v
+                try:
+                    new_v = float(v)
+                except (ValueError, TypeError):
+                    new_v = v
         new_dict[k] = new_v
     return new_dict
+
+
+def load_factors_emg(npz_file):
+    with open(npz_file, "rb") as f:
+        npz = np.load(f)
+        return npz.get("factors", None), npz["emg"]

@@ -1,11 +1,44 @@
+from functools import cache
 import brian2.only as b2
 import numpy as np
 
+from src.helpers import load_factors_emg
 
-def generate_trial(rng, base_params, task_params, emg):
+DATA_FILE = __file__.replace(".py", "_data.npz")
+factors, emg = load_factors_emg(DATA_FILE)
+n_conds = emg.shape[0]
+n_out = emg.shape[2] + 1  # output for network (2 muscles + stabilzing signal)
+n_in = 3  # num inputs
+g = 3  # feedback gain in spiking network
+muf = -0.3  # recurrent inhibition
+gs = 0.11  # gain of slow random synapses
+gf = 0.13  # gain of fast random synpases
+gtilde = 1.4
+
+n_factors = None  # "P" in original code, set in init_module
+Jtilde = None
+V = None  #
+
+
+def init_module(rng, base_params, task_params):
+    """hacky init of global variables that are unique to this task"""
+    global n_factors, Jtildeprime, utilde, V
+    n_factors = factors.shape[1]  # "P" in original code
+    n_tilde = base_params.n_rate_neurons  # TODO
+
+    Jtilde = gtilde * 1 / np.sqrt(n_tilde) * rng.normal(size=(n_tilde, n_tilde))
+    utilde = rng.uniform(-1, 1, (n_tilde, n_out))
+    Jtildeprime = np.hstack([Jtilde, utilde])
+    assert Jtildeprime.shape == (n_tilde, n_tilde + n_out)
+
+
+def get_V(rng):
+    return Jtildeprime @ V
+
+
+def generate_trial(rng, base_params, task_params):
     """returns fin,fout,T_trial,cond,i_trial_start_end,nsteps_itib,nsteps_iti"""
-    C = task_params.n_conds
-    cond = rng.choice(task_params.n_conds)
+    cond = rng.choice(n_conds)
 
     dt = base_params["dt_ms"] * b2.ms
     # rounding to the nearest 2dt allows for cutting in half
@@ -18,8 +51,7 @@ def generate_trial(rng, base_params, task_params, emg):
     )
 
     # following from yijun's code
-    C = emg.shape[0]
-    Nout = emg.shape[2]
+    Nout = emg.shape[2]  # just 2 muscles, not stabilizing signal
 
     nsteps_event = np.round(task_params.t_event_s * b2.second / dt).astype(int)
 
@@ -29,8 +61,8 @@ def generate_trial(rng, base_params, task_params, emg):
 
     # Define elements of task input
     fin0 = np.zeros(nsteps_iti // 2)
-    fin1 = 0.5 * np.cos((cond / C) * 2 * np.pi) * np.ones(sum(nsteps_event[:3]))
-    fin2 = 0.5 * np.sin((cond / C) * 2 * np.pi) * np.ones(sum(nsteps_event[:3]))
+    fin1 = 0.5 * np.cos((cond / n_conds) * 2 * np.pi) * np.ones(sum(nsteps_event[:3]))
+    fin2 = 0.5 * np.sin((cond / n_conds) * 2 * np.pi) * np.ones(sum(nsteps_event[:3]))
     fin3 = np.ones(sum(nsteps_event[:1]))
 
     fout1 = (

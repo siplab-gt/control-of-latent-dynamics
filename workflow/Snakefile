@@ -97,7 +97,7 @@ def step_params(*steps: str) -> callable:
         for step in steps:
             params |= config[step]
             if "task_specific" in params:
-                params |= config[step]['task_specific'][wildcards.task]
+                params |= config[step]["task_specific"][wildcards.task]
                 del params["task_specific"]
         return params
 
@@ -434,7 +434,7 @@ rule sys_id_expts:
     input:
         paths_for_params("cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")),
     params:
-        step_params("expts", 'sys_id_expts'),
+        step_params("expts", "sys_id_expts"),
         n_trials_sys_id_max=config["star_sweep_params"]["n_trials_sys_id"][-1],
     output:
         f"results/{params_str}/sys_id_data.pkl.gz",
@@ -482,7 +482,7 @@ rule cleo_prep:
 
 rule plot_fsnn:
     input:
-        f"results/{params_str}/trained_fsnn.pkl.gz",
+        f"results/{params_str}/demeaned_fsnn.pkl.gz",
         "src/plot_style.py",
     output:
         f"results/{params_str}/fsnn_plot.png",
@@ -501,35 +501,70 @@ rule plot_fsnn:
 #     script:
 #         "../src/scripts/plot_fsnn_weights.py"
 
+
 def get_task_params_for_fsnn(wc):
-    params = config['train_fsnn']
+    """gets all train_fsnn params, but only task params as needed"""
+    params = config["train_fsnn"]
     try:
         multitask = str2bool(wc.multitask)
     except AttributeError:
         multitask = False
     if multitask:
-        task_params = config['train_fsnn']['task_specific']
+        task_params = config["train_fsnn"]["task_specific"]
     else:
-        task_params = {wc.task: config['train_fsnn']['task_specific'][wc.task]}
+        task_params = {wc.task: config["train_fsnn"]["task_specific"][wc.task]}
     out = params | task_params
-    del out['task_specific']
+    del out["task_specific"]
+
+    # include array side length since network size depends on it
+    out["array_side_length_mm"] = config["cleo_prep"]["array_side_length_mm"]
     return out
 
-rule train_fsnn:
+
+rule train_fsnn_test:
     input:
-        "src/fsnn/data_{task}.npz",
-        "src/fsnn/{task}.py",
-    output:
         f"results/{params_str}/trained_fsnn.pkl.gz",
-        # f"results/{params_str}/small_worldness.pkl.gz",
+    output:
+        f"results/{params_str}/trained_fsnn_test_data.pkl.gz",
     params:
         get_task_params_for_fsnn,
     log:
-        f"logs/{params_str}/train_fsnn.log",
+        f"logs/{params_str}/train_fsnn_test.log",
     group:
         "prep_fsnn"
     script:
-        "../src/scripts/train_fsnn.py"
+        "../src/scripts/train_fsnn_test.py"
+
+rule train_fsnn_train:
+    input:
+        f"results/{params_str}/demeaned_fsnn.pkl.gz",
+    output:
+        f"results/{params_str}/trained_fsnn.pkl.gz",
+    params:
+        get_task_params_for_fsnn,
+    log:
+        f"logs/{params_str}/train_fsnn_train.log",
+    group:
+        "prep_fsnn"
+    script:
+        "../src/scripts/train_fsnn_train.py"
+
+
+rule train_fsnn_demean:
+    input:
+        "src/fsnn/__init__.py",
+        "src/fsnn/{task}_data.npz",
+        "src/fsnn/{task}.py",
+    output:
+        f"results/{params_str}/demeaned_fsnn.pkl.gz",
+    params:
+        get_task_params_for_fsnn,
+    log:
+        f"logs/{params_str}/train_fsnn_demean.log",
+    group:
+        "prep_fsnn"
+    script:
+        "../src/scripts/train_fsnn_demean.py"
 
 
 rule plot_schematic:
@@ -541,6 +576,6 @@ rule plot_schematic:
         top=multiext(f"results/{params_str}/top_schematic", ".svg", ".png"),
         side=multiext(f"results/{params_str}/side_schematic", ".svg", ".png"),
     params:
-        step_params("train_fsnn", 'cleo_prep'),
+        step_params("train_fsnn", "cleo_prep"),
     script:
         "../src/scripts/plot_schematic.py"
