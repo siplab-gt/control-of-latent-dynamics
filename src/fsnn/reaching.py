@@ -1,8 +1,25 @@
+from dataclasses import dataclass
 from functools import cache
+
 import brian2.only as b2
 import numpy as np
 
+from src.fsnn.task import fSNNTask
 from src.helpers import load_factors_emg
+
+
+@dataclass
+class ReachingTask(fSNNTask):
+    name: str = "reaching"
+    emg: np.ndarray
+    """(n_conds, n_timepoints, n_muscles)"""
+
+
+def init_task():
+    DATA_FILE = __file__.replace(".py", "_data.npz")
+    factors, emg = load_factors_emg(DATA_FILE)
+    return ReachingTask(factors=factors, emg=emg)
+
 
 DATA_FILE = __file__.replace(".py", "_data.npz")
 factors, emg = load_factors_emg(DATA_FILE)
@@ -37,7 +54,7 @@ def get_V(rng):
 
 
 def generate_trial(rng, base_params, task_params):
-    """returns fin,fout,T_trial,cond,i_trial_start_end,nsteps_itib,nsteps_iti"""
+    """returns fin,fout,T_trial,cond,i_trial_start_end,nsteps_iti"""
     cond = rng.choice(n_conds)
 
     dt = base_params["dt_ms"] * b2.ms
@@ -95,4 +112,4 @@ def generate_trial(rng, base_params, task_params):
     ).T
 
     T_trial = nsteps_trial * dt
-    return fin, fout, T_trial, cond, i_trial_start_end, nsteps_iti // 2, nsteps_iti
+    return fin, fout, T_trial, cond, i_trial_start_end, nsteps_iti

@@ -8,6 +8,7 @@ import numpy as np
 from jaxtyping import UInt
 
 from src.data_classes import BaseDataClass
+from src.fsnn.task import fSNNTask
 
 
 def orth(A, tol=None):
@@ -96,7 +97,7 @@ class fSNN(BaseDataClass):
     )
     """Trial (start, ..., end) indices, shape (n_trials, n_events) array"""
     conditions: list = field(default_factory=list)
-    task_modules: dict = field(default_factory=dict)
+    tasks: list = field(default_factory=list)
     rng: np.random.Generator = field(default_factory=lambda: np.random.default_rng())
     _mode: str = "train"
     _save_data: bool = True
@@ -274,35 +275,36 @@ class fSNN(BaseDataClass):
         ############# start fSNN code ##############
 
         if cond_params.get("multitask", False):
-            tasks = ["reaching", "cycling"]
+            task_names = ["reaching", "cycling"]
             g = 6  # feedback gain in spiking network
             muf = -0.3  # recurrent inhibition
             gs = 0.11  # gain of slow random synapses
             gf = 0.13  # gain of fast random synpases
         else:
-            tasks = [cond_params.task]
+            task_names = [cond_params.task]
 
-        task_modules = {
-            task: importlib.import_module(f"src.fsnn.{task}") for task in tasks
-        }
-        for task, tm in task_modules.items():
-            tm.init_module(rng, base_params[task], cond_params[task])
+        tasks: list[fSNNTask] = [
+            importlib.import_module(f"src.fsnn.{task}").init_task(
+                rng, base_params, base_params.train_fsnn[cond_params.task]
+            )
+            for task in task_names
+        ]
 
-        if len(tasks) == 1:
-            g = task_modules[tasks[0]].g
-            muf = task_modules[tasks[0]].muf
-            gs = task_modules[tasks[0]].gs
-            gf = task_modules[tasks[0]].gf
+        if len(task_names) == 1:
+            g = tasks[0].g
+            muf = tasks[0].muf
+            gs = tasks[0].gs
+            gf = tasks[0].gf
 
-        n_out = sum([task.n_out for task in task_modules.values()])
-        n_in = sum([task.n_in for task in task_modules.values()])
+        n_out = sum([task.n_out for task in tasks])
+        n_in = sum([task.n_in for task in tasks])
 
         # this is just N for plain cycling, but Ntilde in reaching and multitask
         n_tilde = base_params.n_rate_neurons  # TODO
 
         utilde_in = rng.uniform(-1, 1, (n_tilde, n_in))
 
-        V = np.hstack([task_modules[task].get_V(rng) for task in tasks])
+        V = np.hstack([task_modules[task].get_V(rng) for task in task_names])
         assert V.shape == (n_tilde, n_factors)
 
         # U: orthogonal matrix of norm g that maps from space of Ntilde to N
@@ -357,7 +359,7 @@ class fSNN(BaseDataClass):
             cond_params,
             base_params,
             rng=rng,
-            tasks=tasks,
+            tasks=task_names,
             emg=emg,
             factors=factors,
         )

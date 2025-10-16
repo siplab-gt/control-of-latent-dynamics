@@ -1,10 +1,25 @@
+from dataclasses import dataclass
+
 import brian2.only as b2
 import numpy as np
 
+from src.fsnn.task import fSNNTask
 from src.helpers import load_factors_emg
 
-DATA_FILE = __file__.replace(".py", "_data.npz")
-factors, emg = load_factors_emg(DATA_FILE)
+
+@dataclass
+class CyclingTask(fSNNTask):
+    name: str = "cycling"
+    factors: np.ndarray
+    emg: np.ndarray
+
+
+def init_task(rng, base_params, task_params):
+    DATA_FILE = __file__.replace(".py", "_data.npz")
+    factors, emg = load_factors_emg(DATA_FILE)
+    return CyclingTask(factors=factors, emg=emg)
+
+
 n_conds = 1
 n_out = emg.shape[2]  # output for network
 n_in = 3  # num inputs
