@@ -9,7 +9,6 @@ from src.helpers import load_factors_emg
 
 @dataclass
 class CyclingTask(fSNNTask):
-    name: str = "cycling"
     factors: np.ndarray
     emg: np.ndarray
 

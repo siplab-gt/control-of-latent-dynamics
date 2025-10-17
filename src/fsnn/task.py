@@ -1,34 +1,34 @@
-from dataclasses import dataclass
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
-
-import numpy as np
 import brian2.only as b2
+import numpy as np
 
 
 @dataclass
 class fSNNTask:
+    u: np.ndarray
+    """(n_ng, n_factors), maps from factors to SNN neurons"""
+    u_in: np.ndarray
+    """(n_ng, n_in), maps from inputs to SNN"""
     dt: b2.Quantity
-    n_in: int
-    n_out: int
+
+    @property
+    def n_in(self) -> int: ...
+    @property
+    def n_out(self) -> int: ...
+    @property
+    def n_factors(self) -> int: ...
+
     g: float  # feedback gain in spiking network
     muf: float  # recurrent inhibition
     gs: float  # gain of slow random synapses
     gf: float  # gain of fast random synpases
-    name: str
+
+    @property
+    def name(self) -> str:
+        return __file__.replace(".py", "")
 
     @abstractmethod
-    def generate_trial(self, rng, base_params, task_params):
-        """returns fin,fout,T_trial,cond,i_trial_start_end,nsteps_iti"""
-
-    @abstractmethod
-    def postprocess_trial_info(
-        self,
-        fin,
-        fout,
-        T_trial,
-        cond,
-        i_trial_start_end,
-        nsteps_iti,
-    ):
-        """returns ytilde, f, fin"""
+    def generate_trial(self, rng):
+        """returns ytilde, fout, fin, T_trial, cond, i_trial_start_end, nsteps_iti"""

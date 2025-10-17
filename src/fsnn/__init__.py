@@ -11,22 +11,6 @@ from src.data_classes import BaseDataClass
 from src.fsnn.task import fSNNTask
 
 
-def orth(A, tol=None):
-    # Perform singular value decomposition
-    U, s, Vt = np.linalg.svd(A, full_matrices=False)
-
-    if tol is None:
-        tol = max(A.shape) * np.finfo(s.dtype).eps * np.max(s)
-
-    # Determine the rank based on the given tolerance
-    rank = np.sum(s > tol)
-
-    # Return the orthonormal basis
-    Q = U[:, :rank]
-
-    return Q
-
-
 def run_main(cond_params, base_params, device, fsnn_infile, fsnn_outfile, mode, record):
     outdir = os.path.dirname(fsnn_outfile)
     if device == "cuda":
@@ -43,7 +27,7 @@ def run_main(cond_params, base_params, device, fsnn_infile, fsnn_outfile, mode, 
 
     n_trials = base_params["n_trials_" + mode]
     print(f"preparing {n_trials} {mode} trials")
-    fsnn.run_trials(n_trials, mode=mode, record=record, continue_state=continue_state)
+    fsnn.run_trials(n_trials, mode=mode, record=record)
     if device == "cuda":
         print("compiling cuda code")
         b2.device.build(
@@ -276,43 +260,33 @@ class fSNN(BaseDataClass):
 
         if cond_params.get("multitask", False):
             task_names = ["reaching", "cycling"]
-            g = 6  # feedback gain in spiking network
-            muf = -0.3  # recurrent inhibition
-            gs = 0.11  # gain of slow random synapses
-            gf = 0.13  # gain of fast random synpases
+            # g = 6  # feedback gain in spiking network
+            # muf = -0.3  # recurrent inhibition
+            # gs = 0.11  # gain of slow random synapses
+            # gf = 0.13  # gain of fast random synpases
         else:
             task_names = [cond_params.task]
 
         tasks: list[fSNNTask] = [
             importlib.import_module(f"src.fsnn.{task}").init_task(
-                rng, base_params, base_params.train_fsnn[cond_params.task]
+                rng, base_params, base_params[cond_params.task], n_ng
             )
             for task in task_names
         ]
 
-        if len(task_names) == 1:
-            g = tasks[0].g
-            muf = tasks[0].muf
-            gs = tasks[0].gs
-            gf = tasks[0].gf
+        # NOTE: going to see if letting individual tasks set parameters to produce u, u_in
+        # unlike in `multitask_demo.m` works
+        # if len(task_names) == 1:
+        #     g = tasks[0].g
+        #     muf = tasks[0].muf
+        #     gs = tasks[0].gs
+        #     gf = tasks[0].gf
 
         n_out = sum([task.n_out for task in tasks])
         n_in = sum([task.n_in for task in tasks])
 
-        # this is just N for plain cycling, but Ntilde in reaching and multitask
-        n_tilde = base_params.n_rate_neurons  # TODO
-
-        utilde_in = rng.uniform(-1, 1, (n_tilde, n_in))
-
-        V = np.hstack([task_modules[task].get_V(rng) for task in task_names])
-        assert V.shape == (n_tilde, n_factors)
-
-        # U: orthogonal matrix of norm g that maps from space of Ntilde to N
-        U = g * orth(rng.uniform(-1, 1, (n_ng, n_tilde)))
-        assert U.shape == (n_ng, n_tilde)
-        # input weights for the external input to the spiking model
-        u_in = U @ utilde_in
-        u = U @ V  # mapping from P-space to N-space
+        u = np.hstack([task.u for task in tasks])
+        u_in = np.hstack([task.u_in for task in tasks])
 
         assign_coords_rand_rect_prism(
             ng,
@@ -359,9 +333,7 @@ class fSNN(BaseDataClass):
             cond_params,
             base_params,
             rng=rng,
-            tasks=task_names,
-            emg=emg,
-            factors=factors,
+            tasks=tasks,
         )
 
         for attr, state_vars in net_state.items():

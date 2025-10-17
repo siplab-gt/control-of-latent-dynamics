@@ -91,3 +91,19 @@ def load_factors_emg(npz_file):
     with open(npz_file, "rb") as f:
         npz = np.load(f)
         return npz.get("factors", None), npz["emg"]
+
+
+def orth(A, tol=None):
+    # Perform singular value decomposition
+    U, s, Vt = np.linalg.svd(A, full_matrices=False)
+
+    if tol is None:
+        tol = max(A.shape) * np.finfo(s.dtype).eps * np.max(s)
+
+    # Determine the rank based on the given tolerance
+    rank = np.sum(s > tol)
+
+    # Return the orthonormal basis
+    Q = U[:, :rank]
+
+    return Q
