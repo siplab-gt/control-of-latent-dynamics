@@ -9,7 +9,7 @@ def main(fsnn_file, out_file):
     style_plots()
     plt.switch_backend("agg")
     fsnn = fSNN.load(fsnn_file)
-    fig, ax = cleo.viz.plot(fsnn.ng)
+    fig, ax = cleo.viz.plot(fsnn.ng_main)
     fig.savefig(out_file)
 
 

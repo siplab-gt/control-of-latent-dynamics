@@ -5,8 +5,8 @@ import brian2.only as b2
 import cleo
 
 from src.data_classes import BaseDataClass
-from src.log_redirector import redirect_output_to_file
 from src.fsnn import fSNN
+from src.log_redirector import redirect_output_to_file
 
 
 @dataclass
@@ -88,13 +88,13 @@ class CleoPrep(BaseDataClass):
             light_model=light_model,
         )
         sim = cleo.CLSimulator(fsnn.net)
-        sim.inject(light_array, fsnn.ng)
+        sim.inject(light_array, fsnn.ng_main)
 
         if probe_coords is not None:
             # use higher cutoff to avoid memory explosion
             mua = cleo.ephys.MultiUnitActivity(name="mua", recording_recall_cutoff=0.01)
             probe = cleo.ephys.Probe(probe_coords, signals=[mua])
-            sim.inject(probe, fsnn.ng)
+            sim.inject(probe, fsnn.ng_main)
         else:
             probe = None
             mua = None

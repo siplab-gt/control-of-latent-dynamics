@@ -1,10 +1,25 @@
 from dataclasses import dataclass
 
 import brian2.only as b2
+import numba
 import numpy as np
 
 from src.fsnn.task import fSNNTask
-from src.helpers import AttrDict, load_factors_emg, orth
+from src.helpers import AttrDict, load_factors_emg, orth, setup_debugger
+
+
+@numba.njit(cache=True)
+def _rate_model(fin, fout, nsteps_trial, x, Jtilde, utilde, utilde_in, etau, n_tilde):
+    """returns (xprimes, x)"""
+    xprimes = np.zeros((nsteps_trial, n_tilde))
+
+    F = np.tanh
+    for i in range(nsteps_trial):
+        xinf = F(Jtilde @ x + utilde @ fout[i] + utilde_in @ fin[i])
+        x = xinf + (x - xinf) * etau
+        xprimes[i] = x
+
+    return xprimes, x
 
 
 @dataclass
@@ -24,6 +39,7 @@ class ReachingTask(fSNNTask):
     task_params: AttrDict = None
     """task parameters"""
 
+    # defaults for task, would be overridden in multitask setting
     g: float = 3  # feedback gain in spiking network
     muf: float = -0.3  # recurrent inhibition
     gs: float = 0.11  # gain of slow random synapses
@@ -65,20 +81,20 @@ class ReachingTask(fSNNTask):
         # rounding to the nearest 2dt allows for cutting in half
         nsteps_iti = (
             np.round(
-                self.task_params["iti_min_s"]
-                + rng.exponential(self.task_params["iti_lambda_s"])
-                * b2.second
+                (
+                    self.task_params.iti_min
+                    + rng.exponential(self.task_params.iti_lambda / b2.second)
+                    * b2.second
+                )
                 / (2 * self.dt)
             )
             * 2
         )
 
         # following from yijun's code
-        nsteps_event = np.round(
-            self.task_params.t_event_s * b2.second / self.dt
-        ).astype(int)
+        nsteps_event = np.round(self.task_params.t_event / self.dt).astype(int)
 
-        nsteps_trial = np.sum(nsteps_event) + nsteps_iti
+        nsteps_trial = int(np.sum(nsteps_event) + nsteps_iti)
         nsteps_iti_half = int(nsteps_iti // 2)
         i_trial_start_end = (nsteps_iti_half, nsteps_trial - nsteps_iti_half + 1)
         assert i_trial_start_end[0] < i_trial_start_end[1] < nsteps_trial
@@ -102,12 +118,14 @@ class ReachingTask(fSNNTask):
             + 2
             * np.reshape(
                 np.tile(np.reshape(np.squeeze(self.emg[cond, :, :]), -1), (10, 1)).T,
-                (-1, self.n_out),
+                (-1, self.emg.shape[2]),
             ).T
         )
+        assert fout1.shape[1] == nsteps_trial - nsteps_iti == sum(nsteps_event)
         fout1[0, :] = -1 * fout1[0, :]
         fout0 = -0.0 * np.ones(nsteps_iti_half)
         fout2 = -0.5 * np.ones(nsteps_iti_half)
+        # 3rd output is just -0.5 the whole time
 
         # Concatenate
         # Yijun followed the original matlab convention of NxT, but we will transpose
@@ -123,7 +141,8 @@ class ReachingTask(fSNNTask):
             [
                 np.hstack([fout0, fout1[0, :], fout0]),
                 np.hstack([fout0, fout1[1, :], fout0]),
-                np.hstack([fout2, -0.5 * np.ones(sum(nsteps_event)), fout2]),
+                # 3rd output is just -0.5 the whole time, but will keep this for comparison with legacy
+                np.hstack([fout2, -0.5 * np.ones(sum(nsteps_event[:3])), fout2]),
             ]
         ).T
 
@@ -141,42 +160,50 @@ class ReachingTask(fSNNTask):
 
         assert len(fin) == len(fout) == nsteps_trial
 
-        xprimes = np.zeros((nsteps_trial, self.n_tilde))
+        return _rate_model(
+            fin,
+            fout,
+            nsteps_trial,
+            x,
+            self.Jtilde,
+            self.utilde,
+            self.utilde_in,
+            self.etau,
+            self.n_tilde,
+        )
 
-        F = np.tanh
-        for i in range(nsteps_trial):
-            xinf = F(self.Jtilde @ x + self.utilde @ fout[i] + self.utilde_in @ fin[i])
-            x = xinf + (x - xinf) * self.etau
-            xprimes[i] = x
-
-        return xprimes, x
-
-    def generate_trial(self, rng):
+    def generate_trial(
+        self, rng
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int]:
         """returns ytilde, fout, fin, nsteps_trial, cond, i_trial_start_end, nsteps_iti"""
         # Compute target output for rate network
-        f = np.zeros((nsteps_trial, self.n_out))
-        f[:, :-1] = fout
-        f[:, -1] = -0.5 * np.ones(nsteps_trial)  # stabilizing signal
+        fin, fout, nsteps_trial, cond, i_trial_start_end, nsteps_iti = (
+            self._trial_reaching(rng)
+        )
+        xprimes, x = self._rate_model(fin, fout, nsteps_trial)
 
         # Compute factors for rate network
-        ytilde = np.linalg.pinv(self.V) @ np.linalg.pinv(self.utilde) @ f.T
+        print(f"{self.V=}")
+        print(f"{np.linalg.pinv(self.V)=}")
+        ytilde = np.linalg.pinv(self.V) @ np.linalg.pinv(self.utilde) @ fout.T
         ytilde = ytilde.T
 
-        return ytilde, fout, fin, nsteps_trial, cond, i_trial_start_end, nsteps_iti
+        return (ytilde, fout, fin, nsteps_trial, cond, i_trial_start_end, nsteps_iti)
 
 
-def init_task(rng, base_params, task_params, n_ng, TPCA=300):
+def init_task(seed, base_params, task_params, n_ng, g):
+    rng = np.random.default_rng(seed + 19320812)
     clss = ReachingTask
     DATA_FILE = __file__.replace(".py", "_data.npz")
     _, emg = load_factors_emg(DATA_FILE)
     n_tilde = task_params.n_rate_neurons
-    dt = base_params["dt_ms"] * b2.ms
-    U = clss.g * orth(rng.uniform(-1, 1, (n_ng, n_tilde)))
+    dt = base_params.dt
+    U = g * orth(rng.uniform(-1, 1, (n_ng, n_tilde)))
     utilde_in = rng.uniform(-1, 1, (n_tilde, clss.n_in))
     u_in = U @ utilde_in
 
     n_out = emg.shape[2] + 1
-    Jtilde = clss.gtilde / np.sqrt(n_tilde) * rng.normal((n_tilde, n_tilde))
+    Jtilde = clss.gtilde / np.sqrt(n_tilde) * rng.normal(size=(n_tilde, n_tilde))
     utilde = rng.uniform(-1, 1, (n_tilde, n_out))
     # NOTE: don't know why Jtildeprime is used in multitask but not reaching demo
     # Jtildeprime = np.hstack([Jtilde, utilde])
@@ -196,7 +223,7 @@ def init_task(rng, base_params, task_params, n_ng, TPCA=300):
 
     XX = np.zeros((n_tilde, n_tilde))
 
-    for i in range(TPCA):
+    for i in range(task_params.n_trials_pca):
         if i == 0:
             fin, fout, nsteps_trial, cond, i_trial_start_end, nsteps_iti = (
                 reaching_task._trial_reaching(rng)
@@ -204,8 +231,14 @@ def init_task(rng, base_params, task_params, n_ng, TPCA=300):
             xprimes, x = reaching_task._rate_model(fin, fout, nsteps_trial)
         else:
             xprimes, x = reaching_task._rate_model(fin, fout, nsteps_trial, x)
-        XX += xprimes @ xprimes.T
-        print(f"PCA, {i + 1} trials of {TPCA}")
+        XX += xprimes.T @ xprimes
+        print(f"PCA, {i + 1} trials of {task_params.n_trials_pca}")
+        d, V = np.linalg.eigh(XX)
+        # print(f"  top 5 eigenvalues: {d[-1:-6:-1]}")
+        print(
+            f"  pct variance explained by top 5 PCs: {np.cumsum(d)[-1:-6:-1] / np.sum(d)}"
+        )
+        print()
 
     # Eigen decomposition and PCA
     d, V = np.linalg.eigh(XX)

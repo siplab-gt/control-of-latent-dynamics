@@ -194,7 +194,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         if self.state_estimation == "kalman":
             xhat, P = self.update_state(self.xpred, counts, self.Ppred)
         elif self.state_estimation == "ground truth":
-            xhat = self.cleo_prep.fsnn.ng.X[: self.n]  # TODO
+            xhat = self.cleo_prep.fsnn.ng_y.y
 
         self._Xhat.append(xhat)
         self._Xref.append(self.reference(t_samp))

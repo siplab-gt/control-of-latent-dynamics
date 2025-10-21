@@ -67,22 +67,48 @@ class AttrDict(dict):
         except KeyError:
             raise AttributeError(f"'AttrDict' object has no attribute '{item}'")
 
+    def __or__(self, other):
+        if not isinstance(other, dict):
+            return NotImplemented
+        result = AttrDict(self)
+        result.update(other)
+        return result
 
-def numerize_and_attrify(params_dict) -> AttrDict:
-    """Recursively convert all values in a wildcards dict to int or float if possible,
-    and wrap dicts so keys are accessible as attributes."""
+
+def preprocess_params(params_dict) -> AttrDict:
+    """Recursively convert all values in a params or wildcards dict to int or float if possible,
+    and wrap dicts so keys are accessible as attributes.
+    Also adds Brian units for params with unit suffixes"""
     new_dict = AttrDict()
     for k, v in params_dict.items():
         if isinstance(v, dict):
-            new_v = numerize_and_attrify(v)
+            new_v = preprocess_params(v)
         else:
-            try:
-                new_v = int(v)
-            except (ValueError, TypeError):
+            if isinstance(v, (int, float, np.integer, np.floating)):
+                new_v = v
+            else:
                 try:
-                    new_v = float(v)
+                    new_v = int(v)
                 except (ValueError, TypeError):
-                    new_v = v
+                    try:
+                        new_v = float(v)
+                    except (ValueError, TypeError):
+                        new_v = v
+        if isinstance(v, (list, tuple, int, float, np.integer, np.floating)):
+            # add brian units if applicable
+            for suffix, unit in [
+                ("_ms", b2.ms),
+                ("_s", b2.second),
+                ("_mV", b2.mvolt),
+                ("_um", b2.um),
+                ("_mm", b2.mm),
+                ("_uW", b2.uwatt),
+                ("_mWmm2", b2.mwatt / b2.mm2),
+            ]:
+                if k.endswith(suffix):
+                    k = k[: -len(suffix)]
+                    new_v *= unit
+                    break
         new_dict[k] = new_v
     return new_dict
 

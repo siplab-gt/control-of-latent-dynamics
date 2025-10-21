@@ -9,6 +9,7 @@ version = "0.1.0"
 description = "Source code for Control of Latent Dynamics"
 dependencies = [
     'numpy',
+    'numba',
     'pandas',
     'matplotlib',
     'cleosim @ git+https://github.com/siplab-gt/cleo.git@v0.18.3',

@@ -10,3 +10,5 @@ report*.html
 .vscode/**
 **/output
 build/**
+*.nbi
+*.nbc

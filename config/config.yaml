@@ -185,7 +185,7 @@ train_fsnn:
   dt_ms: 1
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
-  base_neuron_density: 650 # neurons per mm^3. 65k is realistic
+  base_neuron_density: 65 # neurons per mm^3. 65k is realistic
   layer_density_ratios:
     - 1.231 # L2/3, =80/65
     - 1.539 # L4, =100/65
@@ -197,19 +197,45 @@ train_fsnn:
     - 1450 # L5 end
   connection_distance_penalty_max: 1
   connection_layer_penalty_max: 0.1 # TODO
-  n_trials_demean: 300
-  n_trials_train: 300
-  n_trials_test: 100
+
+  n_trials:
+    demean:
+      init: 50
+      main: 250
+    train:
+      init: 50
+      main: 250
+      settle: 50  # effectively do init trials after training and save
+    test:
+      init: 0
+      main: 50
+  dtrls: 2  # average number of steps between RLS updates
+  # decay time constants
+  tau_v_ms: 10  # membrane voltage
+  tau_s_ms: 100  # slow synaptic currents
+  tau_f_ms: 5  # fast synaptic currents
+  vth: 1e-16  # spike threshold
+  vr: -10  # reset voltage
+  g: 6  # feedback gain. more like input gain?
+  muf: -0.3  # recurrent inhibtion
+  gs: 0.11  # gain of slow random synapses
+  gf: 0.13  # gain of fast random synapses
+
+  sample_period_ms: 1  # used for monitors here, and for expts later
+
   task_specific:
     cycling:
       iti_min_s: 0
       iti_lambda_s: 0
       t_event_s: [0.5, 1.95]
+      muf: -0.5  # recurrent inhibtion
     reaching:
       iti_min_s: .4
       iti_lambda_s: 2
       t_event_s: [0.35, 0.15, 0.31]
       n_rate_neurons: 800
+      n_trials_pca: 3  # for rate network  TODO: 50
+      g: 3  # feedback gain. more like input gain?
 
 cleo_prep:
   array_side_length_mm: 4
@@ -224,7 +250,6 @@ model_fit:
 
 expts: # common to sys ID and ctrl expts
   u_max_mWmm2: 75
-  sample_period_ms: 1
 
 sys_id_expts:
   foo: bar
