@@ -199,16 +199,17 @@ train_fsnn:
   connection_layer_penalty_max: 0.1 # TODO
 
   n_trials:
+  # TODO: multiply by 10
     demean:
-      init: 50
-      main: 250
+      init: 5
+      main: 25
     train:
-      init: 50
-      main: 250
-      settle: 50  # effectively do init trials after training and save
+      init: 5
+      main: 25
+      settle: 5  # effectively do init trials after training and save
     test:
       init: 0
-      main: 50
+      main: 5
   dtrls: 2  # average number of steps between RLS updates
   # decay time constants
   tau_v_ms: 10  # membrane voltage
@@ -233,7 +234,7 @@ train_fsnn:
       iti_min_s: .4
       iti_lambda_s: 2
       t_event_s: [0.35, 0.15, 0.31]
-      n_rate_neurons: 800
+      n_rate_neurons: 100  # 800
       n_trials_pca: 3  # for rate network  TODO: 50
       g: 3  # feedback gain. more like input gain?
 
@@ -267,5 +268,5 @@ ctrl_expts:
 # non-essential stuff, don't need to pass in as params
 ######################################################
 # for brian report printing frequency
-report_period_s: 50
+report_period_s: 60
 train_device: cuda # cuda or cython

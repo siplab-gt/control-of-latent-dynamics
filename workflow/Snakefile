@@ -518,6 +518,7 @@ def get_task_params_for_fsnn(wc):
 
     # include array side length since network size depends on it
     out["array_side_length_mm"] = config["cleo_prep"]["array_side_length_mm"]
+    out['report_period_s'] = config['report_period_s']
     return out
 
 

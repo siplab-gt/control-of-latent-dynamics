@@ -181,12 +181,7 @@ class ReachingTask(fSNNTask):
             self._trial_reaching(rng)
         )
         xprimes, x = self._rate_model(fin, fout, nsteps_trial)
-
-        # Compute factors for rate network
-        print(f"{self.V=}")
-        print(f"{np.linalg.pinv(self.V)=}")
-        ytilde = np.linalg.pinv(self.V) @ np.linalg.pinv(self.utilde) @ fout.T
-        ytilde = ytilde.T
+        ytilde = xprimes @ self.V
 
         return (ytilde, fout, fin, nsteps_trial, cond, i_trial_start_end, nsteps_iti)
 
@@ -247,6 +242,7 @@ def init_task(seed, base_params, task_params, n_ng, g):
 
     fracPCA = 0.99
     P = np.argmax(np.cumsum(d) / np.sum(d) > fracPCA) + 1
+
     V = V[:, :P]
     reaching_task.V = V
     reaching_task.u = U @ Jtilde @ V

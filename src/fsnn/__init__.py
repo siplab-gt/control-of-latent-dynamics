@@ -1,4 +1,4 @@
-import importlib.resources
+import importlib
 import os
 from dataclasses import dataclass, field
 
@@ -6,6 +6,7 @@ import brian2.only as b2
 import brian2cuda  # noqa: F401
 import numpy as np
 from jaxtyping import UInt
+from tqdm import tqdm
 
 from src.data_classes import BaseDataClass
 from src.fsnn.task import fSNNTask
@@ -41,6 +42,7 @@ def run_main(cond_params, base_params, device, fsnn_infile, fsnn_outfile, mode, 
     )
     if device == "cuda":
         print("compiling cuda code")
+        os.makedirs(f"{outdir}/brian2cuda_output", exist_ok=True)
         b2.device.build(
             directory=f"{outdir}/brian2cuda_output",
             results_directory=outdir,
@@ -91,20 +93,32 @@ class fSNN(BaseDataClass):
 
     def __getitem__(self, key):
         """Allows access to net components by name, e.g. fsnn['ng_yPlus']"""
-        return self.net[key]
+        try:
+            return self.net[key]
+        except KeyError as e:
+            raise KeyError(f"{key} not found in fSNN network") from e
 
     def __getattr__(self, name):
         """Delegate attribute access to self.net if not found on self."""
-        # Avoid recursion: only called if attribute not found on self
         if name in self.net:
             return self.net[name]
-        raise AttributeError(
-            f"{type(self).__name__!r} object has no attribute {name!r} and it was not found in .net either."
-        )
+        return super().__getattribute__(name)
 
     @property
     def k_task(self) -> int:
-        return 3  # TODO: get from network
+        return self.ng_in.N
+
+    @property
+    def n_in(self) -> int:
+        return self.k_task
+
+    @property
+    def n_out(self) -> int:
+        return self.ng_z.N
+
+    @property
+    def n_factors(self) -> int:
+        return self.ng_y.N
 
     def u_task(self, t: b2.Quantity) -> np.ndarray:
         """task-related inputs, shape ([T], n_task_inputs) array"""
@@ -152,6 +166,12 @@ class fSNN(BaseDataClass):
     def monitors(self):
         return [self[name] for name in ["v_mon", "y_mon", "z_mon", "spk_mon"]]
 
+    def _get_namespace(self, t_ta_start):
+        ns = {attr: getattr(self, attr) for attr in ["fin_ta", "fout_ta", "ytilde_ta"]}
+        ns |= self._base_params  # gets things like tau_s, vth
+        ns["t_ta_start"] = t_ta_start
+        return ns
+
     def start_recording(self):
         self._save_data = True
         for mon in self.monitors:
@@ -172,92 +192,95 @@ class fSNN(BaseDataClass):
 
     def generate_trial(
         self,
-    ) -> tuple[np.ndarray, np.ndarray, int, int, tuple[int, int], int, int]:
-        """returns fin,fout,TTrial,cond,i_trial_start_end,ITIb,ITI"""
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int, int]:
+        """returns ytilde,fout,fin,nsteps_trial,cond,i_trial_start_end,ITIb,ITI"""
         task = self.rng.choice(self.tasks)
         return task.generate_trial(self.rng)
 
     def run_trial(self, trial_params=None):
         if trial_params is None:
-            fin, fout, nsteps_trial, condition, i_trial_bounds, iti_b, iti = (
+            ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti = (
                 self.generate_trial()
             )
         else:
-            fin, fout, nsteps_trial, condition, i_trial_bounds, iti_b, iti = (
+            ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti = (
                 trial_params
             )
         T_trial = nsteps_trial * self.dt
-        kwargs = dict(report_period=self._base_params["report_period_s"] * b2.second)
-        self.fin.values = fin
-        self.fout.values = fout
-        # TODO: ytilde TimedArray?
-        # need this so TimedArrays can work with respect to trial start
-        self.ng.t_trial_start = self.net.t
-        self.net.run(T_trial, **kwargs)
+        self.fin_ta.values = fin
+        self.fout_ta.values = fout
+        self.ytilde_ta.values = ytilde
+        self.net.run(
+            T_trial,
+            report_period=self._base_params["report_period_s"] * b2.second,
+            # need this so TimedArrays can work with respect to trial start
+            namespace=self._get_namespace(t_ta_start=self.net.t),
+        )
 
         if self._save_data:
             self.conditions.append(condition)
             self.i_trial_boundaries.append(i_trial_bounds)
 
     def run_trials(
-        self, n_trials, mode, record=False, n_init_trials=50, n_settle_trials=0
+        self, n_main_trials, mode, record=False, n_init_trials=50, n_settle_trials=0
     ):
         """needed for CUDA standalone training: mainly to prep TimedArrays
         with all trials in advance"""
 
         self.mode = "init"
 
-        fin_all, fout_all, T_trial_all, condition, i_trial_bounds, iti_b, iti = (
-            self.generate_trial()
-        )
-        n_trials_tot = n_trials + n_init_trials + n_settle_trials
-        T_init = 0
-        T_main = 0
-        T_settle = 0
-        for i in range(1, n_trials_tot):
-            nsteps_prev = len(fin_all)
-            fin, fout, nsteps_trial, condition, i_trial_bounds, iti_b, iti = (
-                self.generate_trial()
+        fin_all = np.zeros((0, self.n_in))
+        fout_all = np.zeros((0, self.n_out))
+        ytilde_all = np.zeros((0, self.n_factors))
+
+        T = {}
+        nsteps_prev = 0
+        # must be single giant timed arrays for multiple run calls
+        for _mode, n_trials in [
+            ("init", n_init_trials),
+            (mode, n_main_trials),
+            ("init", n_settle_trials),
+        ]:
+            print(f"Preparing {_mode} trials: {n_trials} trials")
+            for i in tqdm(range(n_trials)):
+                (
+                    ytilde,
+                    fout,
+                    fin,
+                    nsteps_trial,
+                    condition,
+                    i_trial_bounds,
+                    nsteps_iti,
+                ) = self.generate_trial()
+                T_trial = nsteps_trial * self.dt
+                fin_all = np.vstack([fin_all, fin])
+                fout_all = np.vstack([fout_all, fout])
+                ytilde_all = np.vstack([ytilde_all, ytilde])
+                T[_mode] = T.get(_mode, 0) + T_trial
+                if self._save_data and _mode == mode:
+                    self.conditions.append(condition)
+                    i_start = i_trial_bounds[0] + nsteps_prev
+                    i_end = i_trial_bounds[1] + nsteps_prev
+                    self.i_trial_boundaries.append((i_start, i_end))
+                    # only index data for saved trials (i.e., not for init)
+                    nsteps_prev += nsteps_trial
+
+        self.fin_ta.values = fin_all
+        self.fout_ta.values = fout_all
+        self.ytilde_ta.values = ytilde_all
+
+        for _mode in ["init", mode, "init"]:
+            self.mode = _mode
+            self.net.run(
+                T[_mode],
+                report_period=self._base_params.report_period,
+                namespace=self._get_namespace(t_ta_start=0 * b2.ms),
             )
-            T_trial = nsteps_trial * self.dt
-            fin_all = np.vstack([fin_all, fin])
-            fout_all = np.vstack([fout_all, fout])
-            T_trial_all += T_trial
-            if i < n_init_trials:
-                T_init += T_trial
-            elif i < n_init_trials + n_trials:
-                T_main += T_trial
-            else:
-                T_settle += T_trial
-            if self._save_data and n_init_trials <= i < n_init_trials + n_trials:
-                self.conditions.append(condition)
-                i_start = i_trial_bounds[0] + nsteps_prev
-                i_end = i_trial_bounds[1] + nsteps_prev
-                self.i_trial_boundaries.append((i_start, i_end))
-
-        assert T_trial_all == T_init + T_main + T_settle
-
-        self.fin.values = fin_all
-        self.fout.values = fout_all
-        self.ng.t_trial_start = self.net.t
-
-        self.mode = "init"
-        self.net.run(
-            T_init, report_period=self._base_params["report_period_s"] * b2.second
-        )
-        self.mode = mode
-        self.net.run(
-            T_main, report_period=self._base_params["report_period_s"] * b2.second
-        )
-        self.mode = "init"
-        self.net.run(
-            T_settle, report_period=self._base_params["report_period_s"] * b2.second
-        )
 
     def __reduce__(self):
         net_state = {}
         for attr, state_vars in self._state_vars_to_save.items():
-            net_obj = self.__dict__[attr]
+            net_obj = self[attr]
             net_state[attr] = {var: getattr(net_obj, var) for var in state_vars}
 
         return (
@@ -326,11 +349,10 @@ class fSNN(BaseDataClass):
         u_in = np.hstack([task.u_in for task in tasks])
 
         fin_ta = b2.TimedArray(np.zeros((1, n_in)), dt=dt)
-        ng_input = b2.NeuronGroup(
+        ng_in = b2.NeuronGroup(
             N=n_in,
-            model="value = fin_ta(t, i) : 1",
-            name="ng_input",
-            namespace={"fin_ta": fin_ta},
+            model="value = fin_ta(t - t_ta_start, i) : 1",
+            name="ng_in",
         )
 
         ng_main = b2.NeuronGroup(
@@ -356,7 +378,6 @@ class fSNN(BaseDataClass):
             sf += 1
             """,
             name="ng_main",
-            namespace=base_params,
         )
         ng_main.v = 1e-3 * rng.normal(size=n_ng)
 
@@ -409,7 +430,7 @@ class fSNN(BaseDataClass):
         fout_ta = b2.TimedArray(np.zeros((1, n_out)), dt=dt)
 
         syn_in = b2.Synapses(
-            ng_input,
+            ng_in,
             ng_main,
             """u_in : 1 (constant)
             I_in_post = value_pre * u_in : 1 (summed)""",
@@ -423,23 +444,21 @@ class fSNN(BaseDataClass):
         ng_z = b2.NeuronGroup(
             N=n_out,
             model="""
-            fout = fout_ta(t, i) : 1
+            fout = fout_ta(t - t_ta_start, i) : 1
             z : 1
             """,
-            namespace={"fout_ta": fout_ta},
             name="ng_z",
         )
 
         ng_y = b2.NeuronGroup(
             N=n_factors,
             model="""
-            ytilde = ytilde_ta(t, i) : 1
+            ytilde = ytilde_ta(t - t_ta_start, i) : 1
             y : 1
             y_mon = ytilde * int(init_mode) + y * (1 - int(init_mode)) : 1
             err = y_mon - ytilde : 1
             init_mode : boolean (shared)
             """,
-            namespace={"ytilde_ta": ytilde_ta},
             name="ng_y",
         )
 
@@ -638,6 +657,7 @@ class fSNN(BaseDataClass):
             rand_trigger : 1
             """,
             threshold="rand_trigger < 1.0 / DTRLS",
+            reset="",
             name="ng_yPlus",
         )
         syn_yPlus2rand = b2.Synapses(

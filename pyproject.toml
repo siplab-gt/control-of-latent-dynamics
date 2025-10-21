@@ -19,6 +19,7 @@ dependencies = [
     'BRAID @ git+https://github.com/kjohnsen/BRAID.git@680db8#subdirectory=source',
     'cvxpy',
     'brian2cuda',
+    'tqdm',
 ]
 
 [tool.setuptools]
