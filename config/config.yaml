@@ -185,7 +185,7 @@ train_fsnn:
   dt_ms: 1
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
-  base_neuron_density: 65 # neurons per mm^3. 65k is realistic
+  base_neuron_density: 25 # neurons per mm^3. 65k is realistic
   layer_density_ratios:
     - 1.231 # L2/3, =80/65
     - 1.539 # L4, =100/65
@@ -199,44 +199,45 @@ train_fsnn:
   connection_layer_penalty_max: 0.1 # TODO
 
   n_trials:
-  # TODO: multiply by 10
+    # TODO: multiply by 10
     demean:
-      init: 5
-      main: 25
+      init: 5 # 50
+      main: 5 # 250
     train:
-      init: 5
-      main: 25
-      settle: 5  # effectively do init trials after training and save
+      init: 5 # 50
+      main: 5 # 250
+      settle: 5 # effectively do init trials after training and save
     test:
       init: 0
       main: 5
-  dtrls: 2  # average number of steps between RLS updates
+  dtrls: 2 # average number of steps between RLS updates
   # decay time constants
-  tau_v_ms: 10  # membrane voltage
-  tau_s_ms: 100  # slow synaptic currents
-  tau_f_ms: 5  # fast synaptic currents
-  vth: 1e-16  # spike threshold
-  vr: -10  # reset voltage
-  g: 6  # feedback gain. more like input gain?
-  muf: -0.3  # recurrent inhibtion
-  gs: 0.11  # gain of slow random synapses
-  gf: 0.13  # gain of fast random synapses
+  tau_v_ms: 10 # membrane voltage
+  tau_s_ms: 100 # slow synaptic currents
+  tau_f_ms: 5 # fast synaptic currents
+  vth: 1e-16 # spike threshold
+  vr: -10 # reset voltage
+  g: 6 # feedback gain. more like input gain?
+  muf: -0.3 # recurrent inhibtion
+  gs: 0.11 # gain of slow random synapses
+  gf: 0.13 # gain of fast random synapses
+  default_float_dtype: float32
 
-  sample_period_ms: 1  # used for monitors here, and for expts later
+  sample_period_ms: 1 # used for monitors here, and for expts later
 
   task_specific:
     cycling:
       iti_min_s: 0
       iti_lambda_s: 0
       t_event_s: [0.5, 1.95]
-      muf: -0.5  # recurrent inhibtion
+      muf: -0.5 # recurrent inhibtion
     reaching:
       iti_min_s: .4
       iti_lambda_s: 2
       t_event_s: [0.35, 0.15, 0.31]
-      n_rate_neurons: 100  # 800
-      n_trials_pca: 3  # for rate network  TODO: 50
-      g: 3  # feedback gain. more like input gain?
+      n_rate_neurons: 100 # 800
+      n_trials_pca: 3 # for rate network  TODO: 50
+      g: 3 # feedback gain. more like input gain?
 
 cleo_prep:
   array_side_length_mm: 4
@@ -270,3 +271,5 @@ ctrl_expts:
 # for brian report printing frequency
 report_period_s: 60
 train_device: cuda # cuda or cython
+log_level: DEBUG # DEBUG, INFO, WARNING, ERROR, CRITICAL
+auto_plot: true # automatically plot data from individual experiments

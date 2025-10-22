@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import brian2.only as b2
 import numpy as np
@@ -7,9 +7,9 @@ import numpy as np
 
 @dataclass
 class fSNNTask:
-    u: np.ndarray
+    u: np.ndarray = field(repr=False)
     """(n_ng, n_factors), maps from factors to SNN neurons"""
-    u_in: np.ndarray
+    u_in: np.ndarray = field(repr=False)
     """(n_ng, n_in), maps from inputs to SNN"""
     dt: b2.Quantity
 
@@ -27,7 +27,7 @@ class fSNNTask:
 
     @property
     def name(self) -> str:
-        return __file__.replace(".py", "")
+        return type(self).__name__.replace("Task", "").lower()
 
     @abstractmethod
     def generate_trial(self, rng):

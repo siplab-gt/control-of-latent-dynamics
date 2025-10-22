@@ -1,5 +1,7 @@
 import importlib
+import logging
 import os
+import time
 from dataclasses import dataclass, field
 
 import brian2.only as b2
@@ -10,6 +12,9 @@ from tqdm import tqdm
 
 from src.data_classes import BaseDataClass
 from src.fsnn.task import fSNNTask
+from src.helpers import setup_debugger
+
+log = logging.getLogger(__name__)
 
 
 def run_main(cond_params, base_params, device, fsnn_infile, fsnn_outfile, mode, record):
@@ -41,18 +46,33 @@ def run_main(cond_params, base_params, device, fsnn_infile, fsnn_outfile, mode, 
         n_settle_trials=n_settle_trials,
     )
     if device == "cuda":
-        print("compiling cuda code")
+        log.info(f"compiling cuda code to {outdir}/brian2cuda_output")
         os.makedirs(f"{outdir}/brian2cuda_output", exist_ok=True)
         b2.device.build(
             directory=f"{outdir}/brian2cuda_output",
-            results_directory=outdir,
+            results_directory=f"results_{mode}",
             run=False,
         )
         print("done building")
+        log.debug(f"Scheduling summary:\n{b2.scheduling_summary(fsnn.net)}")
+
+        start = time.time()
 
         b2.device.run()
+        end = time.time()
+        n_trials_tot = n_trials + n_init_trials + n_settle_trials
+        log.info(f"done running in {end - start:.2f} seconds")
+        log.info(f"{(end - start) / n_trials_tot:.2f} seconds per trial")
 
     print(f"done running {mode} trials")
+    log.debug(f"{fsnn.syn_y2s.wLeft[:5, :5]=}")
+    if mode == "demean":
+        assert np.all(fsnn.syn_y2s.wLeft[:5, :5] == 0)
+    if mode == "train":
+        assert np.sum(fsnn.syn_y2s.wLeft) != 0, (
+            "Weights did not update during training!"
+        )
+    log.info(f"profiling summary:\n{b2.profiling_summary(fsnn.net)}")
 
     if fsnn_outfile is not None:
         fsnn.save(fsnn_outfile)
@@ -85,7 +105,7 @@ class fSNN(BaseDataClass):
     _state_vars_to_save: dict = field(
         default_factory=lambda: dict(
             ng_main=["v", "vJsbar", "ss", "sf", "J0ss", "J0fs", "J0fbars"],
-            syn=["w1", "w2", "w3"],
+            syn_y2s=["wLeft", "wRight"],
             syn_z2yPlus=["W"],
         )
     )
@@ -139,6 +159,7 @@ class fSNN(BaseDataClass):
 
     @mode.setter
     def mode(self, value):
+        log.debug(f"setting fSNN mode to {value}")
         # enable/disable RLS updates
         for objname in [
             "ng_rand",
@@ -236,11 +257,13 @@ class fSNN(BaseDataClass):
         T = {}
         nsteps_prev = 0
         # must be single giant timed arrays for multiple run calls
-        for _mode, n_trials in [
-            ("init", n_init_trials),
-            (mode, n_main_trials),
-            ("init", n_settle_trials),
+        for _mode, n_trials, _record in [
+            ("init", n_init_trials, False),
+            (mode, n_main_trials, record),
+            ("init", n_settle_trials, False),
         ]:
+            if _record:
+                self._save_data = True
             print(f"Preparing {_mode} trials: {n_trials} trials")
             for i in tqdm(range(n_trials)):
                 (
@@ -271,17 +294,24 @@ class fSNN(BaseDataClass):
 
         for _mode in ["init", mode, "init"]:
             self.mode = _mode
+            assert self.syn_s2s.pre_step1_xP.active == (_mode == "train")
+            if _mode == mode and record:
+                self.start_recording()
+            else:
+                self.disable_recording()
             self.net.run(
                 T[_mode],
                 report_period=self._base_params.report_period,
                 namespace=self._get_namespace(t_ta_start=0 * b2.ms),
+                profile=True,
             )
 
     def __reduce__(self):
         net_state = {}
         for attr, state_vars in self._state_vars_to_save.items():
             net_obj = self[attr]
-            net_state[attr] = {var: getattr(net_obj, var) for var in state_vars}
+            # the [:] is necessary to copy the array, not get VariableView
+            net_state[attr] = {var: getattr(net_obj, var)[:] for var in state_vars}
 
         return (
             self.__class__.build,
@@ -302,6 +332,7 @@ class fSNN(BaseDataClass):
 
         dt = base_params.dt
         b2.defaultclock.dt = dt
+        b2.prefs.core.default_float_dtype = getattr(np, base_params.default_float_dtype)
 
         seed = seed_everything(cond_params["seed"], "train_fsnn")
         rng = np.random.default_rng(seed)
@@ -328,6 +359,7 @@ class fSNN(BaseDataClass):
 
         # task cache init since it can be slow (esp. PCA trials of reaching rate network)
         if "tasks" in cache:
+            log.info("using cached tasks")
             tasks = cache["tasks"]
         else:
             tasks: list[fSNNTask] = [
@@ -340,6 +372,7 @@ class fSNN(BaseDataClass):
                 )
                 for task in task_names
             ]
+            cache["tasks"] = tasks
 
         n_out = sum([task.n_out for task in tasks])
         n_in = sum([task.n_in for task in tasks])
@@ -379,7 +412,9 @@ class fSNN(BaseDataClass):
             """,
             name="ng_main",
         )
+        log.debug(f"{ng_main.v.dtype=}")
         ng_main.v = 1e-3 * rng.normal(size=n_ng)
+        log.debug(f"  and after initialization: {ng_main.v.dtype=}")
 
         assign_coords_rand_rect_prism(
             ng_main,
@@ -393,7 +428,7 @@ class fSNN(BaseDataClass):
         )
         print(f"{ng_main.N=}")
 
-        syn = b2.Synapses(
+        syn_main = b2.Synapses(
             ng_main,
             ng_main,
             """ w1 : 1
@@ -405,25 +440,25 @@ class fSNN(BaseDataClass):
                J0fs += w2
                J0fbars += w3
             """,
-            name="syn",
+            name="syn_main",
         )
-        syn.connect()
+        syn_main.connect()
 
         tau_s = base_params.tau_s
         tau_f = base_params.tau_f
-        syn.w1 = (
+        syn_main.w1 = (
             weight_params.gs
             / (b2.second / tau_s)
             / np.sqrt(n_ng)
             * rng.normal(size=n_ng * n_ng)
         )  # J0s
-        syn.w2 = (
+        syn_main.w2 = (
             weight_params.gf
             / (b2.second / tau_f)
             / np.sqrt(n_ng)
             * rng.normal(size=n_ng * n_ng)
         )  # J0f
-        syn.w3 = weight_params.muf / (b2.second / tau_f) / n_ng  # Jmu
+        syn_main.w3 = weight_params.muf / (b2.second / tau_f) / n_ng  # Jmu
 
         # these are just placeholders, will set values when running trials
         ytilde_ta = b2.TimedArray(np.zeros((1, n_factors)), dt=dt)
@@ -519,32 +554,34 @@ class fSNN(BaseDataClass):
 
         ####### RLS ########
 
-        neurons_rand = b2.NeuronGroup(
+        ng_rand = b2.NeuronGroup(
             N=1,
             model="""
             randSingle = rand() : 1 (constant over dt)
             """,
-            threshold="randSingle < 1.0 / DTRLS",
+            threshold="randSingle < 1.0 / dtrls",
+            reset="",
             name="ng_rand",
         )
         ng_s = b2.NeuronGroup(
             n_ng,
             model="""
-                                ss : 1
-                                sf : 1
-                                xPUp_tot : 1
-                                xPDown_tot : 1
-                                kdm1 : 1
-                                kLeft : 1
-                                kRight : 1
-                                rand_trigger : 1
-                                """,
-            threshold="rand_trigger < 1.0 / DTRLS",
+                ss : 1
+                sf : 1
+                xPUp_tot : 1
+                xPDown_tot : 1
+                kdm1 : 1
+                kLeft : 1
+                kRight : 1
+                rand_trigger : 1
+            """,
+            threshold="rand_trigger < 1.0 / dtrls",
+            reset="",
             name="ng_s",
         )
         syn_s2rand = b2.Synapses(
             ng_s,
-            neurons_rand,
+            ng_rand,
             model="""
             rand_trigger_pre = randSingle_post : 1 (summed)
             """,
@@ -563,7 +600,7 @@ class fSNN(BaseDataClass):
         syn_main2s.connect(condition="i==j")
 
         # connecting neurons_s and itself
-        synapses_s2s = b2.Synapses(
+        syn_s2s = b2.Synapses(
             ng_s,
             ng_s,
             model="""
@@ -598,39 +635,33 @@ class fSNN(BaseDataClass):
             },
             name="syn_s2s",
         )
-        synapses_s2s.pre_step1_xP.when = "synapses"
-        synapses_s2s.pre_step1_xP.order = -5
+        syn_s2s.pre_step1_xP.when = "synapses"
+        syn_s2s.pre_step1_xP.order = -5
 
-        synapses_s2s.summed_updaters["xPUp_tot_pre"].when = "synapses"
-        synapses_s2s.summed_updaters["xPUp_tot_pre"].order = (
-            synapses_s2s.pre_step1_xP.order + 1
-        )
-        synapses_s2s.summed_updaters["xPDown_tot_pre"].when = "synapses"
-        synapses_s2s.summed_updaters["xPDown_tot_pre"].order = (
-            synapses_s2s.pre_step1_xP.order + 1
-        )
+        syn_s2s.summed_updaters["xPUp_tot_pre"].when = "synapses"
+        syn_s2s.summed_updaters["xPUp_tot_pre"].order = syn_s2s.pre_step1_xP.order + 1
+        syn_s2s.summed_updaters["xPDown_tot_pre"].when = "synapses"
+        syn_s2s.summed_updaters["xPDown_tot_pre"].order = syn_s2s.pre_step1_xP.order + 1
 
-        synapses_s2s.summed_updaters["kdm1_pre"].when = "synapses"
-        synapses_s2s.summed_updaters["kdm1_pre"].order = (
-            synapses_s2s.summed_updaters["xPUp_tot_pre"].order + 1
+        syn_s2s.summed_updaters["kdm1_pre"].when = "synapses"
+        syn_s2s.summed_updaters["kdm1_pre"].order = (
+            syn_s2s.summed_updaters["xPUp_tot_pre"].order + 1
         )
 
-        synapses_s2s.pre_step2_k.when = "synapses"
-        synapses_s2s.pre_step2_k.order = (
-            synapses_s2s.summed_updaters["kdm1_pre"].order + 1
-        )
+        syn_s2s.pre_step2_k.when = "synapses"
+        syn_s2s.pre_step2_k.order = syn_s2s.summed_updaters["kdm1_pre"].order + 1
 
-        synapses_s2s.pre_step3_Pw.when = "synapses"
-        synapses_s2s.pre_step3_Pw.order = synapses_s2s.pre_step2_k.order + 1
+        syn_s2s.pre_step3_Pw.when = "synapses"
+        syn_s2s.pre_step3_Pw.order = syn_s2s.pre_step2_k.order + 1
 
-        synapses_s2s.connect()
-        synapses_s2s.Pw_A = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
-        synapses_s2s.Pw_B = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
-        synapses_s2s.Pw_C = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
-        synapses_s2s.Pw_D = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
+        syn_s2s.connect()
+        syn_s2s.Pw_A = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
+        syn_s2s.Pw_B = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
+        syn_s2s.Pw_C = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
+        syn_s2s.Pw_D = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
 
         # connecting neurons_s and neurons_y
-        synapses_y2s = b2.Synapses(
+        syn_y2s = b2.Synapses(
             ng_y,
             ng_s,
             model="""
@@ -644,8 +675,10 @@ class fSNN(BaseDataClass):
             """,
             name="syn_y2s",
         )
-        synapses_y2s.connect()
+        syn_y2s.connect()
 
+        # NOTE: this could be combined with ng_y, would just need to make
+        # u not connect from bias neuron
         ng_yPlus = b2.NeuronGroup(
             N=n_factors + 1,
             model="""
@@ -656,13 +689,13 @@ class fSNN(BaseDataClass):
             k : 1
             rand_trigger : 1
             """,
-            threshold="rand_trigger < 1.0 / DTRLS",
+            threshold="rand_trigger < 1.0 / dtrls",
             reset="",
             name="ng_yPlus",
         )
         syn_yPlus2rand = b2.Synapses(
             ng_yPlus,
-            neurons_rand,
+            ng_rand,
             model="""
             rand_trigger_pre = randSingle_post : 1 (summed)
             """,
@@ -729,7 +762,7 @@ class fSNN(BaseDataClass):
             z_pre = W * yPlus_post : 1 (summed)
             """,
             on_post="""
-            W -= (z_pre - f_pre) * k_post
+            W -= (z_pre - fout_pre) * k_post
             """,
             name="syn_z2yPlus",
         )
@@ -745,7 +778,7 @@ class fSNN(BaseDataClass):
 
         ############# end code derived from Yijun's reaching_b2c.py ##############
 
-        v_mon = b2.StateMonitor(ng_main, "v", record=np.arange(10))
+        v_mon = b2.StateMonitor(ng_main, "v", record=np.arange(10), name="v_mon")
         spk_mon = b2.SpikeMonitor(ng_main, name="spk_mon")
 
         net = b2.Network(b2.collect())
@@ -769,5 +802,5 @@ class fSNN(BaseDataClass):
             for var, values in state_vars.items():
                 getattr(net_obj, var)[:] = values
 
-        print(f"{coords_from_ng(ng_main)[:10]=}")
+        log.debug(f"{coords_from_ng(ng_main)[:10]=}")
         return fsnn

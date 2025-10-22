@@ -1,17 +1,33 @@
+# %%
+import brian2.only as b2
 import brian2cuda
-from brian2 import *
+import matplotlib.pyplot as plt
+from brian2 import np
 
-set_device("cuda_standalone", build_on_run=False)
-stim = TimedArray(np.zeros(10), dt=10 * ms)
-group = NeuronGroup(
-    10, "dv/dt = (stim(t) - v)/ (10*ms) : 1", name="bob"
+b2.set_device("cuda_standalone", build_on_run=False)
+stim = b2.TimedArray(np.arange(10) + np.arange(10)[:, None], dt=10 * b2.ms)
+stim.values /= 10
+group = b2.NeuronGroup(
+    10,
+    "dv/dt = (I + stim(t, i) - v)/ (10*ms) : 1 \n I : 1",
+    threshold="v>1",
+    reset="v=0",
 )  # time-dependent stimulus
-mon = StateMonitor(group, "v", record=True)
-net = Network(group, mon)
-print(net["bob"])
-run(100 * ms)
-device.build(run=True)
-results = []
+syn = b2.Synapses(group, group, "w : 1", on_pre={"pre_step1": "v += w"})
+syn.pre_step1.when = "synapses"
+syn.pre_step1.order = -5
+
+syn.connect("i!=j")
+syn.w = 0.1
+mon = b2.StateMonitor(group, "v", record=True)
+net = b2.Network(group, syn, mon)
+syn.active = False
+net.run(100 * b2.ms, profile=True)
+net.run(100 * b2.ms, profile=True)
+b2.device.build(run=True)
+
+plt.plot(mon.t / b2.ms, mon.v.T)
+plt.gcf()
 # Do 10 runs with a 10ms at a random time
 # for idx in range(10):
 #     values = np.zeros(10)
@@ -23,3 +39,11 @@ results = []
 #     device.run(run_args=run_args)
 #     print(f"after trial {idx}: {group.v=}")
 #     results.append(mon.v[0])
+
+# %%
+print(b2.profiling_summary(net))
+
+# %%
+b2.scheduling_summary()
+
+# %%

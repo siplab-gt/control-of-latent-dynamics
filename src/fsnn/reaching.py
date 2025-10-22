@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import brian2.only as b2
 import numba
@@ -24,17 +24,17 @@ def _rate_model(fin, fout, nsteps_trial, x, Jtilde, utilde, utilde_in, etau, n_t
 
 @dataclass
 class ReachingTask(fSNNTask):
-    emg: np.ndarray = None
+    emg: np.ndarray = field(default=None, repr=False)
     """(n_conds, n_timepoints, n_muscles)"""
-    Jtilde: np.ndarray = None
+    Jtilde: np.ndarray = field(default=None, repr=False)
     """(n_tilde, n_tilde), recurrent weights of rate network"""
-    utilde: np.ndarray = None
+    utilde: np.ndarray = field(default=None, repr=False)
     """(n_tilde, n_out), maps from outputs to rate network"""
-    utilde_in: np.ndarray = None
+    utilde_in: np.ndarray = field(default=None, repr=False)
     """(n_tilde, n_in), maps from inputs to rate network"""
-    U: np.ndarray = None
+    U: np.ndarray = field(default=None, repr=False)
     """(n_ng, n_tilde) orthogonal matrix of norm g that maps from space of Ntilde to N"""
-    V: np.ndarray = None
+    V: np.ndarray = field(default=None, repr=False)
     """(n_tilde, n_factors)"""
     task_params: AttrDict = None
     """task parameters"""

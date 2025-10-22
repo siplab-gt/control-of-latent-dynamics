@@ -128,7 +128,8 @@ rule test:
     output:
         "results/test/{file}",
     shell:
-        "cp $(dirname {input})/* $(dirname {output})"
+        # NOTE: could have used ln -r (relative) instead of realpath
+        "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
 
 
 rule testq2:
@@ -148,7 +149,8 @@ rule testq2:
     output:
         "results/testq2/{file}",
     shell:
-        "cp $(dirname {input})/* $(dirname {output})"
+        "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
+
 
 
 fig_exts = [".png", ".pdf"]
@@ -500,6 +502,18 @@ rule plot_fsnn:
 #         f"results/{params_str}/fsnn_weights_plot.svg",
 #     script:
 #         "../src/scripts/plot_fsnn_weights.py"
+
+rule plot_fsnn_data:
+    input:
+        f"results/{params_str}/trained_fsnn_test_data.pkl.gz",
+        "src/plot_style.py",
+    output:
+        f"results/{params_str}/fsnn_data_plot.png",
+    localrule: True
+    group:
+        "prep_fsnn"
+    script:
+        "../src/scripts/plot_fsnn_data.py"
 
 
 def get_task_params_for_fsnn(wc):

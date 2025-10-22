@@ -1,4 +1,4 @@
-import importlib
+import logging
 
 import brian2.only as b2
 import cleo
@@ -38,6 +38,13 @@ def str2bool(value):
     if value in {"false", "0", "no", "n", "off"}:
         return False
     raise ValueError(f"Invalid boolean string: {value!r}")
+
+
+def setup_logging(cfg):
+    level = cfg["log_level"].upper()
+    log_format = cfg.get("format", "%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=logging.WARN, format=log_format)
+    logging.getLogger("src").setLevel(level)
 
 
 def setup_debugger(port=5678):
