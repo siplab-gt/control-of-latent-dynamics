@@ -1,10 +1,14 @@
+import gzip
 import logging
 
 import brian2.only as b2
 import cleo
 import cleo.utilities
+import dill
 import numpy as np
 from jaxtyping import UInt
+
+from src.log_redirector import setup_permanent_logging
 
 
 def seed_everything(seed: int, extra_seed_str=""):
@@ -27,6 +31,18 @@ def seed_everything(seed: int, extra_seed_str=""):
     return seed
 
 
+def save_pkl_gz(obj, filename):
+    assert filename.endswith(".pkl.gz")
+    with gzip.open(filename, "wb") as f:
+        dill.dump(obj, f)
+
+
+def load_pkl_gz(filename):
+    assert filename.endswith(".pkl.gz")
+    with gzip.open(filename, "rb") as f:
+        return dill.load(f)
+
+
 def str2bool(value):
     if isinstance(value, bool):
         return value
@@ -40,11 +56,14 @@ def str2bool(value):
     raise ValueError(f"Invalid boolean string: {value!r}")
 
 
-def setup_logging(cfg):
+def setup_logging(cfg, logfile):
     level = cfg["log_level"].upper()
     log_format = cfg.get("format", "%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.basicConfig(level=logging.WARN, format=log_format)
     logging.getLogger("src").setLevel(level)
+
+    if logfile:
+        return setup_permanent_logging(logfile)
 
 
 def setup_debugger(port=5678):

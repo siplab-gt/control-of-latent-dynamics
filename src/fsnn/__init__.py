@@ -1,84 +1,17 @@
 import importlib
 import logging
-import os
-import time
 from dataclasses import dataclass, field
 
 import brian2.only as b2
-import brian2cuda  # noqa: F401
 import numpy as np
 from jaxtyping import UInt
 from tqdm import tqdm
 
 from src.data_classes import BaseDataClass
 from src.fsnn.task import fSNNTask
-from src.helpers import setup_debugger
+from src.helpers import save_pkl_gz
 
 log = logging.getLogger(__name__)
-
-
-def run_main(cond_params, base_params, device, fsnn_infile, fsnn_outfile, mode, record):
-    outdir = os.path.dirname(fsnn_outfile)
-    if device == "cuda":
-        b2.set_device("cuda_standalone", build_on_run=False)
-    else:
-        assert device == "cython"
-        b2.prefs.codegen.target = "cython"
-
-    if fsnn_infile is not None:
-        print(f"loading fSNN from {fsnn_infile}")
-        fsnn = fSNN.load(fsnn_infile)
-    else:
-        fsnn = fSNN.build(cond_params, base_params)
-
-    n_trials = base_params.n_trials[mode].main
-    n_init_trials = base_params.n_trials[mode].init
-    n_settle_trials = base_params.n_trials[mode].get("settle", 0)
-    print(
-        f"Preparing {n_init_trials} warmup trials, {n_trials} {mode} trials"
-        f", {n_settle_trials} settle trials"
-    )
-    fsnn.run_trials(
-        n_trials,
-        mode=mode,
-        record=record,
-        n_init_trials=n_init_trials,
-        n_settle_trials=n_settle_trials,
-    )
-    if device == "cuda":
-        log.info(f"compiling cuda code to {outdir}/brian2cuda_output")
-        os.makedirs(f"{outdir}/brian2cuda_output", exist_ok=True)
-        b2.device.build(
-            directory=f"{outdir}/brian2cuda_output",
-            results_directory=f"results_{mode}",
-            run=False,
-        )
-        print("done building")
-        log.debug(f"Scheduling summary:\n{b2.scheduling_summary(fsnn.net)}")
-
-        start = time.time()
-
-        b2.device.run()
-        end = time.time()
-        n_trials_tot = n_trials + n_init_trials + n_settle_trials
-        log.info(f"done running in {end - start:.2f} seconds")
-        log.info(f"{(end - start) / n_trials_tot:.2f} seconds per trial")
-
-    print(f"done running {mode} trials")
-    log.debug(f"{fsnn.syn_y2s.wLeft[:5, :5]=}")
-    if mode == "demean":
-        assert np.all(fsnn.syn_y2s.wLeft[:5, :5] == 0)
-    if mode == "train":
-        assert np.sum(fsnn.syn_y2s.wLeft) != 0, (
-            "Weights did not update during training!"
-        )
-    log.info(f"profiling summary:\n{b2.profiling_summary(fsnn.net)}")
-
-    if fsnn_outfile is not None:
-        fsnn.save(fsnn_outfile)
-        print(f"saved fSNN to {fsnn_outfile}")
-
-    return fsnn
 
 
 @dataclass
@@ -159,6 +92,9 @@ class fSNN(BaseDataClass):
 
     @mode.setter
     def mode(self, value):
+        # settle is an alias for init, for running after main mode
+        if value == "settle":
+            value = "init"
         log.debug(f"setting fSNN mode to {value}")
         # enable/disable RLS updates
         for objname in [
@@ -185,7 +121,17 @@ class fSNN(BaseDataClass):
 
     @property
     def monitors(self):
-        return [self[name] for name in ["v_mon", "y_mon", "z_mon", "spk_mon"]]
+        return (
+            obj
+            for obj in self.net.objects
+            if isinstance(obj, (b2.StateMonitor, b2.SpikeMonitor))
+        )
+
+    def save_mon_data(self, filepath):
+        data = {}
+        for mon in self.monitors:
+            data[mon.name] = mon.get_states()
+        save_pkl_gz(data, filepath)
 
     def _get_namespace(self, t_ta_start):
         ns = {attr: getattr(self, attr) for attr in ["fin_ta", "fout_ta", "ytilde_ta"]}
@@ -260,7 +206,7 @@ class fSNN(BaseDataClass):
         for _mode, n_trials, _record in [
             ("init", n_init_trials, False),
             (mode, n_main_trials, record),
-            ("init", n_settle_trials, False),
+            ("settle", n_settle_trials, False),
         ]:
             if _record:
                 self._save_data = True
@@ -292,7 +238,7 @@ class fSNN(BaseDataClass):
         self.fout_ta.values = fout_all
         self.ytilde_ta.values = ytilde_all
 
-        for _mode in ["init", mode, "init"]:
+        for _mode in ["init", mode, "settle"]:
             self.mode = _mode
             assert self.syn_s2s.pre_step1_xP.active == (_mode == "train")
             if _mode == mode and record:
@@ -300,18 +246,17 @@ class fSNN(BaseDataClass):
             else:
                 self.disable_recording()
             self.net.run(
-                T[_mode],
+                T.get(_mode, 0 * b2.ms),
                 report_period=self._base_params.report_period,
                 namespace=self._get_namespace(t_ta_start=0 * b2.ms),
-                profile=True,
+                profile=(_mode == mode),
             )
 
     def __reduce__(self):
         net_state = {}
-        for attr, state_vars in self._state_vars_to_save.items():
-            net_obj = self[attr]
-            # the [:] is necessary to copy the array, not get VariableView
-            net_state[attr] = {var: getattr(net_obj, var)[:] for var in state_vars}
+        for obj_name, state_vars in self._state_vars_to_save.items():
+            net_obj = self[obj_name]
+            net_state[obj_name] = net_obj.get_states(state_vars)
 
         return (
             self.__class__.build,

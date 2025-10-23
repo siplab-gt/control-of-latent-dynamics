@@ -129,7 +129,8 @@ rule test:
         "results/test/{file}",
     shell:
         # NOTE: could have used ln -r (relative) instead of realpath
-        "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
+        # "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
+        "ln -sfr $(dirname {input})/* $(dirname {output})"
 
 
 rule testq2:
@@ -149,8 +150,8 @@ rule testq2:
     output:
         "results/testq2/{file}",
     shell:
-        "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
-
+        # "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
+        "ln -sfr $(dirname {input})/* $(dirname {output})"
 
 
 fig_exts = [".png", ".pdf"]
@@ -465,7 +466,7 @@ rule cleo_prep:
     input:
         # use NA for wildcards that were irrelevant before this step
         paths_for_params(
-            "trained_fsnn.pkl.gz", **na_wildcards_through_step("train_fsnn")
+            "fsnn_post_train.pkl.gz", **na_wildcards_through_step("train_fsnn")
         ),
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
@@ -484,7 +485,7 @@ rule cleo_prep:
 
 rule plot_fsnn:
     input:
-        f"results/{params_str}/demeaned_fsnn.pkl.gz",
+        f"results/{params_str}/fsnn_post_demean.pkl.gz",
         "src/plot_style.py",
     output:
         f"results/{params_str}/fsnn_plot.png",
@@ -502,6 +503,7 @@ rule plot_fsnn:
 #         f"results/{params_str}/fsnn_weights_plot.svg",
 #     script:
 #         "../src/scripts/plot_fsnn_weights.py"
+
 
 rule plot_fsnn_data:
     input:
@@ -532,54 +534,51 @@ def get_task_params_for_fsnn(wc):
 
     # include array side length since network size depends on it
     out["array_side_length_mm"] = config["cleo_prep"]["array_side_length_mm"]
-    out['report_period_s'] = config['report_period_s']
+    out["report_period_s"] = config["report_period_s"]
     return out
 
 
-rule train_fsnn_test:
-    input:
-        f"results/{params_str}/trained_fsnn.pkl.gz",
-    output:
-        f"results/{params_str}/trained_fsnn_test_data.pkl.gz",
-    params:
-        get_task_params_for_fsnn,
-    log:
-        f"logs/{params_str}/train_fsnn_test.log",
-    group:
-        "prep_fsnn"
-    script:
-        "../src/scripts/train_fsnn_test.py"
-
-rule train_fsnn_train:
-    input:
-        f"results/{params_str}/demeaned_fsnn.pkl.gz",
-    output:
-        f"results/{params_str}/trained_fsnn.pkl.gz",
-    params:
-        get_task_params_for_fsnn,
-    log:
-        f"logs/{params_str}/train_fsnn_train.log",
-    group:
-        "prep_fsnn"
-    script:
-        "../src/scripts/train_fsnn_train.py"
+def fsnn_inputs(wc):
+    inputs = dict(
+        main_code="src/fsnn/__init__.py",
+        data="src/fsnn/{task}_data.npz",
+        task_code="src/fsnn/{task}.py",
+    )
+    # if train or test, get fsnn from previous step
+    if wc.mode == "train":
+        inputs["fsnn"] = f"results/{params_str}/fsnn_post_demean.pkl.gz"
+    elif wc.mode == "test":
+        inputs["fsnn"] = f"results/{params_str}/fsnn_post_train.pkl.gz"
+    return inputs
 
 
-rule train_fsnn_demean:
-    input:
-        "src/fsnn/__init__.py",
-        "src/fsnn/{task}_data.npz",
-        "src/fsnn/{task}.py",
-    output:
-        f"results/{params_str}/demeaned_fsnn.pkl.gz",
-    params:
-        get_task_params_for_fsnn,
-    log:
-        f"logs/{params_str}/train_fsnn_demean.log",
-    group:
-        "prep_fsnn"
-    script:
-        "../src/scripts/train_fsnn_demean.py"
+# 3 fsnn rules, flexibly save fSNN and/or data
+for save_fsnn, save_data in [(True, False), (False, True), (True, True)]:
+    outputs = {}
+    if save_fsnn:
+        outputs["fsnn"] = f"results/{params_str}/fsnn_post_{{mode}}.pkl.gz"
+    if save_data:
+        outputs["data"] = f"results/{params_str}/fsnn_data_{{mode}}.pkl.gz"
+
+    rule:
+        name:
+            f"train_fsnn_{'save_fsnn' if save_fsnn else ''}{'_save_data' if save_data else ''}"
+        input:
+            unpack(fsnn_inputs),
+        output:
+            **outputs,
+        params:
+            get_task_params_for_fsnn,
+        log:
+            f"logs/{params_str}/train_fsnn_{{mode}}.log",
+        group:
+            "prep_fsnn"
+        script:
+            "../src/scripts/train_fsnn.py"
+
+# prefer the rule that only saves one thing to the one that saves both
+# ruleorder: train_fsnn_save_fsnn > train_fsnn_save_data > train_fsnn_save_fsnn_save_data
+# NOTE: can't use since those names were given dynamically. must use --allow-ambiguity
 
 
 rule plot_schematic:
