@@ -123,7 +123,7 @@ class fSNN(BaseDataClass):
     def monitors(self):
         return (
             obj
-            for obj in self.net.objects
+            for obj in self.net.sorted_objects
             if isinstance(obj, (b2.StateMonitor, b2.SpikeMonitor))
         )
 

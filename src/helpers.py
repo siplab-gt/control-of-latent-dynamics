@@ -1,5 +1,6 @@
 import gzip
 import logging
+import sys
 
 import brian2.only as b2
 import cleo
@@ -57,13 +58,29 @@ def str2bool(value):
 
 
 def setup_logging(cfg, logfile):
+    if logfile:
+        log_fh = setup_permanent_logging(logfile)
+
     level = cfg["log_level"].upper()
     log_format = cfg.get("format", "%(asctime)s %(levelname)s %(name)s: %(message)s")
-    logging.basicConfig(level=logging.WARN, format=log_format)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.WARN)
+
+    # Add new handler pointing to current sys.stderr (the Tee)
+    handler = logging.StreamHandler(sys.stderr)
+    if logfile:
+        assert len(sys.stderr.files) == 2, "stderr should be Tee from log_redirector"
+    handler.setFormatter(logging.Formatter(log_format))
+    root_logger.addHandler(handler)
+
+    # set lower level for my code
     logging.getLogger("src").setLevel(level)
+    # needed for src.scripts called by snakemake
+    logging.getLogger("__main__").setLevel(level)
 
     if logfile:
-        return setup_permanent_logging(logfile)
+        return log_fh
 
 
 def setup_debugger(port=5678):

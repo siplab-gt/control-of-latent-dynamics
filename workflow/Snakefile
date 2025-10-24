@@ -15,8 +15,9 @@ configfile: "config/config.yaml"
 rule all:
     input:
         expand(
-            "results/figs/sufficient_stim_{task}.pdf",
+            "results/figs/{setting}__{task}.pdf",
             task=config["manual_sweep_params"]["task"],
+            setting=config["manual_sweep_params"]["setting"],
         ),
 
 
@@ -130,7 +131,8 @@ rule test:
     shell:
         # NOTE: could have used ln -r (relative) instead of realpath
         # "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
-        "ln -sfr $(dirname {input})/* $(dirname {output})"
+        # "ln -sfr $(dirname {input})/* $(dirname {output})"
+        "cp $(dirname {input})/* $(dirname {output})"
 
 
 rule testq2:
@@ -150,8 +152,11 @@ rule testq2:
     output:
         "results/testq2/{file}",
     shell:
-        # "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
-        "ln -sfr $(dirname {input})/* $(dirname {output})"
+        # "rm -r $(dirname {output}) || true && \\"
+        # "ln -sf $(realpath $(dirname {input})) $(dirname {output})"
+        # "ln -sfr $(dirname {input})/* $(dirname {output})"
+        "cp $(dirname {input})/* $(dirname {output})"
+
 
 
 fig_exts = [".png", ".pdf"]
@@ -507,10 +512,10 @@ rule plot_fsnn:
 
 rule plot_fsnn_data:
     input:
-        f"results/{params_str}/trained_fsnn_test_data.pkl.gz",
+        f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz",
         "src/plot_style.py",
     output:
-        f"results/{params_str}/fsnn_data_plot.png",
+        f"results/{params_str}/fsnn_{{mode}}_data_plot.png",
     localrule: True
     group:
         "prep_fsnn"
@@ -551,34 +556,41 @@ def fsnn_inputs(wc):
         inputs["fsnn"] = f"results/{params_str}/fsnn_post_train.pkl.gz"
     return inputs
 
-
-# 3 fsnn rules, flexibly save fSNN and/or data
-for save_fsnn, save_data in [(True, False), (False, True), (True, True)]:
+def fsnn_outputs(save_fsnn, save_data):
     outputs = {}
     if save_fsnn:
         outputs["fsnn"] = f"results/{params_str}/fsnn_post_{{mode}}.pkl.gz"
     if save_data:
-        outputs["data"] = f"results/{params_str}/fsnn_data_{{mode}}.pkl.gz"
+        outputs["data"] = f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz"
+    return outputs
 
-    rule:
-        name:
-            f"train_fsnn_{'save_fsnn' if save_fsnn else ''}{'_save_data' if save_data else ''}"
-        input:
-            unpack(fsnn_inputs),
-        output:
-            **outputs,
-        params:
-            get_task_params_for_fsnn,
-        log:
-            f"logs/{params_str}/train_fsnn_{{mode}}.log",
-        group:
-            "prep_fsnn"
-        script:
-            "../src/scripts/train_fsnn.py"
+# 3 fsnn rules, flexibly save fSNN and/or data
+rule _prep_fsnn:
+    input:
+        unpack(fsnn_inputs),
+    params:
+        get_task_params_for_fsnn,
+    log:
+        f"logs/{params_str}/prep_fsnn_{{mode}}.log",
+    group:
+        "prep_fsnn"
+    script:
+        "../src/scripts/train_fsnn.py"
+
+use rule _prep_fsnn as prep_fsnn_save_fsnn with:
+    output:
+        **fsnn_outputs(save_fsnn=True, save_data=False)
+
+use rule _prep_fsnn as prep_fsnn_save_data with:
+    output:
+        **fsnn_outputs(save_fsnn=False, save_data=True)
+
+use rule _prep_fsnn as prep_fsnn_save_both with:
+    output:
+        **fsnn_outputs(save_fsnn=True, save_data=True)
 
 # prefer the rule that only saves one thing to the one that saves both
-# ruleorder: train_fsnn_save_fsnn > train_fsnn_save_data > train_fsnn_save_fsnn_save_data
-# NOTE: can't use since those names were given dynamically. must use --allow-ambiguity
+ruleorder: prep_fsnn_save_fsnn > prep_fsnn_save_data > prep_fsnn_save_both
 
 
 rule plot_schematic:
