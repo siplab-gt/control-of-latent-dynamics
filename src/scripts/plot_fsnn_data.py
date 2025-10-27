@@ -35,11 +35,13 @@ def main(data_file, out_file):
             ax = axs[i_series] if n_series > 1 else axs
             print(f"Plotting {mon}.{var_name} with unit {u}")
             print(f"  {t_s.shape=}, {values.shape=}")
+            u_label = str(u) if u != 1.0 else "a.u."
             if mon == "spk_mon":
-                ax.plot(t_s, values / u, ".", ms=1)
+                ax.plot(t_s, values / u, ".", ms=0.5)
+                u_label = "neuron index"
             else:
                 ax.plot(t_s, values / u)
-            ax.set(title=f"{mon}.{var_name}", ylabel=str(u))
+            ax.set(title=f"{mon}.{var_name}", ylabel=f"{mon}.{var_name} ({u_label})")
             i_series += 1
     ax.set_xlabel("t (s)")
 

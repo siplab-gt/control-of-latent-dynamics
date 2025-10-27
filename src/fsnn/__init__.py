@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from src.data_classes import BaseDataClass
 from src.fsnn.task import fSNNTask
-from src.helpers import save_pkl_gz
+from src.helpers import save_pkl_gz, setup_debugger
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +96,10 @@ class fSNN(BaseDataClass):
         if value == "settle":
             value = "init"
         log.debug(f"setting fSNN mode to {value}")
+
+        # only update vJsbar during demean
+        self.vJsbar_update.active = value == "demean"
+
         # enable/disable RLS updates
         for objname in [
             "ng_rand",
@@ -115,7 +119,7 @@ class fSNN(BaseDataClass):
         if value != "train":
             self.ng_yPlus.k = 0  # besides disabling synapses that update k
 
-        self.ng_y.init_mode = value == "init"
+        self.ng_y.target_feedback_mode = value in ["init", "demean"]
 
         self._mode = value
 
@@ -174,11 +178,12 @@ class fSNN(BaseDataClass):
                 trial_params
             )
         T_trial = nsteps_trial * self.dt
-        self.fin_ta.values = fin
-        self.fout_ta.values = fout
-        self.ytilde_ta.values = ytilde
+        self.fin_ta = b2.TimedArray(fin, dt=self.dt)
+        self.fout_ta = b2.TimedArray(fout, dt=self.dt)
+        self.ytilde_ta = b2.TimedArray(ytilde, dt=self.dt)
         self.net.run(
             T_trial,
+            report="stdout",
             report_period=self._base_params["report_period_s"] * b2.second,
             # need this so TimedArrays can work with respect to trial start
             namespace=self._get_namespace(t_ta_start=self.net.t),
@@ -204,13 +209,13 @@ class fSNN(BaseDataClass):
         nsteps_prev = 0
         # must be single giant timed arrays for multiple run calls
         for _mode, n_trials, _record in [
-            ("init", n_init_trials, False),
+            ("init", n_init_trials, True),  # TODO; false
             (mode, n_main_trials, record),
             ("settle", n_settle_trials, False),
         ]:
             if _record:
                 self._save_data = True
-            print(f"Preparing {_mode} trials: {n_trials} trials")
+            print(f"Preparing {n_trials} {_mode} trials:")
             for i in tqdm(range(n_trials)):
                 (
                     ytilde,
@@ -234,9 +239,11 @@ class fSNN(BaseDataClass):
                     # only index data for saved trials (i.e., not for init)
                     nsteps_prev += nsteps_trial
 
-        self.fin_ta.values = fin_all
-        self.fout_ta.values = fout_all
-        self.ytilde_ta.values = ytilde_all
+        self.fin_ta = b2.TimedArray(fin_all, dt=self.dt)
+        self.fout_ta = b2.TimedArray(fout_all, dt=self.dt)
+        self.ytilde_ta = b2.TimedArray(ytilde_all, dt=self.dt)
+        assert self.ytilde_ta.values.shape[0] > 0
+        assert not np.all(self.ytilde_ta.values == 0), "ytilde_ta is all zeros!"
 
         for _mode in ["init", mode, "settle"]:
             self.mode = _mode
@@ -245,12 +252,15 @@ class fSNN(BaseDataClass):
                 self.start_recording()
             else:
                 self.disable_recording()
+            log.info(f"calling net.run() for {T.get(_mode, 0 * b2.ms)}")
             self.net.run(
                 T.get(_mode, 0 * b2.ms),
+                report="stdout",
                 report_period=self._base_params.report_period,
                 namespace=self._get_namespace(t_ta_start=0 * b2.ms),
                 profile=(_mode == mode),
             )
+        # setup_debugger()
 
     def __reduce__(self):
         net_state = {}
@@ -326,10 +336,10 @@ class fSNN(BaseDataClass):
         u = np.hstack([task.u for task in tasks])
         u_in = np.hstack([task.u_in for task in tasks])
 
-        fin_ta = b2.TimedArray(np.zeros((1, n_in)), dt=dt)
+        fin_ta = b2.TimedArray(np.ones((1, n_in)), dt=dt)
         ng_in = b2.NeuronGroup(
             N=n_in,
-            model="value = fin_ta(t - t_ta_start, i) : 1",
+            model="fin = fin_ta(t - t_ta_start, i) : 1",
             name="ng_in",
         )
 
@@ -337,6 +347,7 @@ class fSNN(BaseDataClass):
             N=n_ng,
             model="""
             vJsbar : 1
+            n_t : 1 (shared)  # for computing vJsbar
             uy : 1
             I_in : 1
             vinf = J0fbars - vJsbar + uy + J0ss + J0fs + I_in : 1
@@ -346,7 +357,6 @@ class fSNN(BaseDataClass):
             dJ0fbars/dt = -J0fbars/tau_f : 1
             dss/dt = -ss/tau_s : 1
             dsf/dt = -sf/tau_f : 1
-            sum_vJsbar : 1
             """,
             method="euler",
             threshold="v>=vth",
@@ -356,6 +366,13 @@ class fSNN(BaseDataClass):
             sf += 1
             """,
             name="ng_main",
+        )
+        ng_main.run_regularly(
+            """ n_t += 1
+                vJsbar += (uy + J0ss + J0fs - vJsbar) / n_t""",
+            name="vJsbar_update",
+            dt=dt,
+            when="end",
         )
         log.debug(f"{ng_main.v.dtype=}")
         ng_main.v = 1e-3 * rng.normal(size=n_ng)
@@ -405,15 +422,15 @@ class fSNN(BaseDataClass):
         )  # J0f
         syn_main.w3 = weight_params.muf / (b2.second / tau_f) / n_ng  # Jmu
 
-        # these are just placeholders, will set values when running trials
-        ytilde_ta = b2.TimedArray(np.zeros((1, n_factors)), dt=dt)
-        fout_ta = b2.TimedArray(np.zeros((1, n_out)), dt=dt)
+        # these are just placeholders, will re-assign when running trials
+        ytilde_ta = b2.TimedArray(np.ones((1, n_factors)), dt=dt)
+        fout_ta = b2.TimedArray(np.ones((1, n_out)), dt=dt)
 
         syn_in = b2.Synapses(
             ng_in,
             ng_main,
             """u_in : 1 (constant)
-            I_in_post = value_pre * u_in : 1 (summed)""",
+            I_in_post = fin_pre * u_in : 1 (summed)""",
             name="syn_in",
         )
         syn_in.connect()
@@ -435,9 +452,10 @@ class fSNN(BaseDataClass):
             model="""
             ytilde = ytilde_ta(t - t_ta_start, i) : 1
             y : 1
-            y_mon = ytilde * int(init_mode) + y * (1 - int(init_mode)) : 1
-            err = y_mon - ytilde : 1
-            init_mode : boolean (shared)
+            # y_ assumes target value for init and demean modes
+            y_ = ytilde * int(target_feedback_mode) + y * (1 - int(target_feedback_mode)) : 1
+            err = y_ - ytilde : 1
+            target_feedback_mode : boolean (shared)
             """,
             name="ng_y",
         )
@@ -488,7 +506,7 @@ class fSNN(BaseDataClass):
             ng_main,
             model="""
             u : 1 (constant)
-            uy_post = u * y_mon_pre : 1 (summed)
+            uy_post = u * y__pre : 1 (summed)
             """,
             name="syn_uy",
         )
@@ -549,34 +567,34 @@ class fSNN(BaseDataClass):
             ng_s,
             ng_s,
             model="""
-                                xPUp : 1
-                                xPDown : 1
+                xPUp : 1
+                xPDown : 1
 
-                                xPUp_tot_pre = xPUp : 1 (summed)
-                                xPDown_tot_pre = xPDown : 1 (summed)
+                xPUp_tot_pre = xPUp : 1 (summed)
+                xPDown_tot_pre = xPDown : 1 (summed)
 
-                                kdm1_pre = ss_post * xPUp_tot_post + sf_post * xPDown_tot_post : 1 (summed)
+                kdm1_pre = ss_post * xPUp_tot_post + sf_post * xPDown_tot_post : 1 (summed)
 
-                                Pw_A : 1
-                                Pw_B : 1
-                                Pw_C : 1
-                                Pw_D : 1
-                                """,
+                Pw_A : 1
+                Pw_B : 1
+                Pw_C : 1
+                Pw_D : 1
+            """,
             on_pre={
                 "pre_step1_xP": """
-                                    xPUp = Pw_A * ss_post + Pw_B * sf_post
-                                    xPDown = Pw_C * ss_post + Pw_D * sf_post
-                                    """,
+                    xPUp = Pw_A * ss_post + Pw_B * sf_post
+                    xPDown = Pw_C * ss_post + Pw_D * sf_post
+                    """,
                 "pre_step2_k": """
-                                    kLeft_pre = xPUp_tot_pre / (1 + kdm1_pre)
-                                    kRight_pre = xPDown_tot_pre / (1 + kdm1_pre)
-                                    """,
+                    kLeft_pre = xPUp_tot_pre / (1 + kdm1_pre)
+                    kRight_pre = xPDown_tot_pre / (1 + kdm1_pre)
+                    """,
                 "pre_step3_Pw": """
-                                    Pw_A -= xPUp_tot_pre * kLeft_post
-                                    Pw_B -= xPUp_tot_pre * kRight_post
-                                    Pw_C -= xPDown_tot_pre * kLeft_post
-                                    Pw_D -= xPDown_tot_pre * kRight_post
-                                    """,
+                    Pw_A -= xPUp_tot_pre * kLeft_post
+                    Pw_B -= xPUp_tot_pre * kRight_post
+                    Pw_C -= xPDown_tot_pre * kLeft_post
+                    Pw_D -= xPDown_tot_pre * kRight_post
+                    """,
             },
             name="syn_s2s",
         )
@@ -715,15 +733,26 @@ class fSNN(BaseDataClass):
 
         samp_period = base_params.sample_period
         y_mon = b2.StateMonitor(
-            ng_y, ["y_mon", "ytilde"], record=True, name="y_mon", dt=samp_period
+            ng_y, ["y_", "ytilde"], record=True, name="y_mon", dt=samp_period
         )
         z_mon = b2.StateMonitor(
-            ng_z, ["fout"], record=True, name="z_mon", dt=samp_period
+            ng_z, ["z", "fout"], record=True, name="z_mon", dt=samp_period
+        )
+        in_mon = b2.StateMonitor(
+            ng_in, "fin", record=True, name="in_mon", dt=samp_period
+        )
+        w_mon = b2.StateMonitor(
+            syn_y2s, ["wLeft", "wRight"], record=np.arange(5), name="w_mon"
+        )
+        W_mon = b2.StateMonitor(
+            syn_z2yPlus, "W", record=np.arange(5), name="W_mon"
         )
 
         ############# end code derived from Yijun's reaching_b2c.py ##############
 
-        v_mon = b2.StateMonitor(ng_main, "v", record=np.arange(10), name="v_mon")
+        v_mon = b2.StateMonitor(
+            ng_main, ["v", "vJsbar"], record=np.arange(5), name="v_mon"
+        )
         spk_mon = b2.SpikeMonitor(ng_main, name="spk_mon")
 
         net = b2.Network(b2.collect())

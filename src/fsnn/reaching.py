@@ -113,15 +113,10 @@ class ReachingTask(fSNNTask):
         )
         fin3 = np.ones(sum(nsteps_event[:1]))
 
-        fout1 = (
-            -0.0
-            + 2
-            * np.reshape(
-                np.tile(np.reshape(np.squeeze(self.emg[cond, :, :]), -1), (10, 1)).T,
-                (-1, self.emg.shape[2]),
-            ).T
+        fout1 = 2 * np.repeat(self.emg[cond], 10, axis=0).T
+        assert fout1.shape[1] == nsteps_trial - nsteps_iti == sum(nsteps_event), (
+            f"{fout1.shape=}"
         )
-        assert fout1.shape[1] == nsteps_trial - nsteps_iti == sum(nsteps_event)
         fout1[0, :] = -1 * fout1[0, :]
         fout0 = -0.0 * np.ones(nsteps_iti_half)
         fout2 = -0.5 * np.ones(nsteps_iti_half)

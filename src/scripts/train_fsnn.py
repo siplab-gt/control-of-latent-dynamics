@@ -42,6 +42,8 @@ def main(
         f"Preparing {n_init_trials} warmup trials, {n_trials} {mode} trials"
         f", {n_settle_trials} settle trials"
     )
+    if device == "cython":
+        start = time.time()
     fsnn.run_trials(
         n_trials,
         mode=mode,
@@ -49,9 +51,14 @@ def main(
         n_init_trials=n_init_trials,
         n_settle_trials=n_settle_trials,
     )
+    if device == "cython":
+        end = time.time()
+
     if device == "cuda":
         log.info(f"compiling cuda code to {outdir}/brian2cuda_output")
         os.makedirs(f"{outdir}/brian2cuda_output", exist_ok=True)
+
+        cstart = time.time()
         b2.device.build(
             directory=f"{outdir}/brian2cuda_output",
             # don't need to set results_directory since we aren't rerunning with
@@ -59,21 +66,21 @@ def main(
             # results_directory=f"results_{mode}",
             run=False,
         )
-        log.info("done building")
+        log.info(f"done compiling in {time.time() - cstart:.2f} seconds")
         log.debug(f"Scheduling summary:\n{b2.scheduling_summary(fsnn.net)}")
 
         start = time.time()
 
         b2.device.run()
         end = time.time()
-        n_trials_tot = n_trials + n_init_trials + n_settle_trials
-        log.info(f"done running in {end - start:.2f} seconds")
-        log.info(f"{(end - start) / n_trials_tot:.2f} seconds per trial")
+        # profiling fails with cython for some reason
+        log.info(f"profiling summary:\n{b2.profiling_summary(fsnn.net)}")
 
-    log.info(f"done running {mode} trials")
+    n_trials_tot = n_trials + n_init_trials + n_settle_trials
+    log.info(f"done running {mode} in {end - start:.2f} seconds")
+    log.info(f"{(end - start) / n_trials_tot:.2f} seconds per trial")
+
     log.debug(f"{fsnn.syn_y2s.wLeft[:5, :5]=}")
-
-    log.info(f"profiling summary:\n{b2.profiling_summary(fsnn.net)}")
 
     if mode == "demean":
         assert np.all(fsnn.syn_y2s.wLeft[:5, :5] == 0)

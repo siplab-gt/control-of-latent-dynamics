@@ -1,3 +1,4 @@
+from copy import deepcopy
 import numpy as np
 import pandas as pd
 import itertools
@@ -515,7 +516,7 @@ rule plot_fsnn_data:
         f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz",
         "src/plot_style.py",
     output:
-        f"results/{params_str}/fsnn_{{mode}}_data_plot.png",
+        f"results/{params_str}/fsnn_{{mode}}_data_plot.{{ext}}",
     localrule: True
     group:
         "prep_fsnn"
@@ -525,7 +526,7 @@ rule plot_fsnn_data:
 
 def get_task_params_for_fsnn(wc):
     """gets all train_fsnn params, but only task params as needed"""
-    params = config["train_fsnn"]
+    params = deepcopy(config["train_fsnn"])
     try:
         multitask = str2bool(wc.multitask)
     except AttributeError:
@@ -536,6 +537,11 @@ def get_task_params_for_fsnn(wc):
         task_params = {wc.task: config["train_fsnn"]["task_specific"][wc.task]}
     out = params | task_params
     del out["task_specific"]
+
+    # remove n_trials for modes other than this one
+    for mode in ['demean', 'train', 'test']:
+        if mode != wc.mode:
+            del out["n_trials"][mode]
 
     # include array side length since network size depends on it
     out["array_side_length_mm"] = config["cleo_prep"]["array_side_length_mm"]
