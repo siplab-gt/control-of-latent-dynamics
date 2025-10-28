@@ -201,12 +201,12 @@ train_fsnn:
   n_trials:
     # TODO: multiply by 10
     demean:
-      init: 5 # 50
-      main: 55 # 250
+      init: 1 # 50
+      main: 3 # 250
     train:
       init: 1 # 50
-      main: 10 # 250
-      settle: 1 #  50, effectively do init trials after training and save
+      main: 3 # 250
+      settle: 0 #  50, effectively do init trials after training and save
     test:
       init: 0
       main: 5

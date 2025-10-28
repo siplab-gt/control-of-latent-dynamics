@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass, field
 
 import brian2.only as b2
-import numpy as np
+from brian2 import np
 from jaxtyping import UInt
 from tqdm import tqdm
 
@@ -32,6 +32,7 @@ class fSNN(BaseDataClass):
     tasks: list = field(default_factory=list)
     rng: np.random.Generator = field(default_factory=lambda: np.random.default_rng())
     _mode: str = "init"
+    _record: bool = False
     _save_data: bool = True
     _cond_params: dict = None
     _base_params: dict = None
@@ -43,6 +44,9 @@ class fSNN(BaseDataClass):
         )
     )
     _cache: dict = field(repr=False, default_factory=dict)
+    _t_prev: b2.Quantity = field(default_factory=lambda: 0 * b2.ms, repr=False)
+    _i_record_prev: int = 0
+    _gen_trial_state: dict = field(default_factory=dict, repr=False)
 
     def __getitem__(self, key):
         """Allows access to net components by name, e.g. fsnn['ng_yPlus']"""
@@ -102,14 +106,13 @@ class fSNN(BaseDataClass):
 
         # enable/disable RLS updates
         for objname in [
-            "ng_rand",
+            "ng_rls_trigger",
             "ng_s",
-            "syn_s2rand",
             "syn_main2s",
             "syn_s2s",
+            "syn_s2kdm1",
             "syn_y2s",
             "ng_yPlus",
-            "syn_yPlus2rand",
             "syn_y2yPlus",
             "syn_yPlus2yPlus",
             "syn_z2yPlus",
@@ -122,6 +125,16 @@ class fSNN(BaseDataClass):
         self.ng_y.target_feedback_mode = value in ["init", "demean"]
 
         self._mode = value
+
+    @property
+    def record(self):
+        return self._record
+
+    @record.setter
+    def record(self, value):
+        self._record = value
+        for mon in self.monitors:
+            mon.active = value
 
     @property
     def monitors(self):
@@ -141,19 +154,8 @@ class fSNN(BaseDataClass):
         ns = {attr: getattr(self, attr) for attr in ["fin_ta", "fout_ta", "ytilde_ta"]}
         ns |= self._base_params  # gets things like tau_s, vth
         ns["t_ta_start"] = t_ta_start
+        ns["sum"] = sum
         return ns
-
-    def start_recording(self):
-        self._save_data = True
-        for mon in self.monitors:
-            mon.active = True
-        self.conditions = []
-        self.i_trial_boundaries = []
-
-    def disable_recording(self):
-        self._save_data = False
-        for mon in self.monitors:
-            mon.active = False
 
     @property
     def dt(self) -> b2.Quantity:
@@ -162,21 +164,29 @@ class fSNN(BaseDataClass):
         return dt
 
     def generate_trial(
-        self,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int, int]:
-        """returns ytilde,fout,fin,nsteps_trial,cond,i_trial_start_end,ITIb,ITI"""
+        self, **kwargs
+    ) -> tuple[
+        np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int, int, dict
+    ]:
+        """returns ytilde,fout,fin,nsteps_trial,cond,i_trial_start_end,ITIb,ITI,kwargs"""
         task = self.rng.choice(self.tasks)
-        return task.generate_trial(self.rng)
+        return task.generate_trial(self.rng, **kwargs)
 
-    def run_trial(self, trial_params=None):
-        if trial_params is None:
-            ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti = (
-                self.generate_trial()
-            )
-        else:
-            ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti = (
-                trial_params
-            )
+    def run_trial(self, record=False):
+        """run a single trial of the current mode"""
+        # relies on object state to keep track of task state, time, nsteps
+        self.record = record
+        (
+            ytilde,
+            fout,
+            fin,
+            nsteps_trial,
+            condition,
+            i_trial_bounds,
+            nsteps_iti,
+            self._gen_trial_state,  # e.g., x for rate network state
+        ) = self.generate_trial(**self._gen_trial_state)
+
         T_trial = nsteps_trial * self.dt
         self.fin_ta = b2.TimedArray(fin, dt=self.dt)
         self.fout_ta = b2.TimedArray(fout, dt=self.dt)
@@ -184,14 +194,18 @@ class fSNN(BaseDataClass):
         self.net.run(
             T_trial,
             report="stdout",
-            report_period=self._base_params["report_period_s"] * b2.second,
+            report_period=self._base_params.report_period,
             # need this so TimedArrays can work with respect to trial start
-            namespace=self._get_namespace(t_ta_start=self.net.t),
+            namespace=self._get_namespace(t_ta_start=self._t_prev),
         )
+        self._t_prev += T_trial
 
-        if self._save_data:
+        if record:
             self.conditions.append(condition)
-            self.i_trial_boundaries.append(i_trial_bounds)
+            self.i_trial_boundaries.append(
+                (i + self._i_record_prev for i in i_trial_bounds)
+            )
+            self._i_record_prev += nsteps_trial
 
     def run_trials(
         self, n_main_trials, mode, record=False, n_init_trials=50, n_settle_trials=0
@@ -207,14 +221,16 @@ class fSNN(BaseDataClass):
 
         T = {}
         nsteps_prev = 0
-        # must be single giant timed arrays for multiple run calls
-        for _mode, n_trials, _record in [
+        phases = [
             ("init", n_init_trials, True),  # TODO; false
             (mode, n_main_trials, record),
             ("settle", n_settle_trials, False),
-        ]:
-            if _record:
-                self._save_data = True
+        ]
+        # must be single giant timed arrays for multiple run calls
+        gen_trial_state = {}
+        for _mode, n_trials, _record in phases:
+            self.record = _record
+            self.mode = _mode
             print(f"Preparing {n_trials} {_mode} trials:")
             for i in tqdm(range(n_trials)):
                 (
@@ -225,7 +241,8 @@ class fSNN(BaseDataClass):
                     condition,
                     i_trial_bounds,
                     nsteps_iti,
-                ) = self.generate_trial()
+                    gen_trial_state,
+                ) = self.generate_trial(**gen_trial_state)
                 T_trial = nsteps_trial * self.dt
                 fin_all = np.vstack([fin_all, fin])
                 fout_all = np.vstack([fout_all, fout])
@@ -245,13 +262,10 @@ class fSNN(BaseDataClass):
         assert self.ytilde_ta.values.shape[0] > 0
         assert not np.all(self.ytilde_ta.values == 0), "ytilde_ta is all zeros!"
 
-        for _mode in ["init", mode, "settle"]:
+        for _mode, n_trials, _record in phases:
             self.mode = _mode
-            assert self.syn_s2s.pre_step1_xP.active == (_mode == "train")
-            if _mode == mode and record:
-                self.start_recording()
-            else:
-                self.disable_recording()
+            assert self.syn_s2s.pre_step2_k.active == (_mode == "train")
+            self.record = _record
             log.info(f"calling net.run() for {T.get(_mode, 0 * b2.ms)}")
             self.net.run(
                 T.get(_mode, 0 * b2.ms),
@@ -454,51 +468,10 @@ class fSNN(BaseDataClass):
             y : 1
             # y_ assumes target value for init and demean modes
             y_ = ytilde * int(target_feedback_mode) + y * (1 - int(target_feedback_mode)) : 1
-            err = y_ - ytilde : 1
             target_feedback_mode : boolean (shared)
             """,
             name="ng_y",
         )
-
-        # ng_nMSE = b2.NeuronGroup(
-        #     N=1,
-        #     model="""
-        #     nMSE_numerator : 1
-        #     nMSE_denominator : 1
-        #     nMSE_sum : 1
-        #     nMSE : 1
-        #     """,
-        #     name="ng_nMSE",
-        # )
-        # ng_nMSE.run_regularly(
-        #     """
-        #     nMSE_sum += nMSE_numerator / (nMSE_denominator + 1e-9)
-        #     """,
-        #     dt=dt,
-        #     name="ng_nMSE_run_regularly_dt",
-        # )
-        # ng_nMSE.run_regularly(
-        #     """
-        #     nMSE = nMSE_sum / 2000
-        #     """,
-        #     dt=dt * 2000,
-        #     name="ng_nMSE_run_regularly_dTTrial",
-        # )
-        # # NOTE: with hard-coded dt this won't be exactly every trial for reaching
-        # synapses_y2nMSE = b2.Synapses(
-        #     ng_y,
-        #     ng_nMSE,
-        #     model="""
-        #     nMSE_numerator_post = err_pre ** 2 : 1 (summed)
-        #     nMSE_denominator_post = ytilde_pre ** 2 : 1 (summed)
-        #     """,
-        #     name="syn_y2nMSE",
-        # )
-        # synapses_y2nMSE.connect()
-        # statemon_nMSE = b2.StateMonitor(
-        #     ng_nMSE, "nMSE", record=[0], name="statemonitor_nMSE"
-        # )
-        # NOTE: will forget about simulating this for now and simply calculate post hoc
 
         # To check
         syn_uy = b2.Synapses(
@@ -517,40 +490,38 @@ class fSNN(BaseDataClass):
 
         ####### RLS ########
 
-        ng_rand = b2.NeuronGroup(
+        ng_rls_trigger = b2.NeuronGroup(
             N=1,
             model="""
-            randSingle = rand() : 1 (constant over dt)
+            rls_trigger = rand() : 1 (constant over dt)
             """,
-            threshold="randSingle < 1.0 / dtrls",
-            reset="",
-            name="ng_rand",
+            name="ng_rls_trigger",
         )
         ng_s = b2.NeuronGroup(
             n_ng,
             model="""
                 ss : 1
                 sf : 1
-                xPUp_tot : 1
-                xPDown_tot : 1
-                kdm1 : 1
+                xPUp : 1
+                xPDown : 1
+                # will update in run_regularly to be able to customize schedule
+                kdm1_per_neuron : 1   # = ss * xPUp + sf * xPDown : 1
+                kdm1_linked : 1 (linked)
+                # stupid, but need to copy here so synapses can see it
+                # synapses can't have the linked var itself
+                kdm1 = kdm1_linked : 1 (shared)
                 kLeft : 1
                 kRight : 1
-                rand_trigger : 1
+                rls_trigger : 1 (linked)
             """,
-            threshold="rand_trigger < 1.0 / dtrls",
-            reset="",
+            threshold="rls_trigger < 1.0 / dtrls",
+            reset="kdm1_per_neuron = ss * xPUp + sf * xPDown",  # only on RLS; must be scheduled (not default resets phase)
             name="ng_s",
         )
-        syn_s2rand = b2.Synapses(
-            ng_s,
-            ng_rand,
-            model="""
-            rand_trigger_pre = randSingle_post : 1 (summed)
-            """,
-            name="syn_s2rand",
-        )
-        syn_s2rand.connect()
+        ng_s.rls_trigger = b2.linked_var(ng_rls_trigger, "rls_trigger")
+        ng_kdm1 = b2.NeuronGroup(1, "kdm1 : 1", name="ng_kdm1")
+        ng_s.kdm1_linked = b2.linked_var(ng_kdm1, "kdm1")
+
         syn_main2s = b2.Synapses(
             ng_main,
             ng_s,
@@ -567,13 +538,9 @@ class fSNN(BaseDataClass):
             ng_s,
             ng_s,
             model="""
-                xPUp : 1
-                xPDown : 1
-
-                xPUp_tot_pre = xPUp : 1 (summed)
-                xPDown_tot_pre = xPDown : 1 (summed)
-
-                kdm1_pre = ss_post * xPUp_tot_post + sf_post * xPDown_tot_post : 1 (summed)
+                # NOTE: I'd like to compute these in on_pre, but can't do summed vars there
+                xPUp_pre = Pw_A * ss_post + Pw_B * sf_post : 1 (summed)
+                xPDown_pre = Pw_C * ss_post + Pw_D * sf_post : 1 (summed)
 
                 Pw_A : 1
                 Pw_B : 1
@@ -581,46 +548,37 @@ class fSNN(BaseDataClass):
                 Pw_D : 1
             """,
             on_pre={
-                "pre_step1_xP": """
-                    xPUp = Pw_A * ss_post + Pw_B * sf_post
-                    xPDown = Pw_C * ss_post + Pw_D * sf_post
-                    """,
+                # can't do (summed) here.
+                # "pre_step1_xP": """
+                #     kdm1_per_neuron_pre = ss_post * xPUp_post + sf_post * xPDown_post
+                #     xPUp_pre = Pw_A * ss_post + Pw_B * sf_post
+                #     xPDown_pre = Pw_C * ss_post + Pw_D * sf_post
+                #     """,
                 "pre_step2_k": """
-                    kLeft_pre = xPUp_tot_pre / (1 + kdm1_pre)
-                    kRight_pre = xPDown_tot_pre / (1 + kdm1_pre)
+                    kLeft_pre = xPUp_pre / (1 + kdm1_pre)
+                    kRight_pre = xPDown_pre / (1 + kdm1_pre)
                     """,
                 "pre_step3_Pw": """
-                    Pw_A -= xPUp_tot_pre * kLeft_post
-                    Pw_B -= xPUp_tot_pre * kRight_post
-                    Pw_C -= xPDown_tot_pre * kLeft_post
-                    Pw_D -= xPDown_tot_pre * kRight_post
+                    Pw_A -= xPUp_pre * kLeft_post
+                    Pw_B -= xPUp_pre * kRight_post
+                    Pw_C -= xPDown_pre * kLeft_post
+                    Pw_D -= xPDown_pre * kRight_post
                     """,
             },
             name="syn_s2s",
         )
-        syn_s2s.pre_step1_xP.when = "synapses"
-        syn_s2s.pre_step1_xP.order = -5
-
-        syn_s2s.summed_updaters["xPUp_tot_pre"].when = "synapses"
-        syn_s2s.summed_updaters["xPUp_tot_pre"].order = syn_s2s.pre_step1_xP.order + 1
-        syn_s2s.summed_updaters["xPDown_tot_pre"].when = "synapses"
-        syn_s2s.summed_updaters["xPDown_tot_pre"].order = syn_s2s.pre_step1_xP.order + 1
-
-        syn_s2s.summed_updaters["kdm1_pre"].when = "synapses"
-        syn_s2s.summed_updaters["kdm1_pre"].order = (
-            syn_s2s.summed_updaters["xPUp_tot_pre"].order + 1
+        syn_s2kdm1 = b2.Synapses(
+            ng_s,
+            ng_kdm1,
+            model="kdm1_post = kdm1_per_neuron_pre : 1 (summed)",
+            name="syn_s2kdm1",
         )
-
-        syn_s2s.pre_step2_k.when = "synapses"
-        syn_s2s.pre_step2_k.order = syn_s2s.summed_updaters["kdm1_pre"].order + 1
-
-        syn_s2s.pre_step3_Pw.when = "synapses"
-        syn_s2s.pre_step3_Pw.order = syn_s2s.pre_step2_k.order + 1
+        syn_s2kdm1.connect()
 
         syn_s2s.connect()
         syn_s2s.Pw_A = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
-        syn_s2s.Pw_B = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
-        syn_s2s.Pw_C = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
+        # syn_s2s.Pw_B = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
+        # syn_s2s.Pw_C = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
         syn_s2s.Pw_D = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
 
         # connecting neurons_s and neurons_y
@@ -640,6 +598,25 @@ class fSNN(BaseDataClass):
         )
         syn_y2s.connect()
 
+        order = -5
+
+        def schedule(updater, update_order=True):
+            nonlocal order
+            updater.when = "synapses"
+            updater.order = order
+            if update_order:
+                order += 1
+
+        # schedule(syn_s2s.pre_step1_xP)
+        schedule(syn_s2s.summed_updaters["xPUp_pre"], False)
+        schedule(syn_s2s.summed_updaters["xPDown_pre"])
+
+        schedule(ng_s.resetter["spike"])  # kdm1_per_neuron
+        schedule(syn_s2kdm1.summed_updaters["kdm1_post"])
+        schedule(syn_s2s.pre_step2_k)
+        schedule(syn_s2s.pre_step3_Pw)
+        schedule(syn_y2s.post)
+
         # NOTE: this could be combined with ng_y, would just need to make
         # u not connect from bias neuron
         ng_yPlus = b2.NeuronGroup(
@@ -650,21 +627,13 @@ class fSNN(BaseDataClass):
             xP_tot : 1
             kdm1 : 1
             k : 1
-            rand_trigger : 1
+            rls_trigger : 1 (linked)
             """,
-            threshold="rand_trigger < 1.0 / dtrls",
+            threshold="rls_trigger < 1.0 / dtrls",
             reset="",
             name="ng_yPlus",
         )
-        syn_yPlus2rand = b2.Synapses(
-            ng_yPlus,
-            ng_rand,
-            model="""
-            rand_trigger_pre = randSingle_post : 1 (summed)
-            """,
-            name="syn_yPlus2rand",
-        )
-        syn_yPlus2rand.connect()
+        ng_yPlus.rls_trigger = b2.linked_var(ng_rls_trigger, "rls_trigger")
         syn_y2yPlus = b2.Synapses(
             ng_y,
             ng_yPlus,
@@ -744,14 +713,29 @@ class fSNN(BaseDataClass):
         w_mon = b2.StateMonitor(
             syn_y2s, ["wLeft", "wRight"], record=np.arange(5), name="w_mon"
         )
-        W_mon = b2.StateMonitor(
-            syn_z2yPlus, "W", record=np.arange(5), name="W_mon"
+        W_mon = b2.StateMonitor(syn_z2yPlus, "W", record=np.arange(5), name="W_mon")
+        s_mon = b2.StateMonitor(
+            ng_s,
+            ["kLeft", "kRight", "kdm1_per_neuron"],
+            record=np.arange(5),
+            name="s_mon",
         )
+        kdm1_mon = b2.StateMonitor(ng_kdm1, "kdm1", record=True, name="kdm1_mon")
 
         ############# end code derived from Yijun's reaching_b2c.py ##############
 
-        v_mon = b2.StateMonitor(
-            ng_main, ["v", "vJsbar"], record=np.arange(5), name="v_mon"
+        main_mon = b2.StateMonitor(
+            ng_main,
+            [
+                "v",
+                "vJsbar",
+                # "ss",
+                # "sf",
+                # "J0ss",
+                # "J0fs",
+            ],
+            record=np.arange(5),
+            name="main_mon",
         )
         spk_mon = b2.SpikeMonitor(ng_main, name="spk_mon")
 

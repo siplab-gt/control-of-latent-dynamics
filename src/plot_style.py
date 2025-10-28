@@ -27,7 +27,7 @@ double_col_width = 17 / 2.54
 sns_errorbar_kwargs = dict(errorbar=("ci", 95), seed=19120731, n_boot=1000)
 
 
-def style_plots(fontscale=5 / 6):
+def style_plots(context='paper', fontscale=5 / 6):
     """fontscale=5/6 goes from default paper font size of 9.6 down to 8"""
 
     plt.style.use("default")
@@ -35,7 +35,7 @@ def style_plots(fontscale=5 / 6):
     try:
         import seaborn as sns
 
-        sns.set_context("paper", font_scale=fontscale)
+        sns.set_context(context, font_scale=fontscale)
     except ImportError:
         plt.style.use("seaborn-v0_8-paper")
         warnings.warn("Seaborn not found, using matplotlib style, ignoring fontscale")

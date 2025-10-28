@@ -20,7 +20,8 @@ def main(
         outdir = os.path.dirname(fsnn_outfile)
     except TypeError:
         outdir = os.path.dirname(data_outfile)
-    save_data = data_outfile is not None
+    record = data_outfile is not None
+
     if device == "cuda":
         log.info("deleting existing brian2cuda_output files (if any)")
         b2.set_device("cuda_standalone", build_on_run=False)
@@ -35,19 +36,28 @@ def main(
     else:
         fsnn = fSNN.build(cond_params, base_params)
 
-    n_trials = base_params.n_trials[mode].main
+    n_main_trials = base_params.n_trials[mode].main
     n_init_trials = base_params.n_trials[mode].init
     n_settle_trials = base_params.n_trials[mode].get("settle", 0)
     log.info(
-        f"Preparing {n_init_trials} warmup trials, {n_trials} {mode} trials"
+        f"Preparing {n_init_trials} warmup trials, {n_main_trials} {mode} trials"
         f", {n_settle_trials} settle trials"
     )
     if device == "cython":
         start = time.time()
+    # going one trial at a time eats up memory
+    # for mode_, n_trials, record_ in [
+    #     ("init", n_init_trials, False),
+    #     (mode, n_main_trials, record),
+    #     ("settle", n_settle_trials, False),
+    # ]:
+    #     fsnn.mode = mode_
+    #     for i_trial in range(n_trials):
+    #         fsnn.run_trial(record=record_)
     fsnn.run_trials(
-        n_trials,
+        n_main_trials,
         mode=mode,
-        record=save_data,
+        record=record,
         n_init_trials=n_init_trials,
         n_settle_trials=n_settle_trials,
     )
@@ -70,31 +80,30 @@ def main(
         log.debug(f"Scheduling summary:\n{b2.scheduling_summary(fsnn.net)}")
 
         start = time.time()
-
         b2.device.run()
         end = time.time()
         # profiling fails with cython for some reason
         log.info(f"profiling summary:\n{b2.profiling_summary(fsnn.net)}")
 
-    n_trials_tot = n_trials + n_init_trials + n_settle_trials
+    n_trials_tot = n_main_trials + n_init_trials + n_settle_trials
     log.info(f"done running {mode} in {end - start:.2f} seconds")
     log.info(f"{(end - start) / n_trials_tot:.2f} seconds per trial")
 
     log.debug(f"{fsnn.syn_y2s.wLeft[:5, :5]=}")
+    log.debug(f"{fsnn.syn_y2s.wRight[:5, :5]=}")
 
     if mode == "demean":
         assert np.all(fsnn.syn_y2s.wLeft[:5, :5] == 0)
-    # TODO
-    # if mode == "train":
-    #     assert np.sum(fsnn.syn_y2s.wLeft) != 0, (
-    #         "Weights did not update during training!"
-    #     )
+    if mode == "train":
+        assert np.sum(fsnn.syn_y2s.wLeft) != 0, (
+            "Weights did not update during training!"
+        )
 
     if fsnn_outfile is not None:
         fsnn.save(fsnn_outfile)
         log.info(f"saved fSNN to {fsnn_outfile}")
 
-    if save_data:
+    if record:
         fsnn.save_mon_data(snakemake.output.data)
         log.info(f"saved fSNN {mode} data to {snakemake.output.data}")
 
@@ -111,10 +120,15 @@ if __name__ == "__main__" and "snakemake" in locals():
 
     log_fh = setup_logging(snakemake.config, snakemake.log[0])
 
+    if snakemake.wildcards.mode == "train":
+        device = snakemake.config.get("train_device")
+    else:
+        device = "cython"  # use cython for non-training since it's faster
+
     fsnn = main(
         preprocess_params(snakemake.wildcards),
         preprocess_params(snakemake.params[0]),
-        snakemake.config["train_device"],
+        device,
         snakemake.input.get("fsnn", None),
         snakemake.output.get("fsnn", None),
         snakemake.output.get("data", None),

@@ -1,14 +1,37 @@
+"""Plot data from fSNN simulations. Mainly for debugging."""
+
 import brian2.only as b2
 import matplotlib.pyplot as plt
+import numpy as np
 
 import src.plot_style as sty
 from src.helpers import load_pkl_gz
 
 
 def main(data_file, out_file):
-    sty.style_plots()
+    sty.style_plots(fontscale=1.5)
     plt.switch_backend("agg")
     data = load_pkl_gz(data_file)
+
+    kdm1 = data["kdm1_mon"]["kdm1"]
+    assert np.allclose(np.diff(kdm1, axis=1), 0), (
+        "kdm1 should be constant across neurons"
+    )
+    assert not np.allclose(data["w_mon"]["wLeft"], data["w_mon"]["wRight"]), (
+        "s_mon wLeft and wRight should differ"
+    )
+
+    # add mse_y and mse_z to data
+    data["mse_y"] = {
+        "t": data["y_mon"]["t"],
+        "mse_y": np.linalg.norm(data["y_mon"]["y_"] - data["y_mon"]["ytilde"], axis=1)
+        / data["y_mon"]["y_"].shape[1],
+    }
+    data["mse_z"] = {
+        "t": data["z_mon"]["t"],
+        "mse_z": np.linalg.norm(data["z_mon"]["z"] - data["z_mon"]["fout"], axis=1)
+        / data["z_mon"]["z"].shape[1],
+    }
 
     n_series = 0
     for vars in data.values():
@@ -28,6 +51,7 @@ def main(data_file, out_file):
         for var_name, values in states.items():
             if var_name in ["t", "N", "count"]:
                 continue
+            assert np.all(~np.isnan(values)), f"Found NaNs in {mon}.{var_name}"
             if isinstance(values, b2.Quantity):
                 u = values.get_best_unit()
             else:
@@ -37,7 +61,7 @@ def main(data_file, out_file):
             print(f"  {t_s.shape=}, {values.shape=}")
             u_label = str(u) if u != 1.0 else "a.u."
             if mon == "spk_mon":
-                ax.plot(t_s, values / u, ".", ms=0.5)
+                ax.plot(t_s, values / u, ".", ms=0.2)
                 u_label = "neuron index"
             else:
                 ax.plot(t_s, values / u)

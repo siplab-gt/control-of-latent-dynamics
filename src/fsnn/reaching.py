@@ -147,11 +147,10 @@ class ReachingTask(fSNNTask):
         assert i_start < i_end < nsteps_trial
         return fin, fout, nsteps_trial, cond, i_trial_start_end, nsteps_iti
 
-    def _rate_model(self, fin, fout, nsteps_trial, x=None):
+    def _rate_model(self, fin, fout, nsteps_trial, x=None, rng=None):
         """returns (xprimes, x)"""
         if x is None:
-            # TODO: randn
-            x = np.zeros(self.n_tilde)
+            x = rng.normal(size=self.n_tilde)
 
         assert len(fin) == len(fout) == nsteps_trial
 
@@ -168,17 +167,30 @@ class ReachingTask(fSNNTask):
         )
 
     def generate_trial(
-        self, rng
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int]:
-        """returns ytilde, fout, fin, nsteps_trial, cond, i_trial_start_end, nsteps_iti"""
+        self, rng, **kwargs
+    ) -> tuple[
+        np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int, dict
+    ]:
+        """returns ytilde, fout, fin, nsteps_trial, cond, i_trial_start_end, nsteps_iti, gen_trial_kwargs"""
         # Compute target output for rate network
         fin, fout, nsteps_trial, cond, i_trial_start_end, nsteps_iti = (
             self._trial_reaching(rng)
         )
-        xprimes, x = self._rate_model(fin, fout, nsteps_trial)
+        xprimes, x = self._rate_model(
+            fin, fout, nsteps_trial, kwargs.get("x", None), rng=rng
+        )
         ytilde = xprimes @ self.V
 
-        return (ytilde, fout, fin, nsteps_trial, cond, i_trial_start_end, nsteps_iti)
+        return (
+            ytilde,
+            fout,
+            fin,
+            nsteps_trial,
+            cond,
+            i_trial_start_end,
+            nsteps_iti,
+            {"x": x},
+        )
 
 
 def init_task(seed, base_params, task_params, n_ng, g):
@@ -218,7 +230,7 @@ def init_task(seed, base_params, task_params, n_ng, g):
             fin, fout, nsteps_trial, cond, i_trial_start_end, nsteps_iti = (
                 reaching_task._trial_reaching(rng)
             )
-            xprimes, x = reaching_task._rate_model(fin, fout, nsteps_trial)
+            xprimes, x = reaching_task._rate_model(fin, fout, nsteps_trial, rng=rng)
         else:
             xprimes, x = reaching_task._rate_model(fin, fout, nsteps_trial, x)
         XX += xprimes.T @ xprimes
