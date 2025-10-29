@@ -273,3 +273,4 @@ report_period_s: 60
 train_device: cuda # cuda or cython
 log_level: DEBUG # DEBUG, INFO, WARNING, ERROR, CRITICAL
 auto_plot: true # automatically plot data from individual experiments
+debug: true # save/plot extra data (e.g., from fSNN training)

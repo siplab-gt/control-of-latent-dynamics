@@ -13,10 +13,11 @@ def main(data_file, out_file):
     plt.switch_backend("agg")
     data = load_pkl_gz(data_file)
 
-    kdm1 = data["kdm1_mon"]["kdm1"]
-    assert np.allclose(np.diff(kdm1, axis=1), 0), (
-        "kdm1 should be constant across neurons"
-    )
+    if "kdm1_mon" in data:
+        kdm1 = data["kdm1_mon"]["kdm1"]
+        assert np.allclose(np.diff(kdm1, axis=1), 0), (
+            "kdm1 should be constant across neurons"
+        )
     assert not np.allclose(data["w_mon"]["wLeft"], data["w_mon"]["wRight"]), (
         "s_mon wLeft and wRight should differ"
     )

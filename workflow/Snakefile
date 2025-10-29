@@ -290,7 +290,7 @@ def na_wildcards_through_step(desired_step):
         # introduced by sys_id_expts:
         ("cleo_prep", []),
         # introduced by cleo_prep:
-        ("train_fsnn", ["beam_width_um", "beam_spacing", "k", "m"]),
+        ("prep_fsnn", ["beam_width_um", "beam_spacing", "k", "m"]),
     ]:
         irrelevant_wcs += step_irrs
         if step == desired_step:
@@ -300,14 +300,18 @@ def na_wildcards_through_step(desired_step):
 
 rule analyze_ctrl_data:
     input:
-        f"results/{params_str}/ctrl_data.pkl.gz",
-        paths_for_params(
+        ctrl_data=f"results/{params_str}/ctrl_data.pkl.gz",
+        sys_id_data=paths_for_params(
             "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
         ),
-        paths_for_params(
+        model_fit_preds=paths_for_params(
             "model_fit_pred_data.pkl.gz", **na_wildcards_through_step("model_fit")
         ),
-        paths_for_params(
+        fsnn_data_analysis=paths_for_params(
+            "fsnn_test_data_analysis.csv",
+            **na_wildcards_through_step("prep_fsnn"),
+        ),
+        model_fit_analysis=paths_for_params(
             "model_fit_analysis.csv", **na_wildcards_through_step("model_fit")
         ),
     output:
@@ -472,7 +476,7 @@ rule cleo_prep:
     input:
         # use NA for wildcards that were irrelevant before this step
         paths_for_params(
-            "fsnn_post_train.pkl.gz", **na_wildcards_through_step("train_fsnn")
+            "fsnn_post_train.pkl.gz", **na_wildcards_through_step("prep_fsnn")
         ),
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
@@ -510,6 +514,16 @@ rule plot_fsnn:
 #     script:
 #         "../src/scripts/plot_fsnn_weights.py"
 
+rule analyze_fsnn_data:
+    input:
+        f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz",
+    output:
+        f"results/{params_str}/fsnn_{{mode}}_data_analysis.csv",
+    group:
+        "prep_fsnn"
+    script:
+        "../src/scripts/analyze_fsnn_data.py"
+
 
 rule plot_fsnn_data:
     input:
@@ -524,17 +538,17 @@ rule plot_fsnn_data:
         "../src/scripts/plot_fsnn_data.py"
 
 
-def get_task_params_for_fsnn(wc):
-    """gets all train_fsnn params, but only task params as needed"""
-    params = deepcopy(config["train_fsnn"])
+def fsnn_params(wc):
+    """gets all prep_fsnn params, but only task params as needed"""
+    params = deepcopy(config["prep_fsnn"])
     try:
         multitask = str2bool(wc.multitask)
     except AttributeError:
         multitask = False
     if multitask:
-        task_params = config["train_fsnn"]["task_specific"]
+        task_params = config["prep_fsnn"]["task_specific"]
     else:
-        task_params = {wc.task: config["train_fsnn"]["task_specific"][wc.task]}
+        task_params = {wc.task: config["prep_fsnn"]["task_specific"][wc.task]}
     out = params | task_params
     del out["task_specific"]
 
@@ -546,6 +560,7 @@ def get_task_params_for_fsnn(wc):
     # include array side length since network size depends on it
     out["array_side_length_mm"] = config["cleo_prep"]["array_side_length_mm"]
     out["report_period_s"] = config["report_period_s"]
+    out['debug'] = str2bool(config.get("debug", "false"))
     return out
 
 
@@ -575,13 +590,13 @@ rule _prep_fsnn:
     input:
         unpack(fsnn_inputs),
     params:
-        get_task_params_for_fsnn,
+        fsnn_params,
     log:
         f"logs/{params_str}/prep_fsnn_{{mode}}.log",
     group:
         "prep_fsnn"
     script:
-        "../src/scripts/train_fsnn.py"
+        "../src/scripts/prep_fsnn.py"
 
 use rule _prep_fsnn as prep_fsnn_save_fsnn with:
     output:
@@ -608,6 +623,6 @@ rule plot_schematic:
         top=multiext(f"results/{params_str}/top_schematic", ".svg", ".png"),
         side=multiext(f"results/{params_str}/side_schematic", ".svg", ".png"),
     params:
-        step_params("train_fsnn", "cleo_prep"),
+        step_params("prep_fsnn", "cleo_prep"),
     script:
         "../src/scripts/plot_schematic.py"

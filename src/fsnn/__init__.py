@@ -222,7 +222,7 @@ class fSNN(BaseDataClass):
         T = {}
         nsteps_prev = 0
         phases = [
-            ("init", n_init_trials, True),  # TODO; false
+            ("init", n_init_trials, False),
             (mode, n_main_trials, record),
             ("settle", n_settle_trials, False),
         ]
@@ -714,28 +714,23 @@ class fSNN(BaseDataClass):
             syn_y2s, ["wLeft", "wRight"], record=np.arange(5), name="w_mon"
         )
         W_mon = b2.StateMonitor(syn_z2yPlus, "W", record=np.arange(5), name="W_mon")
-        s_mon = b2.StateMonitor(
-            ng_s,
-            ["kLeft", "kRight", "kdm1_per_neuron"],
-            record=np.arange(5),
-            name="s_mon",
-        )
-        kdm1_mon = b2.StateMonitor(ng_kdm1, "kdm1", record=True, name="kdm1_mon")
+        if cond_params.get("debug", False):
+            s_mon = b2.StateMonitor(
+                ng_s,
+                ["kLeft", "kRight", "kdm1_per_neuron"],
+                record=np.arange(5),
+                name="s_mon",
+            )
+            kdm1_mon = b2.StateMonitor(ng_kdm1, "kdm1", record=True, name="kdm1_mon")
 
         ############# end code derived from Yijun's reaching_b2c.py ##############
 
+        main_vars_to_record = ["v"]
+        if cond_params.mode == "demean":
+            main_vars_to_record.append("vJsbar")
+
         main_mon = b2.StateMonitor(
-            ng_main,
-            [
-                "v",
-                "vJsbar",
-                # "ss",
-                # "sf",
-                # "J0ss",
-                # "J0fs",
-            ],
-            record=np.arange(5),
-            name="main_mon",
+            ng_main, main_vars_to_record, record=np.arange(5), name="main_mon"
         )
         spk_mon = b2.SpikeMonitor(ng_main, name="spk_mon")
 

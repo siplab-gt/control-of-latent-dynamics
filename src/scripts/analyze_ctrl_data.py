@@ -21,6 +21,7 @@ def nrmse(R, X, Xbaseline):
 def analyze_ctrl_data(
     cond_params,
     ctrl_data: CtrlData,
+    fsnn_data_analysis_file,
     model_fit_analysis_file,
     sys_id_data: ExptData,
     model_fit_preds: ModelFitPredData,
@@ -60,13 +61,14 @@ def analyze_ctrl_data(
 
 if __name__ == "__main__" and "snakemake" in locals():
     with redirect_output_to_file(snakemake.log[0]):
-        ctrl_data = CtrlData.load(snakemake.input[0])
-        sys_id_data = ExptData.load(snakemake.input[1])
-        model_fit_preds = ModelFitPredData.load(snakemake.input[2])
+        ctrl_data = CtrlData.load(snakemake.input.ctrl_data)
+        sys_id_data = ExptData.load(snakemake.input.sys_id_data)
+        model_fit_preds = ModelFitPredData.load(snakemake.input.model_fit_preds)
         analyze_ctrl_data(
             snakemake.wildcards,
             ctrl_data,
-            snakemake.input[3],
+            snakemake.input.fsnn_data_analysis,
+            snakemake.input.model_fit_analysis,
             sys_id_data,
             model_fit_preds,
             snakemake.output[0],
