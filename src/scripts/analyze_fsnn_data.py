@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import r2_score
 
-from helpers import load_pkl_gz
+from src.helpers import load_pkl_gz
 
 
 def analyze_fsnn_data(cond_params, infile, outfile):

@@ -181,7 +181,7 @@ power_per_neuron_uW: 1 # when normalizing power
 # organized by step to easily group in Snakefile params statements
 ##################################################################
 
-train_fsnn:
+prep_fsnn:
   dt_ms: 1
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
@@ -198,18 +198,10 @@ train_fsnn:
   connection_distance_penalty_max: 1
   connection_layer_penalty_max: 0.1 # TODO
 
-  n_trials:
-    # TODO: multiply by 10
-    demean:
-      init: 1 # 50
-      main: 3 # 250
-    train:
-      init: 1 # 50
-      main: 3 # 250
-      settle: 0 #  50, effectively do init trials after training and save
-    test:
-      init: 0
-      main: 5
+  n_init_trials: 0
+  n_main_trials: 0
+  n_settle_trials: 0
+
   dtrls: 2 # average number of steps between RLS updates
   # decay time constants
   tau_v_ms: 10 # membrane voltage
@@ -225,19 +217,31 @@ train_fsnn:
 
   sample_period_ms: 1 # used for monitors here, and for expts later
 
-  task_specific:
-    cycling:
-      iti_min_s: 0
-      iti_lambda_s: 0
-      t_event_s: [0.5, 1.95]
-      muf: -0.5 # recurrent inhibtion
-    reaching:
-      iti_min_s: .4
-      iti_lambda_s: 2
-      t_event_s: [0.35, 0.15, 0.31]
-      n_rate_neurons: 100 # 800
-      n_trials_pca: 3 # for rate network  TODO: 50
-      g: 3 # feedback gain. more like input gain?
+# mode-specific
+prep_fsnn_demean:
+  n_init_trials: 1 # 50
+  n_main_trials: 3 # 250
+prep_fsnn_train:
+  n_init_trials: 1
+  n_main_trials: 3
+  n_settle_trials: 1 # basically doing init trials for test here
+prep_fsnn_test:
+  n_main_trials: 5
+  n_settle_trials: 0
+
+# task-specific
+prep_fsnn_cycling:
+  iti_min_s: 0
+  iti_lambda_s: 0
+  t_event_s: [0.5, 1.95]
+  muf: -0.5 # recurrent inhibtion
+prep_fsnn_reaching:
+  iti_min_s: .4
+  iti_lambda_s: 2
+  t_event_s: [0.35, 0.15, 0.31]
+  n_rate_neurons: 100 # 800
+  n_trials_pca: 3 # for rate network  TODO: 50
+  g: 3 # feedback gain. more like input gain?
 
 cleo_prep:
   array_side_length_mm: 4

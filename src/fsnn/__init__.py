@@ -95,36 +95,43 @@ class fSNN(BaseDataClass):
         return self._mode
 
     @mode.setter
-    def mode(self, value):
+    def mode(self, new_mode):
         # settle is an alias for init, for running after main mode
-        if value == "settle":
-            value = "init"
-        log.debug(f"setting fSNN mode to {value}")
+        if new_mode == "settle":
+            new_mode = "init"
+        log.debug(f"setting fSNN mode to {new_mode}")
 
         # only update vJsbar during demean
-        self.vJsbar_update.active = value == "demean"
+        self.vJsbar_update.active = new_mode == "demean"
 
         # enable/disable RLS updates
-        for objname in [
-            "ng_rls_trigger",
-            "ng_s",
-            "syn_main2s",
-            "syn_s2s",
-            "syn_s2kdm1",
-            "syn_y2s",
-            "ng_yPlus",
-            "syn_y2yPlus",
-            "syn_yPlus2yPlus",
-            "syn_z2yPlus",
+        for obj in [
+            self.ng_rls_trigger,
+            self.ng_s,
+            self.syn_main2s,
+            self.syn_s2s,
+            self.syn_s2kdm1,
+            # self.syn_y2s,  # always needed for y; disable only on_post statement
+            self.syn_y2s.post,
+            # self.ng_yPlus,  # needed for z output
+            # self.syn_y2yPlus,  # needed for z output
+            self.syn_yPlus2yPlus,
+            # "syn_z2yPlus",  # needed for z output; disable its on_post statement instead
+            self.syn_z2yPlus.post,
         ]:
-            self.net[objname].active = value == "train"
+            obj.active = new_mode == "train"
 
-        if value != "train":
-            self.ng_yPlus.k = 0  # besides disabling synapses that update k
+        # these objects are needed for output only: train and test
+        for obj in [
+            self.ng_yPlus,
+            self.syn_y2yPlus,
+            self.syn_z2yPlus,
+        ]:
+            obj.active = new_mode in ["train", "test"]
 
-        self.ng_y.target_feedback_mode = value in ["init", "demean"]
+        self.ng_y.target_feedback_mode = new_mode in ["init", "demean"]
 
-        self._mode = value
+        self._mode = new_mode
 
     @property
     def record(self):
@@ -229,6 +236,8 @@ class fSNN(BaseDataClass):
         # must be single giant timed arrays for multiple run calls
         gen_trial_state = {}
         for _mode, n_trials, _record in phases:
+            if n_trials == 0:
+                continue
             self.record = _record
             self.mode = _mode
             print(f"Preparing {n_trials} {_mode} trials:")
@@ -263,6 +272,8 @@ class fSNN(BaseDataClass):
         assert not np.all(self.ytilde_ta.values == 0), "ytilde_ta is all zeros!"
 
         for _mode, n_trials, _record in phases:
+            if n_trials == 0:
+                continue
             self.mode = _mode
             assert self.syn_s2s.pre_step2_k.active == (_mode == "train")
             self.record = _record
@@ -577,8 +588,7 @@ class fSNN(BaseDataClass):
 
         syn_s2s.connect()
         syn_s2s.Pw_A = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
-        # syn_s2s.Pw_B = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
-        # syn_s2s.Pw_C = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
+        # B and C are 0 so the whole thing forms an I matrix
         syn_s2s.Pw_D = 1.0 * np.eye(n_ng).flatten()  # inverse covariance matrix
 
         # connecting neurons_s and neurons_y
@@ -664,26 +674,13 @@ class fSNN(BaseDataClass):
         syn_yPlus2yPlus.connect()
         syn_yPlus2yPlus.PW = 1.0 * np.eye(n_factors + 1).flatten()
 
-        syn_yPlus2yPlus.pre_step1_xP.when = "synapses"
-        syn_yPlus2yPlus.pre_step1_xP.order = -5
+        order = -5
 
-        syn_yPlus2yPlus.summed_updaters["xP_tot_pre"].when = "synapses"
-        syn_yPlus2yPlus.summed_updaters["xP_tot_pre"].order = (
-            syn_yPlus2yPlus.pre_step1_xP.order + 1
-        )
-
-        syn_yPlus2yPlus.summed_updaters["kdm1_pre"].when = "synapses"
-        syn_yPlus2yPlus.summed_updaters["kdm1_pre"].order = (
-            syn_yPlus2yPlus.summed_updaters["xP_tot_pre"].order + 1
-        )
-
-        syn_yPlus2yPlus.pre_step2_k.when = "synapses"
-        syn_yPlus2yPlus.pre_step2_k.order = (
-            syn_yPlus2yPlus.summed_updaters["kdm1_pre"].order + 1
-        )
-
-        syn_yPlus2yPlus.pre_step3_PW.when = "synapses"
-        syn_yPlus2yPlus.pre_step3_PW.order = syn_yPlus2yPlus.pre_step2_k.order + 1
+        schedule(syn_yPlus2yPlus.pre_step1_xP)
+        schedule(syn_yPlus2yPlus.summed_updaters["xP_tot_pre"])
+        schedule(syn_yPlus2yPlus.summed_updaters["kdm1_pre"])
+        schedule(syn_yPlus2yPlus.pre_step2_k)
+        schedule(syn_yPlus2yPlus.pre_step3_PW)
 
         # connecting yPlus and z
         syn_z2yPlus = b2.Synapses(

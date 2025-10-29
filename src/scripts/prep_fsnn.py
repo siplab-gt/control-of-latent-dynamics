@@ -36,12 +36,9 @@ def main(
     else:
         fsnn = fSNN.build(cond_params, base_params)
 
-    n_main_trials = base_params.n_trials[mode].main
-    n_init_trials = base_params.n_trials[mode].init
-    n_settle_trials = base_params.n_trials[mode].get("settle", 0)
     log.info(
-        f"Preparing {n_init_trials} warmup trials, {n_main_trials} {mode} trials"
-        f", {n_settle_trials} settle trials"
+        f"Preparing {base_params.n_init_trials} warmup trials, {base_params.n_main_trials} {mode} trials"
+        f", {base_params.n_settle_trials} settle trials"
     )
     if device == "cython":
         start = time.time()
@@ -55,14 +52,15 @@ def main(
     #     for i_trial in range(n_trials):
     #         fsnn.run_trial(record=record_)
     fsnn.run_trials(
-        n_main_trials,
+        base_params.n_main_trials,
         mode=mode,
         record=record,
-        n_init_trials=n_init_trials,
-        n_settle_trials=n_settle_trials,
+        n_init_trials=base_params.n_init_trials,
+        n_settle_trials=base_params.n_settle_trials,
     )
     if device == "cython":
         end = time.time()
+    log.debug(f"Scheduling summary:\n{b2.scheduling_summary(fsnn.net)}")
 
     if device == "cuda":
         log.info(f"compiling cuda code to {outdir}/brian2cuda_output")
@@ -77,7 +75,6 @@ def main(
             run=False,
         )
         log.info(f"done compiling in {time.time() - cstart:.2f} seconds")
-        log.debug(f"Scheduling summary:\n{b2.scheduling_summary(fsnn.net)}")
 
         start = time.time()
         b2.device.run()
@@ -85,7 +82,11 @@ def main(
         # profiling fails with cython for some reason
         log.info(f"profiling summary:\n{b2.profiling_summary(fsnn.net)}")
 
-    n_trials_tot = n_main_trials + n_init_trials + n_settle_trials
+    n_trials_tot = (
+        base_params.n_main_trials
+        + base_params.n_init_trials
+        + base_params.n_settle_trials
+    )
     log.info(f"done running {mode} in {end - start:.2f} seconds")
     log.info(f"{(end - start) / n_trials_tot:.2f} seconds per trial")
 

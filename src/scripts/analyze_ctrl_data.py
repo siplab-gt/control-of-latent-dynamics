@@ -1,3 +1,5 @@
+"""Analyze control experiment data and include fSNN and model fit analyses."""
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import r2_score
@@ -51,6 +53,7 @@ def analyze_ctrl_data(
 
     results["ctrl_compute_latency_ms"] = ctrl_data.compute_latency_ms
 
+    results |= pd.read_csv(fsnn_data_analysis_file).iloc[0].to_dict()
     results |= pd.read_csv(model_fit_analysis_file).iloc[0].to_dict()
     print(results)
 
