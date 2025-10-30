@@ -219,15 +219,14 @@ prep_fsnn:
 
 # mode-specific
 prep_fsnn_demean:
-  n_init_trials: 1 # 50
-  n_main_trials: 3 # 250
+  n_init_trials: 2 # 50
+  n_main_trials: 5 # 250
 prep_fsnn_train:
   n_init_trials: 1
-  n_main_trials: 3
+  n_main_trials: 10
   n_settle_trials: 1 # basically doing init trials for test here
 prep_fsnn_test:
-  n_main_trials: 5
-  n_settle_trials: 0
+  n_main_trials: 10
 
 # task-specific
 prep_fsnn_cycling:
@@ -240,7 +239,7 @@ prep_fsnn_reaching:
   iti_lambda_s: 2
   t_event_s: [0.35, 0.15, 0.31]
   n_rate_neurons: 100 # 800
-  n_trials_pca: 3 # for rate network  TODO: 50
+  n_trials_pca: 10 # for rate network  TODO: 50
   g: 3 # feedback gain. more like input gain?
 
 cleo_prep:

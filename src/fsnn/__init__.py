@@ -107,8 +107,8 @@ class fSNN(BaseDataClass):
         # enable/disable RLS updates
         for obj in [
             self.ng_rls_trigger,
-            self.ng_s,
-            self.syn_main2s,
+            # self.ng_s,  # needed because y depends on ng_s
+            # self.syn_main2s,  # ditto
             self.syn_s2s,
             self.syn_s2kdm1,
             # self.syn_y2s,  # always needed for y; disable only on_post statement
@@ -228,13 +228,15 @@ class fSNN(BaseDataClass):
 
         T = {}
         nsteps_prev = 0
+        # TODO
         phases = [
             ("init", n_init_trials, False),
             (mode, n_main_trials, record),
-            ("settle", n_settle_trials, False),
+            ("init", n_settle_trials, False),
         ]
         # must be single giant timed arrays for multiple run calls
-        gen_trial_state = {}
+        # gen_trial_state would have x for rate network for reaching
+        gen_trial_state = self._cache.get("gen_trial_state", {})
         for _mode, n_trials, _record in phases:
             if n_trials == 0:
                 continue
@@ -264,6 +266,7 @@ class fSNN(BaseDataClass):
                     self.i_trial_boundaries.append((i_start, i_end))
                     # only index data for saved trials (i.e., not for init)
                     nsteps_prev += nsteps_trial
+        self._cache["gen_trial_state"] = gen_trial_state
 
         self.fin_ta = b2.TimedArray(fin_all, dt=self.dt)
         self.fout_ta = b2.TimedArray(fout_all, dt=self.dt)
