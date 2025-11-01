@@ -7,14 +7,14 @@ from src.model_fit import LDS
 
 
 def fit_lds_to_data(
-    YN, ZN, UN, X_fsnn, n_x, config, cond_params, base_params, outfiles
+    YN, ZN, UN, X_fsnn, n_x, cond_params, base_params, outfiles, config
 ) -> tuple[LDS, np.ndarray, np.ndarray, np.ndarray]:
     pass
     seed_everything(int(cond_params["seed"]), "model_fit")
 
     X_minus = X_fsnn[:-1]
     X_plus = X_fsnn[1:]
-    # estimate matrices via least square
+    # estimate matrices via least squares
     A, _, _, _ = np.linalg.lstsq(X_minus, X_plus)
     A = A.T
 
@@ -39,6 +39,7 @@ def fit_lds_to_data(
     Xhat = np.concatenate([X_fsnn[:1], X_fsnn[:-1] @ A.T + UN[:-1] @ B.T], axis=0)
 
     # just use linear Cz for now. May want to do MLP or something later
+    assert base_params.linear_Cz
     lds.Cz = Cz
 
     def x2z(self, X):

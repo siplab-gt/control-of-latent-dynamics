@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -6,7 +7,9 @@ import cleo
 
 from src.data_classes import BaseDataClass
 from src.fsnn import fSNN
-from src.log_redirector import redirect_output_to_file
+from src.helpers import preprocess_params, setup_logging
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,6 +38,7 @@ class CleoPrep(BaseDataClass):
     @classmethod
     def build(cls, fsnn, cond_params, base_params, cache={}) -> Self:
         import importlib
+        import logging
 
         import cleo
         import numpy as np
@@ -43,16 +47,17 @@ class CleoPrep(BaseDataClass):
         from src.helpers import seed_everything
         from src.interface_array import get_interface_array
 
-        seed = seed_everything(int(cond_params["seed"]), "cleo_prep")
+        log = logging.getLogger(__name__)
+
+        seed = seed_everything(cond_params.seed, "cleo_prep")
         rng = np.random.default_rng(seed)
 
-        light_model = cleo.light.fiber473nm(
-            R0=float(cond_params["beam_width_um"]) * b2.um / 2
-        )
+        log.debug(f"{cond_params=}")
+        light_model = cleo.light.fiber473nm(R0=cond_params.beam_width / 2)
         grid = get_interface_array(
-            float(base_params["array_side_length_mm"]),
-            float(cond_params["total_scale"]),
-            int(base_params["array_n_per_side"]),
+            base_params.array_side_length / b2.mm,
+            cond_params.total_scale,
+            base_params.array_n_per_side,
         )
 
         # to not have to repeat this step every time we load
@@ -63,17 +68,17 @@ class CleoPrep(BaseDataClass):
             print("loaded cached light/probe coords")
         else:
             # separate files so one can change without causing the other to be rerun
-            setting = cond_params["setting"]
+            setting = cond_params.setting
             module_name = f"src.cleo_prep_{setting}"
             module = importlib.import_module(module_name)
             light_and_probe_coords = module.light_and_probe_coords
 
-            if cond_params["m"] == "NA":
+            if cond_params.m == "NA":
                 m = 0
             else:
-                m = int(cond_params["m"])
+                m = cond_params.m
             light_coords, light_groups, probe_coords = light_and_probe_coords(
-                grid, int(cond_params["k"]), m, rng=rng
+                grid, int(cond_params.k), m, rng=rng
             )
             cache = {
                 "light_coords": light_coords,
@@ -110,19 +115,20 @@ class CleoPrep(BaseDataClass):
 
 def main(cond_params, base_params, fsnn_file, outfile):
     fsnn = fSNN.load(fsnn_file)
-    print(f"{fsnn=}")
+    log.info(f"Loaded fSNN from {fsnn_file}")
+    log.info(f"{fsnn=}")
     cleo_expt = CleoPrep.build(fsnn, cond_params, base_params)
-    # print(f"{cleo_expt=}")
     cleo_expt.save(outfile)
 
 
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    with redirect_output_to_file(snakemake.log[0]):
-        main(
-            snakemake.wildcards,
-            snakemake.params,
-            snakemake.input[0],
-            snakemake.output[0],
-        )
+    log_fh = setup_logging(snakemake.config, snakemake.log[0])
+
+    main(
+        preprocess_params(snakemake.wildcards),
+        preprocess_params(snakemake.params[0]),
+        snakemake.input[0],
+        snakemake.output[0],
+    )

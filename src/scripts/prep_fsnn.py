@@ -8,7 +8,12 @@ import brian2cuda  # noqa: F401
 from brian2 import np
 
 from src.fsnn import fSNN
-from src.helpers import preprocess_params, setup_debugger, setup_logging
+from src.helpers import (
+    preprocess_params,
+    setup_debugger,
+    setup_logging,
+    seed_everything,
+)
 
 log = logging.getLogger(__name__)
 
@@ -40,20 +45,14 @@ def main(
         f"Preparing {base_params.n_init_trials} warmup trials, {base_params.n_main_trials} {mode} trials"
         f", {base_params.n_settle_trials} settle trials"
     )
+    seed = seed_everything(cond_params["seed"], f"prep_fsnn_{mode}")
+    rng = np.random.default_rng(seed)
     if device == "cython":
         start = time.time()
-    # going one trial at a time eats up memory
-    # for mode_, n_trials, record_ in [
-    #     ("init", n_init_trials, False),
-    #     (mode, n_main_trials, record),
-    #     ("settle", n_settle_trials, False),
-    # ]:
-    #     fsnn.mode = mode_
-    #     for i_trial in range(n_trials):
-    #         fsnn.run_trial(record=record_)
     fsnn.run_trials(
         base_params.n_main_trials,
         mode=mode,
+        rng=rng,
         record=record,
         n_init_trials=base_params.n_init_trials,
         n_settle_trials=base_params.n_settle_trials,

@@ -12,6 +12,9 @@ from src.helpers import str2bool
 
 configfile: "config/config.yaml"
 
+wildcard_constraints:
+    task="|".join(config["manual_sweep_params"]["task"]),
+    setting="|".join(config["manual_sweep_params"]["setting"]),
 
 rule all:
     input:
@@ -20,10 +23,6 @@ rule all:
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
-
-
-"results/figs/stim-rec-balance.svg",
-"results/figs/realism.svg",
 
 
 cond_params = [
@@ -94,19 +93,22 @@ def params_from_cfg_with_wildcards(
 
 
 def step_params(*steps: str) -> callable:
+    subcfg_vars = ['task', 'mode', 'setting']
     def wc_fn(wildcards):
         params = {}
         for step in steps:
             params |= config[step]
-            if "task_specific" in params:
-                params |= config[step]["task_specific"][wildcards.task]
-                del params["task_specific"]
+            for var in subcfg_vars:
+                try:
+                    params |= config.get(f"{step}_{getattr(wildcards, var)}", {})
+                except (KeyError, AttributeError):
+                    pass
         return params
 
     return wc_fn
 
 
-rule test:
+rule testq1:
     # for easily running one reference condition
     # (doesn't require a super long path with all wildcards)
     input:
@@ -128,7 +130,7 @@ rule test:
             model_task_inputs=True,
         ),
     output:
-        "results/test/{file}",
+        "results/testq1/{file}",
     shell:
         # NOTE: could have used ln -r (relative) instead of realpath
         # "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
@@ -165,15 +167,15 @@ fig_exts = [".png", ".pdf"]
 
 rule main_figs:
     input:
-        "results/{setting}__{task}.csv",
+        "results/{setting}_{task}.csv",
         "src/plot_style.py",
     output:
-        main=multiext("results/figs/{setting}__{task}", *fig_exts),
-        lineplots=multiext("results/figs/{setting}__{task}_lineplots", *fig_exts),
+        main=multiext("results/figs/{setting}_{task}", *fig_exts),
+        lineplots=multiext("results/figs/{setting}_{task}_lineplots", *fig_exts),
         heatmaps_mean=multiext(
-            "results/figs/{setting}__{task}_heatmaps_mean", *fig_exts
+            "results/figs/{setting}_{task}_heatmaps_mean", *fig_exts
         ),
-        heatmaps_std=multiext("results/figs/{setting}__{task}_heatmaps_std", *fig_exts),
+        heatmaps_std=multiext("results/figs/{setting}_{task}_heatmaps_std", *fig_exts),
     script:
         "../src/scripts/{wildcards.setting}_fig.py"
 
@@ -211,7 +213,7 @@ rule sufficient_stim_tabulate:
             for ctrl, latency in [("OL", False), ("LQMPC", True)]
         ],
     output:
-        "results/sufficient_stim__{task}.csv",
+        "results/sufficient_stim_{task}.csv",
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -266,7 +268,7 @@ rule optimal_stim_rec_tabulate:
             for k, m in get_q2_kms()
         ],
     output:
-        "results/optimal_stim_rec__{task}.csv",
+        "results/optimal_stim_rec_{task}.csv",
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]

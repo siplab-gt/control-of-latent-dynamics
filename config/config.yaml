@@ -20,8 +20,8 @@ star_sweep_params:
     # - 10
     # - 50
     # - 100
-    - 12
-    - 14
+    - 2
+    - 3
   latent_dim: # only possible on integration?
     - 1
     # - 2
@@ -32,6 +32,7 @@ star_sweep_params:
     - 0.1
     # - 1
     - 10
+  # TODO: don't think I can do this and beam_spacing together. pick one
   network_area_scale: # proportional to array area
     - 1
     # - 2
@@ -102,7 +103,7 @@ manual_sweep_params:
 reference_params:
   ###############
   # n_trials_sys_id: 50
-  n_trials_sys_id: 12 # TODO
+  n_trials_sys_id: 2 # TODO
   latent_dim: 2
   total_scale: 1
   network_area_scale: 2
@@ -247,11 +248,17 @@ cleo_prep:
   array_n_per_side: 8
 
 model_fit:
-  device: cpu # TODO: switch to gpu
+  linear_Cz: true
+
+model_fit_sufficient_stim:
+  foo: bar
   # task_specific:  # ???
   #   reaching:
   #     n_x1: 3
   #     epochs: 100
+
+model_fit_optimal_stim_rec:
+  epochs: 10 # only needed here for braid
 
 expts: # common to sys ID and ctrl expts
   u_max_mWmm2: 75
@@ -269,11 +276,11 @@ ctrl_expts:
   n_trials_ctrl: 12
   baseline_latency_ms: 1
 
-# non-essential stuff, don't need to pass in as params
-######################################################
-# for brian report printing frequency
-report_period_s: 60
+# non-essential stuff, don't need to pass in as params to trigger re-runs
+#########################################################################
+report_period_s: 60 # for brian report printing frequency
 train_device: cuda # cuda or cython
+model_fit_device: gpu # cpu or gpu
 log_level: DEBUG # DEBUG, INFO, WARNING, ERROR, CRITICAL
 auto_plot: true # automatically plot data from individual experiments
 debug: true # save/plot extra data (e.g., from fSNN training)

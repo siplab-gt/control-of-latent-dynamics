@@ -1,15 +1,17 @@
 import importlib
-import random
+import logging
 from dataclasses import dataclass
 
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
 from src.data_classes import BaseDataClass
-from src.helpers import str2bool
+from src.helpers import preprocess_params, setup_logging, str2bool, setup_debugger
 from src.log_redirector import redirect_output_to_file
 from src.model_fit import LDS
 from src.scripts.sys_id_expts import ExptData
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,14 +56,15 @@ def model_fit(
 
     for arr in ("Y", "Z", "U"):
         if is_flat(locals()[arr], axis=0).any():
-            print(
+            log.warning(
                 f"Warning: some dimensions of {arr} are flat. This may cause issues with model fitting."
             )
-            print(
+            log.warning(
                 f"Flat dimensions of {arr}: {np.where(is_flat(locals()[arr], axis=0))[0]}"
             )
 
-    n_x = int(cond_params["n_pcs"])  # just assume we know this
+    n_x = X.shape[1]  # just assume we know this
+    setup_debugger()
 
     # Normalize data (removing the mean is essential before training):
     y_mean, y_std = np.mean(Y, axis=0), np.std(Y, axis=0)
@@ -69,7 +72,7 @@ def model_fit(
     y_std[y_std == 0] = 1.0
     # YtrainN, YtestN = (Ytrain - yMean) / yStd, (Ytest - yMean) / yStd
     YN = (Y - y_mean) / y_std
-    assert np.all(np.isnan(YN) == False)
+    assert np.all(np.isfinite(YN))
     z_mean, z_std = np.mean(Z, axis=0), np.std(Z, axis=0)
     # ZtrainN, ZtestN = (Ztrain - zMean) / zStd, (Ztest - zMean) / zStd
     ZN = (Z - z_mean) / z_std
@@ -79,7 +82,7 @@ def model_fit(
 
     lds, Zhat, Yhat, Xhat = importlib.import_module(
         method_module_file.replace(".py", "").replace("/", ".")
-    ).fit_lds_to_data(YN, ZN, UN, X, n_x, config, cond_params, base_params, outfiles)
+    ).fit_lds_to_data(YN, ZN, UN, X, n_x, cond_params, base_params, outfiles, config)
 
     # saving preprocessing info in model objects to use during inference in runPredict function
     (
@@ -104,22 +107,27 @@ def model_fit(
         Yhat=Yhat * y_std + y_mean,
         t_ms=t_ms,
     )
-    print(f"Saving predictions to {outfiles.pred_data}")
+    log.info(f"Saving predictions to {outfiles.pred_data}")
     model_fit_pred_data.save(outfiles.pred_data)
 
-    print(f"Saving model to {outfiles.lds_model}")
+    log.info(f"Saving model to {outfiles.lds_model}")
     lds.save(outfiles.lds_model)
 
 
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    with redirect_output_to_file(snakemake.log[0]):
-        model_fit(
-            snakemake.wildcards,
-            snakemake.params,
-            snakemake.input.sys_id_data,
-            snakemake.input.method,
-            snakemake.output,
-            snakemake.config,
-        )
+    log_fh = setup_logging(snakemake.config, snakemake.log[0])
+
+    params = snakemake.params[0] | {
+        "braid_basename": snakemake.params["braid_basename"]
+    }
+
+    model_fit(
+        preprocess_params(snakemake.wildcards),
+        preprocess_params(params),
+        snakemake.input.sys_id_data,
+        snakemake.input.method,
+        snakemake.output,
+        preprocess_params(snakemake.config),
+    )

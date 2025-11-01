@@ -137,7 +137,7 @@ def preprocess_params(params_dict) -> AttrDict:
                         new_v = float(v)
                     except (ValueError, TypeError):
                         new_v = v
-        if isinstance(v, (list, tuple, int, float, np.integer, np.floating)):
+        if isinstance(new_v, (list, tuple, int, float, np.integer, np.floating)):
             # add brian units if applicable
             for suffix, unit in [
                 ("_ms", b2.ms),
@@ -146,7 +146,7 @@ def preprocess_params(params_dict) -> AttrDict:
                 ("_um", b2.um),
                 ("_mm", b2.mm),
                 ("_uW", b2.uwatt),
-                ("_mWmm2", b2.mwatt / b2.mm2),
+                # ("_mWmm2", b2.mwatt / b2.mm2),  # since need to strip units constantly
             ]:
                 if k.endswith(suffix):
                     k = k[: -len(suffix)]

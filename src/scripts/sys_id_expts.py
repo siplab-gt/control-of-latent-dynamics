@@ -7,7 +7,7 @@ from jaxtyping import Float, UInt
 from matplotlib import pyplot as plt
 
 from src.data_classes import BaseDataClass
-from src.helpers import seed_everything, setup_debugger
+from src.helpers import preprocess_params, seed_everything, setup_debugger
 from src.log_redirector import redirect_output_to_file
 from src.scripts.cleo_prep import CleoPrep
 
@@ -27,7 +27,7 @@ class ExptData(BaseDataClass):
     Z: Float[np.ndarray, "T n_behavior"]
     """Behavioral measurements, shape (T, n_behavior) array"""
     t_ms: Float[np.ndarray, "T"]
-    """Time of state_mon (recording X, Z) in ms, shape (T,) array"""
+    """Time of y_mon (recording X, Z) in ms, shape (T,) array"""
     spikes: UInt[np.ndarray, "T m"]
     """Spike counts across channels, shape (T, m) array"""
     t_samp_ms: Float[np.ndarray, "T_samp"]
@@ -52,20 +52,18 @@ class ExptData(BaseDataClass):
         return self.Uopto[start_end_opto], self.X[start:end], self.t_ms[start:end]
 
     @classmethod
-    def from_cleo_prep(
-        cls, cleo_prep: CleoPrep, spike_counts, t_samp, i_trial_boundaries
-    ):
+    def from_cleo_prep(cls, cleo_prep: CleoPrep, spike_counts, t_samp):
         expt_data = cls(
             Uopto=cleo_prep.light.irradiance_[1:],
             t_opto_ms=cleo_prep.light.t[1:] / b2.ms,
             # stand-in for task-related inputs for now
-            Utask=cleo_prep.fsnn.u_task(t_samp),
-            X=cleo_prep.fsnn.state_mon.X.T[:, : cleo_prep.fsnn.n_pcs],
-            Z=cleo_prep.fsnn.state_mon.Z.T[:, :4],
-            t_ms=cleo_prep.fsnn.state_mon.t / b2.ms,
+            Utask=cleo_prep.fsnn.in_mon.fin[:].T,
+            X=cleo_prep.fsnn.y_mon.y_[:].T,
+            Z=cleo_prep.fsnn.z_mon.z[:].T,
+            t_ms=cleo_prep.fsnn.y_mon.t[:] / b2.ms,
             spikes=spike_counts,
             t_samp_ms=t_samp / b2.ms,
-            i_trial_boundaries=np.array(i_trial_boundaries),
+            i_trial_boundaries=np.array(cleo_prep.fsnn.i_trial_boundaries),
         )
         assert np.all(expt_data.t_ms == expt_data.t_samp_ms)
         return expt_data
@@ -84,11 +82,9 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     seed = seed_everything(int(cond_params["seed"]), "sys_id_expts")
     rng = np.random.default_rng(seed)
 
-    k = int(cond_params["k"])
-    u_max = float(base_params["u_max_mWmm2"])
-    t_intertrial_ms = float(base_params.expts["t_intertrial_ms"])
-    t_trial_ms = float(base_params.expts["t_trial_ms"])
-    n_trials = int(base_params["n_trials_sys_id_max"])
+    k = cond_params.k
+    u_max = base_params.u_max_mWmm2
+    n_trials = base_params.n_trials_sys_id_max
 
     spike_counts = []
 
@@ -101,48 +97,46 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
             return {"light array": value}, t_samp
 
     cleo_prep.sim.set_io_processor(
-        SysIDProcessor(sample_period=base_params.sample_period_ms * b2.ms)
+        SysIDProcessor(sample_period=cleo_prep.fsnn._base_params.sample_period)
     )
-    cleo_prep.fsnn.start_recording()
+    cleo_prep.fsnn.record = True
+    cleo_prep.fsnn.mode = "test"
     for i_trial in range(n_trials):
         print(f"running sys ID trial {i_trial}")
-        cleo_prep.fsnn.run_trial(rng=rng)
+        cleo_prep.fsnn.run_trial(rng)
 
     print("successfully ran")
 
     if cleo_prep.probe is not None:
         spike_count_array = np.array(spike_counts)
         assert spike_count_array.shape == (
-            len(cleo_prep.fsnn.state_mon.t),
+            len(cleo_prep.fsnn.y_mon.t),
             cleo_prep.probe.signals[0].n,
         )
     else:
-        spike_count_array = np.zeros(
-            (len(cleo_prep.fsnn.state_mon.t), 0), dtype=np.uint32
-        )
+        spike_count_array = np.zeros((len(cleo_prep.fsnn.y_mon.t), 0), dtype=np.uint32)
 
     # skip first sample from Cleo devices since there's a repeat after reset
-    assert np.all(cleo_prep.light.t[1:] == cleo_prep.fsnn.state_mon.t)
-
+    assert np.all(cleo_prep.light.t[1:] == cleo_prep.fsnn.y_mon.t)
+    setup_debugger()
     expt_data = ExptData.from_cleo_prep(
         cleo_prep,
         spike_count_array,
         cleo_prep.sim.io_processor.t_samp,
-        i_trial_boundaries,
     )
     expt_data.save(outfile)
-
-    plt.plot(cleo_prep.fsnn.v_mon.t / b2.ms, cleo_prep.fsnn.v_mon.v.T[:, :10] / b2.mV)
-    plt.savefig(outfile.replace(".pkl.gz", "_v.png"))
 
 
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
+    params = snakemake.params[0]
+    params["n_trials_sys_id_max"] = snakemake.params["n_trials_sys_id_max"]
+
     with redirect_output_to_file(snakemake.log[0]):
         run_sys_id_expts(
-            snakemake.wildcards,
-            snakemake.params,
+            preprocess_params(snakemake.wildcards),
+            preprocess_params(params),
             snakemake.input[0],
             snakemake.output[0],
         )

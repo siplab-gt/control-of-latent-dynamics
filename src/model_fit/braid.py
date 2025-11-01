@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 import types
@@ -6,16 +7,18 @@ import numpy as np
 
 from src.model_fit import LDS
 
+log = logging.getLogger(__name__)
+
 
 def fit_lds_to_data(
-    YN, ZN, UN, X_fsnn, n_x, config, cond_params, base_params, outfiles
+    YN, ZN, UN, X_fsnn, n_x, cond_params, base_params, outfiles, config
 ) -> tuple[LDS, np.ndarray, np.ndarray, np.ndarray]:
     use_cpu = config["model_fit_device"].lower() == "cpu"
     if use_cpu:
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-        print("Using CPU for model fitting")
+        log.info("Using CPU for model fitting")
     else:
-        print("Using GPU for model fitting")
+        log.info("Using GPU for model fitting")
     import BRAID
 
     BRAID.tools.tf_tools.setupTensorflow(cpu=use_cpu)
@@ -25,19 +28,21 @@ def fit_lds_to_data(
 
     extra_seed_int = sum(ord(c) for c in "model_fit")
     seed = int(cond_params["seed"]) + extra_seed_int
-    print(f"Seeding with {seed}")
+    log.info(f"Seeding with {cond_params.seed} + {extra_seed_int} = {seed}")
     random.seed(seed)
     np.random.seed(seed)
     tf.random.set_seed(seed)
 
     braid_model: BRAIDModel = BRAIDModel()
+    # makes Cz nonlinear: 1 hidden layer with 64 units
+    Cz_code = "" if base_params.linear_Cz else "Cz1HL64U"
     methodCode = (
-        "BRAID_Cz1HL64U"  # Only Cz will be nonlinear, 1 Hidden layer with 64 Units.
+        f"BRAID_{Cz_code}"  # Only Cz might be nonlinear, 1 Hidden layer with 64 Units.
     )
     args = MainModelPrepareArgs(methodCode)
     # args["has_Dyz"] = False
     assert args["has_Dyz"] is False
-    args["epochs"] = int(base_params.model_fit["epochs"])
+    args["epochs"] = base_params.epochs
     # TODO: BRAID warns about flat dimensions
     args["remove_flat_dims"] = False
 
@@ -70,7 +75,7 @@ def fit_lds_to_data(
     # print(f"{Yhat.shape=}")
     lssm = braid_model.getLSSM()
     # Yhat = Xhat @ lssm.C.T
-    print(f"{Zhat.shape=}, {Yhat.shape=}, {Xhat.shape=}")
+    log.debug(f"{Zhat.shape=}, {Yhat.shape=}, {Xhat.shape=}")
     yres = YN - Yhat
     R = np.cov(yres, rowvar=False)
     # again, work in normalized space
@@ -103,12 +108,19 @@ def fit_lds_to_data(
     # before BRAID's saveToFile, since it replaces Models with their weights
     braid_model.saveToFile(base_params.braid_basename + "_braid.pkl")
 
-    def x2z(self, X):
-        # hacky, but this is how BRAID does reconstruction internally
-        x2z_model = BRAID.RegressionModel.RegressionModel(
-            **self._x2z_reconstruction_info.constructor_kwargs
-        ).reconstruct(self._x2z_reconstruction_info)
-        return x2z_model.predict(X.T).T
+    if base_params.linear_Cz:
+        lds.Cz = lssm.Cz
+
+        def x2z(self, X):
+            return X @ self.Cz.T
+    else:
+
+        def x2z(self, X):
+            # hacky, but this is how BRAID does reconstruction internally
+            x2z_model = BRAID.RegressionModel.RegressionModel(
+                **self._x2z_reconstruction_info.constructor_kwargs
+            ).reconstruct(self._x2z_reconstruction_info)
+            return x2z_model.predict(X.T).T
 
     lds.x2z = types.MethodType(x2z, lds)
 

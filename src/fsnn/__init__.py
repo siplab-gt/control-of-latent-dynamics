@@ -30,7 +30,6 @@ class fSNN(BaseDataClass):
     """Trial (start, ..., end) indices, shape (n_trials, n_events) array"""
     conditions: list = field(default_factory=list)
     tasks: list = field(default_factory=list)
-    rng: np.random.Generator = field(default_factory=lambda: np.random.default_rng())
     _mode: str = "init"
     _record: bool = False
     _save_data: bool = True
@@ -41,6 +40,7 @@ class fSNN(BaseDataClass):
             ng_main=["v", "vJsbar", "ss", "sf", "J0ss", "J0fs", "J0fbars"],
             syn_y2s=["wLeft", "wRight"],
             syn_z2yPlus=["W"],
+            ng_y=["y"],
         )
     )
     _cache: dict = field(repr=False, default_factory=dict)
@@ -171,18 +171,17 @@ class fSNN(BaseDataClass):
         return dt
 
     def generate_trial(
-        self, **kwargs
+        self, rng, **kwargs
     ) -> tuple[
         np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int, int, dict
     ]:
         """returns ytilde,fout,fin,nsteps_trial,cond,i_trial_start_end,ITIb,ITI,kwargs"""
-        task = self.rng.choice(self.tasks)
-        return task.generate_trial(self.rng, **kwargs)
+        task = rng.choice(self.tasks)
+        return task.generate_trial(rng, **kwargs)
 
-    def run_trial(self, record=False):
+    def run_trial(self, rng):
         """run a single trial of the current mode"""
         # relies on object state to keep track of task state, time, nsteps
-        self.record = record
         (
             ytilde,
             fout,
@@ -192,7 +191,7 @@ class fSNN(BaseDataClass):
             i_trial_bounds,
             nsteps_iti,
             self._gen_trial_state,  # e.g., x for rate network state
-        ) = self.generate_trial(**self._gen_trial_state)
+        ) = self.generate_trial(rng, **self._gen_trial_state)
 
         T_trial = nsteps_trial * self.dt
         self.fin_ta = b2.TimedArray(fin, dt=self.dt)
@@ -207,15 +206,21 @@ class fSNN(BaseDataClass):
         )
         self._t_prev += T_trial
 
-        if record:
+        if self.record:
             self.conditions.append(condition)
             self.i_trial_boundaries.append(
-                (i + self._i_record_prev for i in i_trial_bounds)
+                tuple(i + self._i_record_prev for i in i_trial_bounds)
             )
             self._i_record_prev += nsteps_trial
 
     def run_trials(
-        self, n_main_trials, mode, record=False, n_init_trials=50, n_settle_trials=0
+        self,
+        n_main_trials,
+        mode,
+        rng,
+        record=False,
+        n_init_trials=50,
+        n_settle_trials=0,
     ):
         """needed for CUDA standalone training: mainly to prep TimedArrays
         with all trials in advance"""
@@ -228,7 +233,6 @@ class fSNN(BaseDataClass):
 
         T = {}
         nsteps_prev = 0
-        # TODO
         phases = [
             ("init", n_init_trials, False),
             (mode, n_main_trials, record),
@@ -253,7 +257,7 @@ class fSNN(BaseDataClass):
                     i_trial_bounds,
                     nsteps_iti,
                     gen_trial_state,
-                ) = self.generate_trial(**gen_trial_state)
+                ) = self.generate_trial(rng, **gen_trial_state)
                 T_trial = nsteps_trial * self.dt
                 fin_all = np.vstack([fin_all, fin])
                 fout_all = np.vstack([fout_all, fout])
@@ -744,7 +748,6 @@ class fSNN(BaseDataClass):
             cond_params["n_pcs"],
             _cond_params=cond_params,
             _base_params=base_params,
-            rng=rng,
             tasks=tasks,
             _cache=cache,
         )
