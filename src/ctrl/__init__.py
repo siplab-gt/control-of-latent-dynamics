@@ -2,6 +2,7 @@ import time
 from abc import abstractmethod
 from collections.abc import Callable
 
+import brian2.only as b2
 import cleo
 import cvxpy as cp
 import numpy as np
@@ -9,6 +10,7 @@ from attrs import define, field
 from brian2 import Quantity, mm2, ms, mwatt, second
 from jaxtyping import Float
 
+from src.helpers import array_vals_by_t
 from src.model_fit import LDS
 from src.scripts.cleo_prep import CleoPrep
 
@@ -22,6 +24,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     baseline_latency: Quantity = None
     compute_latency: Quantity = None
     lds: LDS = None
+    ref_type: str = None
     reference: Callable[[Quantity], Quantity] = None
     u_task: Callable[[Quantity], np.ndarray] = field(default=lambda t: np.zeros(0))
     """callable with signature t -> task inputs (shape ([T], k_task) array)"""
@@ -106,7 +109,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         assert self.prob.is_dcp(dpp=True), "problem not DPP"
 
     def update_opt_problem(self, xhat, t_samp):
-        self.x0opt.value = xhat
+        self.x0opt.value = xhat[:]
         if self.k_task > 0:
             self.Uopt_task.value = self.u_task_zscored(
                 t_samp + np.arange(self.horizon) * self.sample_period
@@ -131,7 +134,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     def t_now(self) -> Quantity:
         return self.sim.network.t
 
-    def measure_latency(self):
+    def measure_latency(self) -> tuple[b2.Quantity, b2.Quantity]:
+        """returns mean, std of control computation (with Brian unit)"""
         durations = []
         xpred = np.zeros(self.n)
         Ppred = np.eye(self.n)
@@ -149,7 +153,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             durations.append(end - start)
 
         # take off first 5 to let things warm up
-        return np.array(durations)[5:].mean() * second
+        durations = np.array(durations[5:])
+        return durations.mean() * b2.second, durations.std() * b2.second
 
     def zscore(self, var: np.ndarray, varname: str):
         mean = getattr(self.lds, f"{varname}_mean")
@@ -232,13 +237,17 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         ]
 
     def update_with_trial_info(
-        self, t_prev_trial_end: Quantity, t_trial_start: Quantity, t_trial_end: Quantity
+        self, Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti
     ):
         """call at start of each trial to update reference and task inputs"""
-
-        self.t_prev_trial_end = t_prev_trial_end
-        self.t_trial_start = t_trial_start
-        self.t_trial_end = t_trial_end
+        if self.ref_type == "Z":
+            ref = Zref
+        elif self.ref_type == "X":
+            ref = Xref
+        t_start = self.t_now
+        # NOTE: the dt of the base simulation could be smaller than the ctrl sample period
+        self.reference = lambda t: array_vals_by_t(ref, t - t_start, b2.defaultclock.dt)
+        self.u_task = lambda t: array_vals_by_t(Utask, t - t_start, b2.defaultclock.dt)
 
 
 for attrib in [

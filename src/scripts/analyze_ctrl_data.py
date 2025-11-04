@@ -51,7 +51,9 @@ def analyze_ctrl_data(
         ctrl_data.Xref_lds, ctrl_data.Xhat_lds, model_fit_preds.Xhat_lds
     )
 
-    results["ctrl_compute_latency_ms"] = ctrl_data.compute_latency_ms
+    results["ctrl_compute_latency_ms"] = ctrl_data.compute_latency_mean_ms
+    results["ctrl_compute_latency_ms"] = ctrl_data.compute_latency_std_ms
+    results["ctrl_total_latency_ms"] = ctrl_data.total_latency_ms
 
     results |= pd.read_csv(fsnn_data_analysis_file).iloc[0].to_dict()
     results |= pd.read_csv(model_fit_analysis_file).iloc[0].to_dict()

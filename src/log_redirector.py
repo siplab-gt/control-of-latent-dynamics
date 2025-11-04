@@ -27,6 +27,10 @@ class Tee:
         # This is needed for some operations that expect a real file descriptor
         return self.files[0].fileno()
 
+    def close(self):
+        for file in self.files:
+            file.close()
+
 
 @contextmanager
 def redirect_output_to_file(log_file_path, append=True):

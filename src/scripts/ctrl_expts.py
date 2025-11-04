@@ -1,4 +1,5 @@
 import importlib
+import logging
 import random
 from dataclasses import dataclass
 
@@ -9,11 +10,12 @@ from sklearn.linear_model import LinearRegression
 from snakemake.script import snakemake
 
 from src.ctrl import Controller
-from src.helpers import seed_everything, str2bool
-from src.log_redirector import redirect_output_to_file
+from src.helpers import preprocess_params, seed_everything, setup_logging, str2bool
 from src.model_fit import LDS
 from src.scripts.cleo_prep import CleoPrep
 from src.scripts.sys_id_expts import ExptData
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,6 +29,10 @@ class CtrlData(ExptData):
     C: Float[np.ndarray, "m n"] = None
     y_std: Float[np.ndarray, "m"] = None
     y_mean: Float[np.ndarray, "m"] = None
+
+    compute_latency_mean_ms: float = None
+    compute_latency_std_ms: float = None
+    total_latency_ms: float = None
 
     def set(self, **kwargs):
         for k, v in kwargs.items():
@@ -54,14 +60,18 @@ class CtrlData(ExptData):
 
 
 def ctrl_expts(
-    cond_params, base_params, cleo_prep_file, lds_model_file, outfile, config
+    cond_params,
+    base_params,
+    cleo_prep_file,
+    lds_model_file,
+    out_data_file,
+    config,
 ):
     # import here so not needed to use CtrlData class
     import tensorflow as tf
     from BRAID.BRAIDModel import BRAIDModel
 
-    print(f"{base_params=}")
-    print(base_params.keys())
+    log.debug(f"{base_params=}")
 
     # careful to load before setting seed, since loading sets seed as side effect
     cleo_prep = CleoPrep.load(cleo_prep_file)
@@ -73,12 +83,9 @@ def ctrl_expts(
     tf.random.set_seed(seed)
     rng = np.random.default_rng(seed)
 
-    k_opto = int(cond_params["k"])
-    u_max = float(base_params["u_max_mWmm2"])
-    t_intertrial = float(base_params.expts["t_intertrial_ms"]) * b2.ms
-    t_trial = float(base_params.expts["t_trial_ms"]) * b2.ms
-    n_trials = int(base_params["n_trials_ctrl"])
-    report_period = config["report_period_s"] * b2.second
+    k_opto = cond_params.k
+    u_max = base_params.u_max_mWmm2
+    n_trials = base_params.n_trials_ctrl
 
     lds = LDS.load(lds_model_file)
 
@@ -94,18 +101,20 @@ def ctrl_expts(
         importlib.import_module(f"src.ctrl.{ctrl_type}"),
         f"{ctrl_type.upper()}Controller",
     )
+    sample_period = cleo_prep.fsnn.y_mon.clock.dt
+    add_latency = (cond_params.ctrl_type != "OL") and str2bool(cond_params.latency)
     ctrl_proc: Controller = ControllerType(
         rng=rng,
         sim=cleo_prep.sim,
         u_max_mWmm2=u_max,
         lds=lds,
-        add_latency=str2bool(cond_params.latency),
-        baseline_latency=float(base_params["baseline_latency_ms"]) * b2.ms,
-        sample_period=float(base_params["sample_period_ms"]) * b2.ms,
+        ref_type=base_params.ref_type,
+        add_latency=add_latency,
+        baseline_latency=base_params.baseline_latency,
+        sample_period=sample_period,
         u_task=cleo_prep.fsnn.u_task_,
         # horizon will be overwritten in OL to cover whole trial
-        horizon=int(base_params["ctrl_horizon_ms"])
-        // int(base_params["sample_period_ms"]),
+        horizon=int(round(base_params.ctrl_horizon // sample_period)),
         Qcost=float(base_params.Q_cost),
         Rcost=float(base_params.R_cost),
         reference=lambda t: np.zeros((*np.shape(t), lds.n)),
@@ -115,34 +124,35 @@ def ctrl_expts(
         else "kalman",
     )
 
-    if ctrl_proc.add_latency:
-        ctrl_proc.compute_latency = ctrl_proc.measure_latency()
-        print(f"measured control computation latency: {ctrl_proc.compute_latency}")
+    if add_latency:
+        latency_mean, latency_std = ctrl_proc.measure_latency()
+        log.info(
+            f"measured control computation latency: {ctrl_proc.compute_latency=} "
+            f"+/- {latency_std=}"
+        )
+        ctrl_proc.compute_latency = latency_mean
+    else:
+        latency_mean, latency_std = 0 * b2.ms, 0 * b2.ms
 
     cleo_prep.sim.set_io_processor(ctrl_proc)
 
-    i_trial_boundaries = []
     for i_trial in range(n_trials):
-        print(f"running control trial {i_trial}")
-        t_now = cleo_prep.sim.network.t
-        ctrl_proc.update_with_trial_info(
-            t_now, t_now + t_intertrial, t_now + t_intertrial + t_trial
+        log.info(f"running control trial {i_trial}")
+        # in fSNN lingo the trial info is this:
+        # ytilde, fout, fin, nsteps_trial, cond, i_trial_bounds, nsteps_iti
+        # translated to control lingo:
+        Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti = (
+            trial_params := cleo_prep.fsnn.generate_trial(rng)
         )
-        cleo_prep.run(t_intertrial, report_period=report_period)
-        i_start = cleo_prep.fsnn.state_mon.X.shape[1]
-        condition = cleo_prep.fsnn.sample_condition(rng)
-        cleo_prep.fsnn.set_condition(condition)
-        cleo_prep.run(t_trial, report_period=report_period)
-        i_end = cleo_prep.fsnn.state_mon.X.shape[1]
-        i_trial_boundaries.append((i_start, i_end))
+        ctrl_proc.update_with_trial_info(*trial_params)
+        cleo_prep.fsnn.run_trial(rng=None, trial_params=trial_params)
 
     ctrl_data = CtrlData.from_cleo_prep(
         cleo_prep,
         np.array(ctrl_proc.spike_counts),
         cleo_prep.sim.io_processor.t_samp,
-        i_trial_boundaries,
     )
-    print("computing Zref and Zhat from Xref and Xhat")
+    log.info("computing Zref and Zhat from Xref and Xhat")
     Zref = lds.x2z(ctrl_proc.Xref)
     Zhat = lds.x2z(ctrl_proc.Xhat)
     ctrl_data.set(
@@ -154,20 +164,21 @@ def ctrl_expts(
         y_mean=lds.y_mean,
         Zhat=Zhat,
         Zref=Zref,
-        compute_latency_ms=ctrl_proc.compute_latency / b2.ms
-        if ctrl_proc.add_latency
-        else 0,
+        compute_latency_mean_ms=latency_mean / b2.ms,
+        compute_latency_std_ms=latency_std / b2.ms,
+        total_latency_ms=ctrl_proc.latency / b2.ms,
     )
-    ctrl_data.save(outfile)
+    ctrl_data.save(out_data_file)
 
 
 if __name__ == "__main__" and "snakemake" in locals():
-    with redirect_output_to_file(snakemake.log[0]):
-        ctrl_expts(
-            snakemake.wildcards,
-            snakemake.params,
-            snakemake.input.cleo_prep,
-            snakemake.input.lds_model,
-            snakemake.output[0],  # outfile
-            snakemake.config,  # for non-essential params
-        )
+    fh = setup_logging(snakemake.config, snakemake.log[0])
+
+    ctrl_expts(
+        preprocess_params(snakemake.wildcards),
+        preprocess_params(snakemake.params),
+        snakemake.input.cleo_prep,
+        snakemake.input.lds_model,
+        snakemake.output.data,  # outfile
+        preprocess_params(snakemake.config),  # for non-essential params
+    )

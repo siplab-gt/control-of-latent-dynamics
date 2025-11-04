@@ -64,7 +64,6 @@ def model_fit(
             )
 
     n_x = X.shape[1]  # just assume we know this
-    setup_debugger()
 
     # Normalize data (removing the mean is essential before training):
     y_mean, y_std = np.mean(Y, axis=0), np.std(Y, axis=0)
@@ -119,13 +118,9 @@ if __name__ == "__main__" and "snakemake" in locals():
 
     log_fh = setup_logging(snakemake.config, snakemake.log[0])
 
-    params = snakemake.params[0] | {
-        "braid_basename": snakemake.params["braid_basename"]
-    }
-
     model_fit(
         preprocess_params(snakemake.wildcards),
-        preprocess_params(params),
+        preprocess_params(snakemake.params),
         snakemake.input.sys_id_data,
         snakemake.input.method,
         snakemake.output,

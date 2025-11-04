@@ -12,9 +12,11 @@ from src.helpers import str2bool
 
 configfile: "config/config.yaml"
 
+
 wildcard_constraints:
     task="|".join(config["manual_sweep_params"]["task"]),
     setting="|".join(config["manual_sweep_params"]["setting"]),
+
 
 rule all:
     input:
@@ -93,7 +95,8 @@ def params_from_cfg_with_wildcards(
 
 
 def step_params(*steps: str) -> callable:
-    subcfg_vars = ['task', 'mode', 'setting']
+    subcfg_vars = ["task", "mode", "setting"]
+
     def wc_fn(wildcards):
         params = {}
         for step in steps:
@@ -112,22 +115,17 @@ rule testq1:
     # for easily running one reference condition
     # (doesn't require a super long path with all wildcards)
     input:
-        # f"results/{params_str}/cleo_prep.pkl.gz",
         paths_for_params(
             fill_in_ref=True,
             file="{file}",
             setting="sufficient_stim",
-            # setting="optimal_stim_rec",
             task="reaching",
             latency=True,
-            ctrl_type="LQMPC",
+            ctrl_type="OL",
             k=4,
             m=NA,
             # m=16,
             seed=0,
-            layeredness=1,
-            n_trials_sys_id=12,
-            model_task_inputs=True,
         ),
     output:
         "results/testq1/{file}",
@@ -161,7 +159,6 @@ rule testq2:
         "cp $(dirname {input})/* $(dirname {output})"
 
 
-
 fig_exts = [".png", ".pdf"]
 
 
@@ -172,9 +169,7 @@ rule main_figs:
     output:
         main=multiext("results/figs/{setting}_{task}", *fig_exts),
         lineplots=multiext("results/figs/{setting}_{task}_lineplots", *fig_exts),
-        heatmaps_mean=multiext(
-            "results/figs/{setting}_{task}_heatmaps_mean", *fig_exts
-        ),
+        heatmaps_mean=multiext("results/figs/{setting}_{task}_heatmaps_mean", *fig_exts),
         heatmaps_std=multiext("results/figs/{setting}_{task}_heatmaps_std", *fig_exts),
     script:
         "../src/scripts/{wildcards.setting}_fig.py"
@@ -349,7 +344,8 @@ rule ctrl_expts:
     params:
         step_params("expts", "ctrl_expts"),
     output:
-        f"results/{params_str}/ctrl_data.pkl.gz",
+        data=f"results/{params_str}/ctrl_data.pkl.gz",
+        latency=f"results/{params_str}/ctrl_latency.pkl.gz",
     log:
         f"logs/{params_str}/ctrl_expts.log",
     script:
@@ -437,7 +433,7 @@ rule plot_sys_id_data_wide:
         ),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/sys_id_data_wide_plot.png",
+        f"results/{params_str}/sys_id_wide_plot.png",
     localrule: True
     group:
         "sys_id"
@@ -461,12 +457,40 @@ rule sys_id_expts:
         "../src/scripts/sys_id_expts.py"
 
 
+def fsnn_params(wc):
+    """gets all prep_fsnn params, but only task and mode params as needed"""
+    params = deepcopy(config["prep_fsnn"])
+    try:
+        multitask = str2bool(wc.multitask)
+    except AttributeError:
+        multitask = False
+    if multitask:
+        for task in ["reaching", "cycling"]:
+            params[wc.task] = config[f"prep_fsnn_{wc.task}"]
+    else:
+        params[wc.task] = config[f"prep_fsnn_{wc.task}"]
+
+    if "mode" in wc:
+        params |= config[f"prep_fsnn_{wc.mode}"]
+
+    # include array side length since network size depends on it
+    params["array_side_length_mm"] = config["cleo_prep"]["array_side_length_mm"]
+    params["report_period_s"] = config["report_period_s"]
+    params["debug"] = str2bool(config.get("debug", "false"))
+    return params
+
+
 rule plot_cleo:
     input:
-        f"results/{params_str}/cleo_prep.pkl.gz",
+        "src/fsnn/__init__.py",
+        "src/fsnn/{task}.py",
+        "src/scripts/cleo_prep.py",
         "src/plot_style.py",
     output:
-        multiext(f"results/{params_str}/cleo_plot", ".png", ".svg"),
+        f"results/{params_str}/cleo_plot.{{ext}}",
+    params:
+        fsnn_params,
+        step_params("cleo_prep"),
     localrule: True
     group:
         "prep_fsnn"
@@ -516,6 +540,7 @@ rule plot_fsnn:
 #     script:
 #         "../src/scripts/plot_fsnn_weights.py"
 
+
 rule analyze_fsnn_data:
     input:
         f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz",
@@ -540,28 +565,6 @@ rule plot_fsnn_data:
         "../src/scripts/plot_fsnn_data.py"
 
 
-def fsnn_params(wc):
-    """gets all prep_fsnn params, but only task and mode params as needed"""
-    params = deepcopy(config["prep_fsnn"])
-    try:
-        multitask = str2bool(wc.multitask)
-    except AttributeError:
-        multitask = False
-    if multitask:
-        for task in ["reaching", "cycling"]:
-            params[wc.task] = config[f'prep_fsnn_{wc.task}']
-    else:
-        params[wc.task] = config[f'prep_fsnn_{wc.task}']
-
-    params |= config[f'prep_fsnn_{wc.mode}']
-
-    # include array side length since network size depends on it
-    params["array_side_length_mm"] = config["cleo_prep"]["array_side_length_mm"]
-    params["report_period_s"] = config["report_period_s"]
-    params['debug'] = str2bool(config.get("debug", "false"))
-    return params
-
-
 def fsnn_inputs(wc):
     inputs = dict(
         main_code="src/fsnn/__init__.py",
@@ -575,6 +578,7 @@ def fsnn_inputs(wc):
         inputs["fsnn"] = f"results/{params_str}/fsnn_post_train.pkl.gz"
     return inputs
 
+
 def fsnn_outputs(save_fsnn, save_data):
     outputs = {}
     if save_fsnn:
@@ -582,6 +586,7 @@ def fsnn_outputs(save_fsnn, save_data):
     if save_data:
         outputs["data"] = f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz"
     return outputs
+
 
 # 3 fsnn rules, flexibly save fSNN and/or data
 rule _prep_fsnn:
@@ -596,17 +601,21 @@ rule _prep_fsnn:
     script:
         "../src/scripts/prep_fsnn.py"
 
+
 use rule _prep_fsnn as prep_fsnn_save_fsnn with:
     output:
-        **fsnn_outputs(save_fsnn=True, save_data=False)
+        **fsnn_outputs(save_fsnn=True, save_data=False),
+
 
 use rule _prep_fsnn as prep_fsnn_save_data with:
     output:
-        **fsnn_outputs(save_fsnn=False, save_data=True)
+        **fsnn_outputs(save_fsnn=False, save_data=True),
+
 
 use rule _prep_fsnn as prep_fsnn_save_both with:
     output:
-        **fsnn_outputs(save_fsnn=True, save_data=True)
+        **fsnn_outputs(save_fsnn=True, save_data=True),
+
 
 # prefer the rule that only saves one thing to the one that saves both
 ruleorder: prep_fsnn_save_fsnn > prep_fsnn_save_data > prep_fsnn_save_both

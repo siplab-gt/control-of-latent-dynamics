@@ -2,16 +2,19 @@ import brian2.only as b2
 import cleo
 import matplotlib.pyplot as plt
 
-from src.scripts.cleo_prep import CleoPrep
+from src.fsnn import fSNN
+from src.helpers import preprocess_params
 from src.plot_style import style_plots
+from src.scripts.cleo_prep import CleoPrep
 
 
-def main(cleo_file, outfiles):
+def main(cond_params, base_params, outfiles):
     style_plots()
     plt.switch_backend("agg")
-    cleo_expt = CleoPrep.load(cleo_file)
+    fsnn = fSNN.build(cond_params, base_params)
+    cleo_expt = CleoPrep.build(fsnn, cond_params, base_params)
     fig, ax = cleo.viz.plot(
-        sim=cleo_expt.sim, scatterargs={"s": 0.1, "rasterized": True}
+        fsnn.ng_main, sim=cleo_expt.sim, scatterargs={"s": 0.1, "rasterized": True}
     )
     for i_group, group in enumerate(cleo_expt.light.groups):
         for i_channel in group:
@@ -29,4 +32,8 @@ def main(cleo_file, outfiles):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    main(snakemake.input[0], snakemake.output)
+    main(
+        preprocess_params(snakemake.wildcards),
+        preprocess_params(snakemake.params),
+        snakemake.output,
+    )

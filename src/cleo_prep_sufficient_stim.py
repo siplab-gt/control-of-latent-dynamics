@@ -9,7 +9,7 @@ from jaxtyping import Float
 
 
 def light_and_probe_coords(
-    grid: Quantity, k: int, m: int
+    grid: Quantity, k: int, m: int, **kwargs
 ) -> tuple[Quantity, list[list[int]], Quantity]:
     # only going to be light coords, since no probe on sufficient_stim
     n_side_grid = int(np.sqrt(len(grid)))

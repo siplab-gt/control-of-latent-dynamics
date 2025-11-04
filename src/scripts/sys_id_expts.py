@@ -118,7 +118,6 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     # skip first sample from Cleo devices since there's a repeat after reset
     assert np.all(cleo_prep.light.t[1:] == cleo_prep.fsnn.y_mon.t)
-    setup_debugger()
     expt_data = ExptData.from_cleo_prep(
         cleo_prep,
         spike_count_array,
@@ -130,13 +129,10 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    params = snakemake.params[0]
-    params["n_trials_sys_id_max"] = snakemake.params["n_trials_sys_id_max"]
-
     with redirect_output_to_file(snakemake.log[0]):
         run_sys_id_expts(
             preprocess_params(snakemake.wildcards),
-            preprocess_params(params),
+            preprocess_params(snakemake.params),
             snakemake.input[0],
             snakemake.output[0],
         )

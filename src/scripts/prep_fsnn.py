@@ -127,7 +127,7 @@ if __name__ == "__main__" and "snakemake" in locals():
 
     fsnn = main(
         preprocess_params(snakemake.wildcards),
-        preprocess_params(snakemake.params[0]),
+        preprocess_params(snakemake.params),
         device,
         snakemake.input.get("fsnn", None),
         snakemake.output.get("fsnn", None),

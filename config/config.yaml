@@ -273,8 +273,14 @@ ctrl_expts:
   ctrl_horizon_ms: 20
   # pred_horizon_ms: 100
   # n_trials_ctrl: 100
-  n_trials_ctrl: 12
+  n_trials_ctrl: 2
   baseline_latency_ms: 1
+
+ctrl_expts_sufficient_stim:
+  ref_type: X # controlling ground-truth factors
+
+ctrl_expts_optimal_stim_rec:
+  ref_type: Z # controlling output
 
 # non-essential stuff, don't need to pass in as params to trigger re-runs
 #########################################################################

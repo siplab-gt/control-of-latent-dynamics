@@ -41,6 +41,7 @@ class CleoPrep(BaseDataClass):
         import logging
 
         import cleo
+        import cleo.opto
         import numpy as np
 
         from src.grouped_light import GroupedLight
@@ -95,6 +96,23 @@ class CleoPrep(BaseDataClass):
         sim = cleo.CLSimulator(fsnn.net)
         sim.inject(light_array, fsnn.ng_main)
 
+        # tune opsin strength relative to input weights
+        # making 5 mW/mm2 at 0.5 mm distance equivalent to a typical task input
+        typical_light_model = cleo.light.fiber473nm()
+        typical_fin_mag = 1
+        typical_task_input = typical_fin_mag * np.mean(np.abs(fsnn.u_in))
+        typical_distance_from_fiber_mm = 0.5
+        typical_transmittance = typical_light_model.transmittance(
+            source_coords=[0, 0, 0] * b2.mm,
+            source_dir_uvec=np.array([0, 0, 1]),
+            target_coords=[0, 0, typical_distance_from_fiber_mm] * b2.mm,
+        )
+        typical_Irr = 5 * b2.mwatt / b2.mm**2 * typical_transmittance
+        I_per_Irr = typical_task_input / typical_Irr
+        log.debug(f"{typical_task_input=}, {typical_transmittance=}, {I_per_Irr=}")
+        opsin = cleo.opto.ProportionalCurrentOpsin(I_per_Irr=I_per_Irr)
+        sim.inject(opsin, fsnn.ng_main)
+
         if probe_coords is not None:
             # use higher cutoff to avoid memory explosion
             mua = cleo.ephys.MultiUnitActivity(name="mua", recording_recall_cutoff=0.01)
@@ -128,7 +146,7 @@ if __name__ == "__main__" and "snakemake" in locals():
 
     main(
         preprocess_params(snakemake.wildcards),
-        preprocess_params(snakemake.params[0]),
+        preprocess_params(snakemake.params),
         snakemake.input[0],
         snakemake.output[0],
     )

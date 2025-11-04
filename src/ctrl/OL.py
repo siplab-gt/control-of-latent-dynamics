@@ -1,17 +1,25 @@
+import logging
 import brian2.only as b2
 from attrs import define, field
 
 from src.ctrl import Controller
 
 
+log = logging.getLogger(__name__)
+
+
 @define
 class OLController(Controller):
     t_prev_soln: b2.Quantity = -18990508 * b2.ms
 
-    def update_with_trial_info(self, t_prev_trial_end, t_trial_start, t_trial_end):
-        super().update_with_trial_info(t_prev_trial_end, t_trial_start, t_trial_end)
+    def update_with_trial_info(
+        self, Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti
+    ):
+        super().update_with_trial_info(
+            Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti
+        )
         # set horizon to cover through end of trial
-        self.horizon = int(round((t_trial_end - t_prev_trial_end) / self.sample_period))
+        self.horizon = nsteps_trial
 
     def compute_control(self, xhat):
         if self.i_hzn >= self.horizon:

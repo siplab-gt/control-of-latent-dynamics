@@ -4,12 +4,12 @@ from dataclasses import dataclass, field
 
 import brian2.only as b2
 from brian2 import np
-from jaxtyping import UInt
+from jaxtyping import UInt, Float
 from tqdm import tqdm
 
 from src.data_classes import BaseDataClass
 from src.fsnn.task import fSNNTask
-from src.helpers import save_pkl_gz, setup_debugger
+from src.helpers import array_vals_by_t, save_pkl_gz, setup_debugger
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +46,6 @@ class fSNN(BaseDataClass):
     _cache: dict = field(repr=False, default_factory=dict)
     _t_prev: b2.Quantity = field(default_factory=lambda: 0 * b2.ms, repr=False)
     _i_record_prev: int = 0
-    _gen_trial_state: dict = field(default_factory=dict, repr=False)
 
     def __getitem__(self, key):
         """Allows access to net components by name, e.g. fsnn['ng_yPlus']"""
@@ -77,13 +76,13 @@ class fSNN(BaseDataClass):
     def n_factors(self) -> int:
         return self.ng_y.N
 
+    @property
+    def n_ng(self) -> int:
+        return self.ng_main.N
+
     def u_task(self, t: b2.Quantity) -> np.ndarray:
         """task-related inputs, shape ([T], n_task_inputs) array"""
-        # TimedArray can do multiple timesteps, but not multiple variables
-        # so we access from .values ourselves insted of ta(t)
-        i = np.astype(t / self.dt, np.int32)
-        i = np.clip(i, 0, self.fin_ta.shape[0] - 1)
-        return self.fin_ta.values[i]
+        return array_vals_by_t(self.fin_ta.values, t, self.dt)
 
     @property
     def u_task_(self):
@@ -170,28 +169,40 @@ class fSNN(BaseDataClass):
         assert dt == b2.defaultclock.dt
         return dt
 
+    @property
+    def u(self) -> Float[np.ndarray, "{self.n_ng} {self.n_factors}"]:
+        """weights from factors to neurons"""
+        return np.hstack([task.u for task in self.tasks])
+
+    @property
+    def u_in(self) -> Float[np.ndarray, "{self.n_ng} {self.n_in}"]:
+        """weights from inputs to neurons"""
+        return np.hstack([task.u_in for task in self.tasks])
+
     def generate_trial(
-        self, rng, **kwargs
+        self, rng
     ) -> tuple[
         np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int, int, dict
     ]:
-        """returns ytilde,fout,fin,nsteps_trial,cond,i_trial_start_end,ITIb,ITI,kwargs"""
+        """returns ytilde,fout,fin,nsteps_trial,cond,i_trial_start_end,nsteps_iti"""
         task = rng.choice(self.tasks)
-        return task.generate_trial(rng, **kwargs)
+        gen_trial_state = self._cache.get("gen_trial_state", {})
+        trial_params = task.generate_trial(rng, **gen_trial_state)
+        # e.g., x for rate network state
+        self._cache["gen_trial_state"] = trial_params[-1]
+        return trial_params[:-1]
 
-    def run_trial(self, rng):
+    def run_trial(self, rng, trial_params=None):
         """run a single trial of the current mode"""
         # relies on object state to keep track of task state, time, nsteps
-        (
-            ytilde,
-            fout,
-            fin,
-            nsteps_trial,
-            condition,
-            i_trial_bounds,
-            nsteps_iti,
-            self._gen_trial_state,  # e.g., x for rate network state
-        ) = self.generate_trial(rng, **self._gen_trial_state)
+        if trial_params is None:
+            (ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti) = (
+                self.generate_trial(rng)
+            )
+        else:
+            (ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti) = (
+                trial_params
+            )
 
         T_trial = nsteps_trial * self.dt
         self.fin_ta = b2.TimedArray(fin, dt=self.dt)
@@ -239,8 +250,6 @@ class fSNN(BaseDataClass):
             ("init", n_settle_trials, False),
         ]
         # must be single giant timed arrays for multiple run calls
-        # gen_trial_state would have x for rate network for reaching
-        gen_trial_state = self._cache.get("gen_trial_state", {})
         for _mode, n_trials, _record in phases:
             if n_trials == 0:
                 continue
@@ -256,8 +265,7 @@ class fSNN(BaseDataClass):
                     condition,
                     i_trial_bounds,
                     nsteps_iti,
-                    gen_trial_state,
-                ) = self.generate_trial(rng, **gen_trial_state)
+                ) = self.generate_trial(rng)
                 T_trial = nsteps_trial * self.dt
                 fin_all = np.vstack([fin_all, fin])
                 fout_all = np.vstack([fout_all, fout])
@@ -270,7 +278,6 @@ class fSNN(BaseDataClass):
                     self.i_trial_boundaries.append((i_start, i_end))
                     # only index data for saved trials (i.e., not for init)
                     nsteps_prev += nsteps_trial
-        self._cache["gen_trial_state"] = gen_trial_state
 
         self.fin_ta = b2.TimedArray(fin_all, dt=self.dt)
         self.fout_ta = b2.TimedArray(fout_all, dt=self.dt)
@@ -382,6 +389,7 @@ class fSNN(BaseDataClass):
             n_t : 1 (shared)  # for computing vJsbar
             uy : 1
             I_in : 1
+            Iopto : 1
             vinf = J0fbars - vJsbar + uy + J0ss + J0fs + I_in : 1
             dv/dt = (v - vinf) * (-1 / tau_v) : 1
             dJ0ss/dt = -J0ss/tau_s : 1
@@ -730,7 +738,7 @@ class fSNN(BaseDataClass):
         ############# end code derived from Yijun's reaching_b2c.py ##############
 
         main_vars_to_record = ["v"]
-        if cond_params.mode == "demean":
+        if cond_params.get("mode", "") == "demean":
             main_vars_to_record.append("vJsbar")
 
         main_mon = b2.StateMonitor(

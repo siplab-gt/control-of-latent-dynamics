@@ -7,6 +7,7 @@ import cleo
 import cleo.utilities
 import dill
 import numpy as np
+import snakemake
 from jaxtyping import UInt
 
 from src.log_redirector import setup_permanent_logging
@@ -122,6 +123,18 @@ def preprocess_params(params_dict) -> AttrDict:
     """Recursively convert all values in a params or wildcards dict to int or float if possible,
     and wrap dicts so keys are accessible as attributes.
     Also adds Brian units for params with unit suffixes"""
+
+    # for a snakemake Namedlist, combine dictionaries as well as named params into just one dict
+    if isinstance(params_dict, snakemake.io.Namedlist):
+        consolidated = {}
+        for k, v in params_dict._allitems():
+            if k is None:
+                assert isinstance(v, dict)
+                consolidated |= v
+            else:
+                consolidated[k] = v
+        params_dict = consolidated
+
     new_dict = AttrDict()
     for k, v in params_dict.items():
         if isinstance(v, dict):
@@ -176,3 +189,12 @@ def orth(A, tol=None):
     Q = U[:, :rank]
 
     return Q
+
+
+def array_vals_by_t(arr: np.ndarray, t: b2.Quantity, dt: b2.Quantity) -> b2.Quantity:
+    """Helper to index a brian TimedArray's values by time quantity t"""
+    # TimedArray can do multiple timesteps, but not multiple variables
+    # so we access from .values ourselves insted of ta(t)
+    i = np.asarray(t / dt).astype(np.int32)
+    i = np.clip(i, 0, arr.shape[0] - 1)
+    return arr[i]
