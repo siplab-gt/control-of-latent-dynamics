@@ -52,18 +52,25 @@ class ExptData(BaseDataClass):
         return self.Uopto[start_end_opto], self.X[start:end], self.t_ms[start:end]
 
     @classmethod
-    def from_cleo_prep(cls, cleo_prep: CleoPrep, spike_counts, t_samp):
+    def from_cleo_prep(
+        cls, cleo_prep: CleoPrep, spike_counts, t_samp, subsample_factor
+    ):
+        i_trial_bounds = np.array(cleo_prep.fsnn.i_trial_boundaries) / subsample_factor
+        i_trial_bounds[:, 0] = i_trial_bounds[:, 0].astype(int)
+        i_trial_bounds[:, 1] = np.ceil(i_trial_bounds[:, 1]).astype(int)
+        i_trial_bounds = i_trial_bounds.astype(np.uint32)
+
         expt_data = cls(
             Uopto=cleo_prep.light.irradiance_[1:],
             t_opto_ms=cleo_prep.light.t[1:] / b2.ms,
             # stand-in for task-related inputs for now
-            Utask=cleo_prep.fsnn.in_mon.fin[:].T,
-            X=cleo_prep.fsnn.y_mon.y_[:].T,
-            Z=cleo_prep.fsnn.z_mon.z[:].T,
-            t_ms=cleo_prep.fsnn.y_mon.t[:] / b2.ms,
+            Utask=cleo_prep.fsnn.in_mon.fin[:, ::subsample_factor].T,
+            X=cleo_prep.fsnn.y_mon.y_[:, ::subsample_factor].T,
+            Z=cleo_prep.fsnn.z_mon.z[:, ::subsample_factor].T,
+            t_ms=cleo_prep.fsnn.y_mon.t[::subsample_factor] / b2.ms,
             spikes=spike_counts,
             t_samp_ms=t_samp / b2.ms,
-            i_trial_boundaries=np.array(cleo_prep.fsnn.i_trial_boundaries),
+            i_trial_boundaries=i_trial_bounds,
         )
         assert np.all(expt_data.t_ms == expt_data.t_samp_ms)
         return expt_data
@@ -97,7 +104,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
             return {"light array": value}, t_samp
 
     cleo_prep.sim.set_io_processor(
-        SysIDProcessor(sample_period=cleo_prep.fsnn._base_params.sample_period)
+        SysIDProcessor(sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor)
     )
     cleo_prep.fsnn.record = True
     cleo_prep.fsnn.mode = "test"
@@ -117,11 +124,14 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         spike_count_array = np.zeros((len(cleo_prep.fsnn.y_mon.t), 0), dtype=np.uint32)
 
     # skip first sample from Cleo devices since there's a repeat after reset
-    assert np.all(cleo_prep.light.t[1:] == cleo_prep.fsnn.y_mon.t)
+    assert np.all(
+        cleo_prep.light.t[1:] == cleo_prep.fsnn.y_mon.t[:: base_params.subsample_factor]
+    )
     expt_data = ExptData.from_cleo_prep(
         cleo_prep,
         spike_count_array,
         cleo_prep.sim.io_processor.t_samp,
+        base_params.subsample_factor,
     )
     expt_data.save(outfile)
 

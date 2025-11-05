@@ -216,8 +216,6 @@ prep_fsnn:
   gf: 0.13 # gain of fast random synapses
   default_float_dtype: float32
 
-  sample_period_ms: 1 # used for monitors here, and for expts later
-
 # mode-specific
 prep_fsnn_demean:
   n_init_trials: 2 # 50
@@ -262,6 +260,7 @@ model_fit_optimal_stim_rec:
 
 expts: # common to sys ID and ctrl expts
   u_max_mWmm2: 75
+  subsample_factor: 5 # ctrl/sample period relative to fsnn dt
 
 sys_id_expts:
   foo: bar
@@ -269,11 +268,9 @@ sys_id_expts:
 ctrl_expts:
   Q_cost: 1
   R_cost: 0.1
-  # ctrl_horizon_ms: 50
-  ctrl_horizon_ms: 20
-  # pred_horizon_ms: 100
+  ctrl_horizon_ms: 50
   # n_trials_ctrl: 100
-  n_trials_ctrl: 2
+  n_trials_ctrl: 1
   baseline_latency_ms: 1
 
 ctrl_expts_sufficient_stim:

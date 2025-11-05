@@ -10,7 +10,13 @@ from sklearn.linear_model import LinearRegression
 from snakemake.script import snakemake
 
 from src.ctrl import Controller
-from src.helpers import preprocess_params, seed_everything, setup_logging, str2bool
+from src.helpers import (
+    preprocess_params,
+    seed_everything,
+    setup_logging,
+    str2bool,
+    setup_debugger,
+)
 from src.model_fit import LDS
 from src.scripts.cleo_prep import CleoPrep
 from src.scripts.sys_id_expts import ExptData
@@ -101,7 +107,6 @@ def ctrl_expts(
         importlib.import_module(f"src.ctrl.{ctrl_type}"),
         f"{ctrl_type.upper()}Controller",
     )
-    sample_period = cleo_prep.fsnn.y_mon.clock.dt
     add_latency = (cond_params.ctrl_type != "OL") and str2bool(cond_params.latency)
     ctrl_proc: Controller = ControllerType(
         rng=rng,
@@ -111,10 +116,10 @@ def ctrl_expts(
         ref_type=base_params.ref_type,
         add_latency=add_latency,
         baseline_latency=base_params.baseline_latency,
-        sample_period=sample_period,
+        sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor,
         u_task=cleo_prep.fsnn.u_task_,
-        # horizon will be overwritten in OL to cover whole trial
-        horizon=int(round(base_params.ctrl_horizon // sample_period)),
+        # in OL, ctrl_horizon is pre-trial control time; horizon includes whole trial
+        ctrl_horizon=base_params.ctrl_horizon,
         Qcost=float(base_params.Q_cost),
         Rcost=float(base_params.R_cost),
         reference=lambda t: np.zeros((*np.shape(t), lds.n)),
@@ -136,13 +141,14 @@ def ctrl_expts(
 
     cleo_prep.sim.set_io_processor(ctrl_proc)
 
+    cleo_prep.fsnn.record = True
     for i_trial in range(n_trials):
         log.info(f"running control trial {i_trial}")
         # in fSNN lingo the trial info is this:
         # ytilde, fout, fin, nsteps_trial, cond, i_trial_bounds, nsteps_iti
         # translated to control lingo:
         Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti = (
-            trial_params := cleo_prep.fsnn.generate_trial(rng)
+            trial_params := cleo_prep.fsnn.generate_trial(rng, ctrl=True)
         )
         ctrl_proc.update_with_trial_info(*trial_params)
         cleo_prep.fsnn.run_trial(rng=None, trial_params=trial_params)
@@ -151,6 +157,7 @@ def ctrl_expts(
         cleo_prep,
         np.array(ctrl_proc.spike_counts),
         cleo_prep.sim.io_processor.t_samp,
+        base_params.subsample_factor,
     )
     log.info("computing Zref and Zhat from Xref and Xhat")
     Zref = lds.x2z(ctrl_proc.Xref)

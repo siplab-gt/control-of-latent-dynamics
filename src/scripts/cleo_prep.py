@@ -7,7 +7,7 @@ import cleo
 
 from src.data_classes import BaseDataClass
 from src.fsnn import fSNN
-from src.helpers import preprocess_params, setup_logging
+from src.helpers import preprocess_params, setup_debugger, setup_logging
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ class CleoPrep(BaseDataClass):
             source_coords=[0, 0, 0] * b2.mm,
             source_dir_uvec=np.array([0, 0, 1]),
             target_coords=[0, 0, typical_distance_from_fiber_mm] * b2.mm,
-        )
+        ).item()
         typical_Irr = 5 * b2.mwatt / b2.mm**2 * typical_transmittance
         I_per_Irr = typical_task_input / typical_Irr
         log.debug(f"{typical_task_input=}, {typical_transmittance=}, {I_per_Irr=}")

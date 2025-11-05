@@ -75,7 +75,10 @@ def model_fit(
     z_mean, z_std = np.mean(Z, axis=0), np.std(Z, axis=0)
     # ZtrainN, ZtestN = (Ztrain - zMean) / zStd, (Ztest - zMean) / zStd
     ZN = (Z - z_mean) / z_std
-    u_mean, u_std = np.mean(U, axis=0), np.std(U, axis=0)
+    # want to ensure u's "mean" remains at 0
+    # u_mean, u_std = np.mean(U, axis=0), np.std(U, axis=0)
+    u_mean = np.zeros(U.shape[1])
+    u_std = np.mean(U**2, axis=0) ** 0.5
     # UtrainN, UtestN = (Utrain - uMean) / uStd, (Utest - uMean) / uStd
     UN = (U - u_mean) / u_std
 

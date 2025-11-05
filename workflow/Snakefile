@@ -345,7 +345,6 @@ rule ctrl_expts:
         step_params("expts", "ctrl_expts"),
     output:
         data=f"results/{params_str}/ctrl_data.pkl.gz",
-        latency=f"results/{params_str}/ctrl_latency.pkl.gz",
     log:
         f"logs/{params_str}/ctrl_expts.log",
     script:
@@ -470,7 +469,7 @@ def fsnn_params(wc):
     else:
         params[wc.task] = config[f"prep_fsnn_{wc.task}"]
 
-    if "mode" in wc:
+    if "mode" in wc.keys():
         params |= config[f"prep_fsnn_{wc.mode}"]
 
     # include array side length since network size depends on it

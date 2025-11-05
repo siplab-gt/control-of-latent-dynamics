@@ -1,14 +1,18 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+from src.helpers import setup_debugger
 from src.plot_style import style_plots
 from src.scripts.ctrl_expts import CtrlData
 
 
-def plot_all(ctrl_data: CtrlData, outfile, explode=False):
+def plot_all(ctrl_data: CtrlData, outfile, setting="", explode=False):
     vars = ["X_fsnn", "Xhat_lds", "Z", "spikes", "Uopto", "Utask"]
     dashed_vars = ["Xref_fsnn", "Xref_lds", "Zref", "Yref", None, None]
     light_vars = ["Xhat_fsnn", None, "Zhat", "Yhat", None, None]
+
+    to_ignore = dict(sufficient_stim=["Xhat_lds", "Xhat_fsnn"])[setting]
+
     nrows = len(vars)
     figwidth = 1 * ctrl_data.n_trials
     if not explode:
@@ -41,6 +45,9 @@ def plot_all(ctrl_data: CtrlData, outfile, explode=False):
         dashed_vars,
         light_vars,
     ):
+        if varname in to_ignore:
+            print(f"skipping {varname} for setting {setting}")
+            continue
         print(f"plotting {varname}")
         data = getattr(ctrl_data, varname)
         if data.size == 0:
@@ -52,11 +59,11 @@ def plot_all(ctrl_data: CtrlData, outfile, explode=False):
 
         ax.plot(t, data + offsets)
         ax.set_prop_cycle(None)  # reset color cycler
-        if dashed_varname is not None:
+        if dashed_varname is not None and dashed_varname not in to_ignore:
             print(f" with {dashed_varname}")
-            ax.plot(t, getattr(ctrl_data, dashed_varname) + offsets, ls="--")
+            ax.plot(t, getattr(ctrl_data, dashed_varname) + offsets, c="k", ls="--")
             ax.set_prop_cycle(None)  # reset color cycler
-        if light_varname is not None:
+        if light_varname is not None and light_varname not in to_ignore:
             print(f" and {light_varname}")
             ax.plot(t, getattr(ctrl_data, light_varname) + offsets, alpha=0.5)
         ax.set(
@@ -85,6 +92,7 @@ def plot_all(ctrl_data: CtrlData, outfile, explode=False):
                 pass
 
     plt.savefig(outfile)
+    print(f"saved ctrl plots to {outfile}")
     return fig, axs
 
 
@@ -93,5 +101,10 @@ if __name__ == "__main__" and "snakemake" in locals():
 
     style_plots()
     expt_data = CtrlData.load(snakemake.input[0])
-    plot_all(expt_data, snakemake.output[0])
-    plot_all(expt_data, snakemake.output[1], explode=True)
+    plot_all(expt_data, snakemake.output[0], setting=snakemake.wildcards.setting)
+    plot_all(
+        expt_data,
+        snakemake.output[1],
+        setting=snakemake.wildcards.setting,
+        explode=True,
+    )

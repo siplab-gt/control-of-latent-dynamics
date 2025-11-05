@@ -167,7 +167,7 @@ class ReachingTask(fSNNTask):
         )
 
     def generate_trial(
-        self, rng, **kwargs
+        self, rng, ctrl=False, **kwargs
     ) -> tuple[
         np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int, dict
     ]:
@@ -180,6 +180,10 @@ class ReachingTask(fSNNTask):
             fin, fout, nsteps_trial, kwargs.get("x", None), rng=rng
         )
         ytilde = xprimes @ self.V
+
+        # for control experiments, remove direction-specifying input
+        if ctrl:
+            fin[:, 1:] = 0
 
         return (
             ytilde,

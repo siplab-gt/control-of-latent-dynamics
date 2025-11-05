@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import brian2.only as b2
 from brian2 import np
-from jaxtyping import UInt, Float
+from jaxtyping import Float, UInt
 from tqdm import tqdm
 
 from src.data_classes import BaseDataClass
@@ -32,7 +32,6 @@ class fSNN(BaseDataClass):
     tasks: list = field(default_factory=list)
     _mode: str = "init"
     _record: bool = False
-    _save_data: bool = True
     _cond_params: dict = None
     _base_params: dict = None
     _state_vars_to_save: dict = field(
@@ -180,14 +179,14 @@ class fSNN(BaseDataClass):
         return np.hstack([task.u_in for task in self.tasks])
 
     def generate_trial(
-        self, rng
+        self, rng, ctrl=False
     ) -> tuple[
         np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int, int, dict
     ]:
         """returns ytilde,fout,fin,nsteps_trial,cond,i_trial_start_end,nsteps_iti"""
         task = rng.choice(self.tasks)
         gen_trial_state = self._cache.get("gen_trial_state", {})
-        trial_params = task.generate_trial(rng, **gen_trial_state)
+        trial_params = task.generate_trial(rng, ctrl=ctrl, **gen_trial_state)
         # e.g., x for rate network state
         self._cache["gen_trial_state"] = trial_params[-1]
         return trial_params[:-1]
@@ -271,7 +270,7 @@ class fSNN(BaseDataClass):
                 fout_all = np.vstack([fout_all, fout])
                 ytilde_all = np.vstack([ytilde_all, ytilde])
                 T[_mode] = T.get(_mode, 0) + T_trial
-                if self._save_data and _mode == mode:
+                if self.record and _mode == mode:
                     self.conditions.append(condition)
                     i_start = i_trial_bounds[0] + nsteps_prev
                     i_end = i_trial_bounds[1] + nsteps_prev
@@ -712,16 +711,9 @@ class fSNN(BaseDataClass):
         )
         syn_z2yPlus.connect()
 
-        samp_period = base_params.sample_period
-        y_mon = b2.StateMonitor(
-            ng_y, ["y_", "ytilde"], record=True, name="y_mon", dt=samp_period
-        )
-        z_mon = b2.StateMonitor(
-            ng_z, ["z", "fout"], record=True, name="z_mon", dt=samp_period
-        )
-        in_mon = b2.StateMonitor(
-            ng_in, "fin", record=True, name="in_mon", dt=samp_period
-        )
+        y_mon = b2.StateMonitor(ng_y, ["y_", "ytilde"], record=True, name="y_mon")
+        z_mon = b2.StateMonitor(ng_z, ["z", "fout"], record=True, name="z_mon")
+        in_mon = b2.StateMonitor(ng_in, "fin", record=True, name="in_mon")
         w_mon = b2.StateMonitor(
             syn_y2s, ["wLeft", "wRight"], record=np.arange(5), name="w_mon"
         )

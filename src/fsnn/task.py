@@ -30,5 +30,5 @@ class fSNNTask:
         return type(self).__name__.replace("Task", "").lower()
 
     @abstractmethod
-    def generate_trial(self, rng):
+    def generate_trial(self, rng, ctrl=False, **kwargs) -> tuple:
         """returns ytilde, fout, fin, T_trial, cond, i_trial_start_end, nsteps_iti"""

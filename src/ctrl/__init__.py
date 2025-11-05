@@ -28,8 +28,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     reference: Callable[[Quantity], Quantity] = None
     u_task: Callable[[Quantity], np.ndarray] = field(default=lambda t: np.zeros(0))
     """callable with signature t -> task inputs (shape ([T], k_task) array)"""
-    horizon: int = None
-    """control horizon (number of time steps)"""
+    ctrl_horizon: Quantity = None
+    """control horizon (with time unit). In OL case, this is pre-trial control time."""
     Qcost: float = None
     Rcost: float = None
     cleo_prep: CleoPrep = None
@@ -51,15 +51,18 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     """reference trajectory over horizon"""
     x0opt: cp.Parameter = None
     """initial state parameter for optimization"""
+    cost_mask: cp.Parameter = None
+    """mask for what parts of the horizon to calculate the cost from"""
     prob: cp.Problem = None
     """cvxpy optimization problem"""
 
-    t_prev_trial_end: Quantity = 0 * ms
-    t_trial_start: Quantity = 0 * ms
-    t_trial_end: Quantity = 0 * ms
+    t_trial_bounds: tuple[Quantity, Quantity] = None
+    """t of start and end of trial (not ITI) where we want to minimize cost"""
+    t_ctrl_bounds: list = None
+    """t of start and end of control period (including pre-trial control).
+    Rounded to sample period to fully include trial."""
 
     def __attrs_post_init__(self):
-        self.init_optimization()
         self.reset()
 
     # don't know why I need to make this a field to avoid attrs error
@@ -73,19 +76,25 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         self._Xhat = []
         self._Xref = []
 
-        self.init_optimization()
-
     def init_optimization(self):
-        self.Uopt_opto = cp.Variable((self.horizon, self.k_opto), nonneg=True)
+        self.Uopt_opto = cp.Variable((self.n_horizon, self.k_opto), nonneg=True)
         if self.k_task > 0:
-            self.Uopt_task = cp.Parameter((self.horizon, self.k_task))
-        self.Xopt = cp.Variable((self.horizon + 1, self.n))
-        self.Xopt_ref = cp.Parameter((self.horizon, self.n))
+            self.Uopt_task = cp.Parameter((self.n_horizon, self.k_task))
+        self.Xopt = cp.Variable((self.n_horizon + 1, self.n))
+        self.Xopt_ref = cp.Parameter((self.n_horizon, self.n))
         self.x0opt = cp.Parameter(self.n)
+        self.cost_mask = cp.Parameter(self.n_horizon, boolean=True)
         cost = (
-            cp.sum_squares(self.Xopt[1:] - self.Xopt_ref) * self.Qcost / self.n
-            + cp.sum_squares(self.Uopt_opto) * self.Rcost / self.k_opto
+            cp.sum_squares(
+                cp.multiply(self.cost_mask[:, None], (self.Xopt[1:] - self.Xopt_ref))
+            )
+            * self.Qcost
+            / self.n
+            + cp.sum_squares(cp.multiply(self.cost_mask[:, None], self.Uopt_opto))
+            * self.Rcost
+            / self.k_opto
         )
+
         if self.k_task > 0:
             task_input = self.Uopt_task @ self.B_task.T
         else:
@@ -102,20 +111,25 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         ]
         self.prob = cp.Problem(cp.Minimize(cost), constraints)
 
-        self.Uopt_opto.value = np.zeros((self.horizon, self.k_opto))
-        self.Xopt.value = np.zeros((self.horizon + 1, self.n))
+        self.Uopt_opto.value = np.zeros((self.n_horizon, self.k_opto))
+        self.Xopt.value = np.zeros((self.n_horizon + 1, self.n))
 
         assert self.prob.is_dcp(dpp=False), "problem not DCP"
-        assert self.prob.is_dcp(dpp=True), "problem not DPP"
+        # not DPP anymore with cost_mask
+        # assert self.prob.is_dcp(dpp=True), "problem not DPP"
 
     def update_opt_problem(self, xhat, t_samp):
         self.x0opt.value = xhat[:]
         if self.k_task > 0:
             self.Uopt_task.value = self.u_task_zscored(
-                t_samp + np.arange(self.horizon) * self.sample_period
+                t_samp + np.arange(self.n_horizon) * self.sample_period
             )
         self.Xopt_ref.value = self.reference(
-            self.t_now + np.arange(1, self.horizon + 1) * self.sample_period
+            self.t_now + np.arange(1, self.n_horizon + 1) * self.sample_period
+        )
+        t_horizon = self.t_now + np.arange(1, self.n_horizon + 1) * self.sample_period
+        self.cost_mask.value = (self.t_trial_bounds[0] <= t_horizon) & (
+            t_horizon < self.t_trial_bounds[1]
         )
 
     @property
@@ -133,6 +147,16 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     @property
     def t_now(self) -> Quantity:
         return self.sim.network.t
+
+    @property
+    def n_horizon(self) -> int:
+        return int(round(self.ctrl_horizon / self.sample_period))
+
+    @property
+    def subsample_factor(self) -> int:
+        ssf = self.sample_period / b2.defaultclock.dt
+        assert ssf == int(ssf), "sample period not integer multiple of b2 dt"
+        return int(ssf)
 
     def measure_latency(self) -> tuple[b2.Quantity, b2.Quantity]:
         """returns mean, std of control computation (with Brian unit)"""
@@ -236,6 +260,11 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             : self.k_opto
         ]
 
+    @property
+    def base_dt(self) -> b2.Quantity:
+        """Returns base simulation timestep"""
+        return self.cleo_prep.fsnn.ng_main.clock.dt
+
     def update_with_trial_info(
         self, Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti
     ):
@@ -245,9 +274,24 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         elif self.ref_type == "X":
             ref = Xref
         t_start = self.t_now
-        # NOTE: the dt of the base simulation could be smaller than the ctrl sample period
-        self.reference = lambda t: array_vals_by_t(ref, t - t_start, b2.defaultclock.dt)
-        self.u_task = lambda t: array_vals_by_t(Utask, t - t_start, b2.defaultclock.dt)
+        self.reference = lambda t: array_vals_by_t(ref, t - t_start, self.base_dt)
+        self.u_task = lambda t: array_vals_by_t(Utask, t - t_start, self.base_dt)
+        self.t_trial_bounds = tuple(t_start + i * self.base_dt for i in i_trial_bounds)
+
+        # control during trial and a little before
+        self.t_ctrl_bounds = [
+            self.t_trial_bounds[0] - self.ctrl_horizon,
+            self.t_trial_bounds[1],
+        ]
+        # round down/up to nearest sample period to fully include trial
+        self.t_ctrl_bounds[0] -= self.t_ctrl_bounds[0] % self.sample_period
+        self.t_ctrl_bounds[1] += (
+            self.sample_period - (self.t_ctrl_bounds[1] % self.sample_period)
+        ) % self.sample_period
+        T_ctrl = self.t_ctrl_bounds[1] - self.t_ctrl_bounds[0]
+        assert np.isclose(
+            round(T_ctrl / self.sample_period), T_ctrl / self.sample_period
+        ), f"{T_ctrl=} not multiple of {self.sample_period=}"
 
 
 for attrib in [
