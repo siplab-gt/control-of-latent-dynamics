@@ -20,8 +20,7 @@ class OLController(Controller):
         )
 
     def compute_control(self, xhat):
-        # if self.t_now < self.t_ctrl_bounds[0] or self.t_now >= self.t_ctrl_bounds[1]:
-        if True:
+        if self.t_now < self.t_ctrl_bounds[0] or self.t_now >= self.t_ctrl_bounds[1]:
             return np.zeros(self.k_opto)
         if self.i_hzn == 0:
             self.init_optimization()

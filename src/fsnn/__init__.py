@@ -331,7 +331,9 @@ class fSNN(BaseDataClass):
         rng = np.random.default_rng(seed)
 
         # TODO: calculate volume, num neurons per layer
-        thickness = base_params.layer_boundaries[-1] - base_params.layer_boundaries[0]
+        # to concentrate neurons, we'll just do L2/3
+        z_top, z_bottom = base_params.layer_boundaries[[0, 1]]
+        thickness = z_bottom - z_top
         side_length_um = (
             base_params.array_side_length * np.sqrt(cond_params.network_area_scale)
         ) / b2.um
@@ -389,7 +391,7 @@ class fSNN(BaseDataClass):
             uy : 1
             I_in : 1
             Iopto : 1
-            vinf = J0fbars - vJsbar + uy + J0ss + J0fs + I_in : 1
+            vinf = J0fbars - vJsbar + uy + J0ss + J0fs + I_in + Iopto : 1
             dv/dt = (v - vinf) * (-1 / tau_v) : 1
             dJ0ss/dt = -J0ss/tau_s : 1
             dJ0fs/dt = -J0fs/tau_f : 1
@@ -422,8 +424,8 @@ class fSNN(BaseDataClass):
             hor_lim,
             hor_lim,
             (
-                base_params.layer_boundaries[0] / b2.um,
-                base_params.layer_boundaries[-1] / b2.um,
+                z_top / b2.um,
+                z_bottom / b2.um,
             ),
             unit=b2.um,
         )

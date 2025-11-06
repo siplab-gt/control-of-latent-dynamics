@@ -3,9 +3,7 @@ import matplotlib.pyplot as plt
 from src.scripts.sys_id_expts import ExptData
 
 
-def main(cond_params, base_params, data_file, outfiles):
-    print(cond_params)
-    expt_data = ExptData.load(data_file)
+def plot_expt_data_trials(expt_data: ExptData, outfiles):
     n_trials = len(expt_data.i_trial_boundaries)
     print(f"{n_trials=}")
     trials_per_row = 4
@@ -38,4 +36,5 @@ def main(cond_params, base_params, data_file, outfiles):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    main(snakemake.wildcards, snakemake.params, snakemake.input[0], snakemake.output)
+    expt_data = ExptData.load(snakemake.input[0])
+    plot_expt_data_trials(expt_data, snakemake.output)

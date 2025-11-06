@@ -142,6 +142,7 @@ def ctrl_expts(
     cleo_prep.sim.set_io_processor(ctrl_proc)
 
     cleo_prep.fsnn.record = True
+    cleo_prep.fsnn.mode = "test"
     for i_trial in range(n_trials):
         log.info(f"running control trial {i_trial}")
         # in fSNN lingo the trial info is this:

@@ -34,10 +34,10 @@ star_sweep_params:
     - 10
   # TODO: don't think I can do this and beam_spacing together. pick one
   network_area_scale: # proportional to array area
-    - 1
-    # - 2
+    - 1.1
+    - 2
     # - 3
-    - 4
+    # - 4
   beam_width_um:
     - 10
     # - 50
@@ -106,8 +106,8 @@ reference_params:
   n_trials_sys_id: 2 # TODO
   latent_dim: 2
   total_scale: 1
-  network_area_scale: 2
-  beam_width_um: 100
+  network_area_scale: 1.1
+  beam_width_um: 200
   beam_spacing: 2
   connection_distance_penalty: 0.5
   connection_l2_penalty: 0
@@ -186,7 +186,7 @@ prep_fsnn:
   dt_ms: 1
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
-  base_neuron_density: 25 # neurons per mm^3. 65k is realistic
+  base_neuron_density: 175 # neurons per mm^3. 65k is realistic
   layer_density_ratios:
     - 1.231 # L2/3, =80/65
     - 1.539 # L4, =100/65
@@ -222,7 +222,7 @@ prep_fsnn_demean:
   n_main_trials: 5 # 250
 prep_fsnn_train:
   n_init_trials: 1
-  n_main_trials: 10
+  n_main_trials: 15
   n_settle_trials: 1 # basically doing init trials for test here
 prep_fsnn_test:
   n_main_trials: 10
@@ -270,7 +270,7 @@ ctrl_expts:
   R_cost: 0.1
   ctrl_horizon_ms: 50
   # n_trials_ctrl: 100
-  n_trials_ctrl: 1
+  n_trials_ctrl: 10
   baseline_latency_ms: 1
 
 ctrl_expts_sufficient_stim:

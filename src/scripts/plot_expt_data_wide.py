@@ -1,10 +1,11 @@
 import matplotlib.pyplot as plt
 
+from src.helpers import setup_debugger
 from src.plot_style import style_plots
 from src.scripts.sys_id_expts import ExptData
 
 
-def plot_all(expt_data: ExptData, outfile):
+def plot_expt_data_wide(expt_data: ExptData, outfile):
     vars = ["X", "Z", "spikes", "Uopto", "Utask"]
     nrows = len(vars)
     figwidth = 1 * expt_data.n_trials
@@ -21,8 +22,12 @@ def plot_all(expt_data: ExptData, outfile):
             expt_data.t_ms,
         ],
     ):
+        data = getattr(expt_data, varname)
+        if data.size == 0:
+            print(f"skipping {varname} since empty")
+            continue
         print(f"plotting {varname}")
-        ax.plot(t, getattr(expt_data, varname))
+        ax.plot(t, data)
         ax.set(ylabel=varname)
     axs[-1].set(xlabel="time (ms)")
     for i, (i_start, _) in enumerate(expt_data.i_trial_boundaries):
@@ -48,4 +53,4 @@ if __name__ == "__main__" and "snakemake" in locals():
 
     style_plots()
     expt_data = ExptData.load(snakemake.input[0])
-    plot_all(expt_data, snakemake.output[0])
+    plot_expt_data_wide(expt_data, snakemake.output[0])

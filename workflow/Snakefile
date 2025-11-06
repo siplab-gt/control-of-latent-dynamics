@@ -417,12 +417,12 @@ rule plot_sys_id_data_trials:
         ),
         "src/plot_style.py",
     output:
-        multiext(f"results/{params_str}/sys_id_trials_plot", ".png"),
+        f"results/{params_str}/sys_id_trials_plot.{{ext}}",
     localrule: True
     group:
         "sys_id"
     script:
-        "../src/scripts/plot_sys_id_data.py"
+        "../src/scripts/plot_expt_data_trials.py"
 
 
 rule plot_sys_id_data_wide:
@@ -432,12 +432,12 @@ rule plot_sys_id_data_wide:
         ),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/sys_id_wide_plot.png",
+        f"results/{params_str}/sys_id_wide_plot.{{ext}}",
     localrule: True
     group:
         "sys_id"
     script:
-        "../src/scripts/plot_expt_data.py"
+        "../src/scripts/plot_expt_data_wide.py"
 
 
 rule sys_id_expts:
@@ -454,6 +454,18 @@ rule sys_id_expts:
         f"logs/{params_str}/sys_id_expts.log",
     script:
         "../src/scripts/sys_id_expts.py"
+
+
+rule impulse_responses:
+    input:
+        paths_for_params("cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")),
+    params:
+        step_params("expts"),
+    output:
+        f"results/{params_str}/impulse_responses_wide_plot.png",
+        f"results/{params_str}/impulse_responses_trials_plot.png",
+    script:
+        "../src/scripts/impulse_responses.py"
 
 
 def fsnn_params(wc):
@@ -507,7 +519,7 @@ rule cleo_prep:
         "src/cleo_prep_{setting}.py",
         "src/interface_array.py",
     params:
-        step_params("cleo_prep"),
+        step_params("prep_fsnn", "cleo_prep"),
     output:
         f"results/{params_str}/cleo_prep.pkl.gz",
     log:
