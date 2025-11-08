@@ -6,7 +6,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 
 from src.data_classes import BaseDataClass
-from src.helpers import preprocess_params, setup_logging, str2bool, setup_debugger
+from src.helpers import preprocess_params, setup_debugger, setup_logging, str2bool
 from src.log_redirector import redirect_output_to_file
 from src.model_fit import LDS
 from src.scripts.sys_id_expts import ExptData
@@ -76,9 +76,10 @@ def model_fit(
     # ZtrainN, ZtestN = (Ztrain - zMean) / zStd, (Ztest - zMean) / zStd
     ZN = (Z - z_mean) / z_std
     # want to ensure u's "mean" remains at 0
-    # u_mean, u_std = np.mean(U, axis=0), np.std(U, axis=0)
-    u_mean = np.zeros(U.shape[1])
-    u_std = np.mean(U**2, axis=0) ** 0.5
+    u_mean, u_std = np.mean(U, axis=0), np.std(U, axis=0)
+    # no, this is right, just set constraints accordingly
+    # u_mean = np.zeros(U.shape[1])
+    # u_std = np.mean(U**2, axis=0) ** 0.5
     # UtrainN, UtestN = (Utrain - uMean) / uStd, (Utest - uMean) / uStd
     UN = (U - u_mean) / u_std
 

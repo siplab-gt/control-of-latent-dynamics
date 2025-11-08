@@ -25,7 +25,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     compute_latency: Quantity = None
     lds: LDS = None
     ref_type: str = None
-    reference: Callable[[Quantity], Quantity] = None
+    reference_zscored: Callable[[Quantity], Quantity] = None
     u_task: Callable[[Quantity], np.ndarray] = field(default=lambda t: np.zeros(0))
     """callable with signature t -> task inputs (shape ([T], k_task) array)"""
     ctrl_horizon: Quantity = None
@@ -56,9 +56,11 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     prob: cp.Problem = None
     """cvxpy optimization problem"""
 
-    t_trial_bounds: tuple[Quantity, Quantity] = None
+    t_trial_bounds: tuple[Quantity, Quantity] = field(
+        factory=lambda: (0 * ms, 1000 * ms)
+    )
     """t of start and end of trial (not ITI) where we want to minimize cost"""
-    t_ctrl_bounds: list = None
+    t_ctrl_bounds: list = field(factory=lambda: [0 * ms, 1 * ms])
     """t of start and end of control period (including pre-trial control).
     Rounded to sample period to fully include trial."""
 
@@ -85,20 +87,20 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         self.x0opt = cp.Parameter(self.n)
         self.cost_mask = cp.Parameter(self.n_horizon, boolean=True)
         cost = (
-            cp.sum_squares(
-                cp.multiply(self.cost_mask[:, None], (self.Xopt[1:] - self.Xopt_ref))
-            )
-            * self.Qcost
-            / self.n
-            + cp.sum_squares(cp.multiply(self.cost_mask[:, None], self.Uopt_opto))
-            * self.Rcost
-            / self.k_opto
+            # cp.sum_squares(
+            #     cp.multiply(self.cost_mask[:, None], (self.Xopt[1:] - self.Xopt_ref))
+            # )
+            cp.sum_squares(self.Xopt[1:] - self.Xopt_ref) * self.Qcost / self.n
+            # + cp.sum_squares(cp.multiply(self.cost_mask[:, None], self.Uopt_opto))
+            + cp.sum_squares(self.Uopt_opto) * self.Rcost / self.k_opto
         )
 
         if self.k_task > 0:
             task_input = self.Uopt_task @ self.B_task.T
         else:
             task_input = 0
+        u_min_zscored = self.zscore(0.0, "u")[: self.k_opto]
+        u_max_zscored = self.zscore(self.u_max_mWmm2, "u")[: self.k_opto]
         constraints = [
             # initial state
             self.Xopt[0, :] == self.x0opt,
@@ -107,7 +109,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             == self.Xopt[:-1, :] @ self.A.T
             + self.Uopt_opto @ self.B_opto.T
             + task_input,
-            self.Uopt_opto <= self.u_max_zscored,
+            self.Uopt_opto >= u_min_zscored,
+            self.Uopt_opto <= u_max_zscored,
         ]
         self.prob = cp.Problem(cp.Minimize(cost), constraints)
 
@@ -124,10 +127,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             self.Uopt_task.value = self.u_task_zscored(
                 t_samp + np.arange(self.n_horizon) * self.sample_period
             )
-        self.Xopt_ref.value = self.reference(
-            self.t_now + np.arange(1, self.n_horizon + 1) * self.sample_period
-        )
         t_horizon = self.t_now + np.arange(1, self.n_horizon + 1) * self.sample_period
+        self.Xopt_ref.value = self.reference_zscored(t_horizon)
         self.cost_mask.value = (self.t_trial_bounds[0] <= t_horizon) & (
             t_horizon < self.t_trial_bounds[1]
         )
@@ -223,10 +224,13 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         if self.state_estimation == "kalman":
             xhat, P = self.update_state(self.xpred, counts, self.Ppred)
         elif self.state_estimation == "ground truth":
-            xhat = self.cleo_prep.fsnn.ng_y.y
+            # need to be careful to create an entirely new array; strange crash even for array(y_mon.y)
+            xhat = np.zeros(self.n)
+            xhat[:] = self.cleo_prep.fsnn.ng_y.y[:]
 
         self._Xhat.append(xhat)
-        self._Xref.append(self.reference(t_samp))
+        if self.ref_type == "X":
+            self._Xref.append(self.reference_zscored(t_samp))
         uopto = self.compute_control(xhat)
         u = np.concatenate((uopto, self.u_task_zscored(t_samp)))
 
@@ -255,12 +259,6 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         return (u_task - u_task_mean) / u_task_std
 
     @property
-    def u_max_zscored(self):
-        return (self.u_max_mWmm2 - self.lds.u_mean[: self.k_opto]) / self.lds.u_std[
-            : self.k_opto
-        ]
-
-    @property
     def base_dt(self) -> b2.Quantity:
         """Returns base simulation timestep"""
         return self.cleo_prep.fsnn.ng_main.clock.dt
@@ -270,11 +268,13 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     ):
         """call at start of each trial to update reference and task inputs"""
         if self.ref_type == "Z":
-            ref = Zref
+            ref = self.zscore(Zref, "z")
         elif self.ref_type == "X":
             ref = Xref
         t_start = self.t_now
-        self.reference = lambda t: array_vals_by_t(ref, t - t_start, self.base_dt)
+        self.reference_zscored = lambda t: array_vals_by_t(
+            ref, t - t_start, self.base_dt
+        )
         self.u_task = lambda t: array_vals_by_t(Utask, t - t_start, self.base_dt)
         self.t_trial_bounds = tuple(t_start + i * self.base_dt for i in i_trial_bounds)
 

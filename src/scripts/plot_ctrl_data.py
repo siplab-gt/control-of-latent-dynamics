@@ -11,7 +11,7 @@ def plot_all(ctrl_data: CtrlData, outfile, setting="", explode=False):
     dashed_vars = ["Xref_fsnn", "Xref_lds", "Zref", "Yref", None, None]
     light_vars = ["Xhat_fsnn", None, "Zhat", "Yhat", None, None]
 
-    to_ignore = dict(sufficient_stim=["Xhat_lds", "Xhat_fsnn"])[setting]
+    to_ignore = dict(sufficient_stim=[])[setting]
 
     nrows = len(vars)
     figwidth = 1 * ctrl_data.n_trials
@@ -57,22 +57,30 @@ def plot_all(ctrl_data: CtrlData, outfile, setting="", explode=False):
             np.arange(data.shape[1]) * np.percentile(np.ptp(data), 60) if explode else 0
         )
 
+        dashed_varname = dashed_varname if dashed_varname not in to_ignore else None
+        light_varname = light_varname if light_varname not in to_ignore else None
+
         ax.plot(t, data + offsets)
         ax.set_prop_cycle(None)  # reset color cycler
-        if dashed_varname is not None and dashed_varname not in to_ignore:
+        if dashed_varname is not None:
             print(f" with {dashed_varname}")
             ax.plot(t, getattr(ctrl_data, dashed_varname) + offsets, c="k", ls="--")
             ax.set_prop_cycle(None)  # reset color cycler
-        if light_varname is not None and light_varname not in to_ignore:
+        if light_varname is not None:
             print(f" and {light_varname}")
             ax.plot(t, getattr(ctrl_data, light_varname) + offsets, alpha=0.5)
+        title = varname
+        if dashed_varname is not None:
+            title += f", {dashed_varname} dashed"
+        if light_varname is not None:
+            title += f", {light_varname} light"
         ax.set(
-            title=f"{varname}, {dashed_varname} dashed, {light_varname} light",
+            title=title,
             ylabel=varname,
         )
 
     axs[-1].set(xlabel="time (ms)")
-    for i, (i_start, _) in enumerate(ctrl_data.i_trial_boundaries):
+    for i, (i_start, i_end) in enumerate(ctrl_data.i_trial_boundaries):
         t_start = ctrl_data.t_ms[i_start]
         axs[0].annotate(
             f"trial {i}",
@@ -80,13 +88,15 @@ def plot_all(ctrl_data: CtrlData, outfile, setting="", explode=False):
             xycoords="data",
             xytext=(0, 5),
             textcoords="offset points",
-            ha="center",
+            ha="left",
             va="top",
             annotation_clip=False,
         )
         for ax in axs:
             try:
-                ax.axvline(t_start, color="xkcd:light gray", lw=0.5)
+                # ax.axvline(t_start, color="xkcd:light gray", lw=0.5)
+                t_end = ctrl_data.t_ms[i_end]
+                ax.axvspan(t_start, t_end, color="xkcd:gray", alpha=0.1, zorder=0)
             except Exception as e:
                 # probably when missing data
                 pass

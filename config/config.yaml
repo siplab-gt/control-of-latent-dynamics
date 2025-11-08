@@ -21,7 +21,7 @@ star_sweep_params:
     # - 50
     # - 100
     - 2
-    - 3
+    - 5
   latent_dim: # only possible on integration?
     - 1
     # - 2
@@ -103,7 +103,7 @@ manual_sweep_params:
 reference_params:
   ###############
   # n_trials_sys_id: 50
-  n_trials_sys_id: 2 # TODO
+  n_trials_sys_id: 5 # TODO
   latent_dim: 2
   total_scale: 1
   network_area_scale: 1.1
@@ -268,9 +268,9 @@ sys_id_expts:
 ctrl_expts:
   Q_cost: 1
   R_cost: 0.1
-  ctrl_horizon_ms: 50
+  ctrl_horizon_ms: 300
   # n_trials_ctrl: 100
-  n_trials_ctrl: 10
+  n_trials_ctrl: 2
   baseline_latency_ms: 1
 
 ctrl_expts_sufficient_stim:

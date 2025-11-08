@@ -13,9 +13,9 @@ from src.ctrl import Controller
 from src.helpers import (
     preprocess_params,
     seed_everything,
+    setup_debugger,
     setup_logging,
     str2bool,
-    setup_debugger,
 )
 from src.model_fit import LDS
 from src.scripts.cleo_prep import CleoPrep
@@ -122,7 +122,7 @@ def ctrl_expts(
         ctrl_horizon=base_params.ctrl_horizon,
         Qcost=float(base_params.Q_cost),
         Rcost=float(base_params.R_cost),
-        reference=lambda t: np.zeros((*np.shape(t), lds.n)),
+        reference_zscored=lambda t: np.zeros((*np.shape(t), lds.n)),
         cleo_prep=cleo_prep,
         state_estimation="ground truth"
         if cond_params.setting == "sufficient_stim"
@@ -132,8 +132,7 @@ def ctrl_expts(
     if add_latency:
         latency_mean, latency_std = ctrl_proc.measure_latency()
         log.info(
-            f"measured control computation latency: {ctrl_proc.compute_latency=} "
-            f"+/- {latency_std=}"
+            f"measured control computation latency: {latency_mean} +/- {latency_std=}"
         )
         ctrl_proc.compute_latency = latency_mean
     else:
@@ -161,8 +160,9 @@ def ctrl_expts(
         base_params.subsample_factor,
     )
     log.info("computing Zref and Zhat from Xref and Xhat")
-    Zref = lds.x2z(ctrl_proc.Xref)
-    Zhat = lds.x2z(ctrl_proc.Xhat)
+    Zref = lds.x2z(ctrl_proc.Xref) * lds.z_std + lds.z_mean
+    Zhat = lds.x2z(ctrl_proc.Xhat) * lds.z_std + lds.z_mean
+    # setup_debugger()
     ctrl_data.set(
         C=lds.C,
         Xref_lds=ctrl_proc.Xref,

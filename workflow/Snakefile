@@ -121,7 +121,7 @@ rule testq1:
             setting="sufficient_stim",
             task="reaching",
             latency=True,
-            ctrl_type="OL",
+            ctrl_type="LQMPC",
             k=4,
             m=NA,
             # m=16,
@@ -359,6 +359,9 @@ rule plot_model_fit_pred:
         paths_for_params(
             "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
         ),
+        paths_for_params(
+            "model_fit_lds.pkl.gz", **na_wildcards_through_step("model_fit")
+        ),
         "src/plot_style.py",
     output:
         f"results/{params_str}/model_fit_pred_plot.png",
@@ -565,7 +568,9 @@ rule analyze_fsnn_data:
 
 rule plot_fsnn_data:
     input:
-        f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz",
+        paths_for_params(
+            "fsnn_{mode}_data.pkl.gz", **na_wildcards_through_step("prep_fsnn")
+        ),
         "src/plot_style.py",
     output:
         f"results/{params_str}/fsnn_{{mode}}_data_plot.{{ext}}",
