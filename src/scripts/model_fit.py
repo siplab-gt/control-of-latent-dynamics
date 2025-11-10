@@ -75,17 +75,17 @@ def model_fit(
     z_mean, z_std = np.mean(Z, axis=0), np.std(Z, axis=0)
     # ZtrainN, ZtestN = (Ztrain - zMean) / zStd, (Ztest - zMean) / zStd
     ZN = (Z - z_mean) / z_std
-    # want to ensure u's "mean" remains at 0
+    # remember U is normalized, will need to be unnormalized for constraints/costs
     u_mean, u_std = np.mean(U, axis=0), np.std(U, axis=0)
-    # no, this is right, just set constraints accordingly
-    # u_mean = np.zeros(U.shape[1])
-    # u_std = np.mean(U**2, axis=0) ** 0.5
     # UtrainN, UtestN = (Utrain - uMean) / uStd, (Utest - uMean) / uStd
     UN = (U - u_mean) / u_std
+    # normalize X too so origin reflects u_mean, y_mean, z_mean inputs
+    x_mean, x_std = np.mean(X, axis=0), np.std(X, axis=0)
+    XN = (X - x_mean) / x_std
 
     lds, Zhat, Yhat, Xhat = importlib.import_module(
         method_module_file.replace(".py", "").replace("/", ".")
-    ).fit_lds_to_data(YN, ZN, UN, X, n_x, cond_params, base_params, outfiles, config)
+    ).fit_lds_to_data(YN, ZN, UN, XN, n_x, cond_params, base_params, outfiles, config)
 
     # saving preprocessing info in model objects to use during inference in runPredict function
     (
@@ -95,9 +95,11 @@ def model_fit(
         lds.z_std,
         lds.u_mean,
         lds.u_std,
-    ) = y_mean, y_std, z_mean, z_std, u_mean, u_std
+        lds.x_mean,
+        lds.x_std,
+    ) = y_mean, y_std, z_mean, z_std, u_mean, u_std, x_mean, x_std
 
-    assert len(X) == len(Xhat)
+    assert len(XN) == len(Xhat)
 
     # linear regression to map
     lds.linreg_lds2fsnn = LinearRegression().fit(Xhat, X)

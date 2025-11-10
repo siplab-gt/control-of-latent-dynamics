@@ -79,28 +79,30 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         self._Xref = []
 
     def init_optimization(self):
-        self.Uopt_opto = cp.Variable((self.n_horizon, self.k_opto), nonneg=True)
+        self.Uopt_opto = cp.Variable((self.n_horizon, self.k_opto))
         if self.k_task > 0:
             self.Uopt_task = cp.Parameter((self.n_horizon, self.k_task))
         self.Xopt = cp.Variable((self.n_horizon + 1, self.n))
         self.Xopt_ref = cp.Parameter((self.n_horizon, self.n))
         self.x0opt = cp.Parameter(self.n)
         self.cost_mask = cp.Parameter(self.n_horizon, boolean=True)
+        Uopt_opto_unzscored = (
+            cp.multiply(self.Uopt_opto, self.lds.u_std[None, : self.k_opto])
+            + self.lds.u_mean[None, : self.k_opto]
+        )
         cost = (
             # cp.sum_squares(
             #     cp.multiply(self.cost_mask[:, None], (self.Xopt[1:] - self.Xopt_ref))
             # )
             cp.sum_squares(self.Xopt[1:] - self.Xopt_ref) * self.Qcost / self.n
             # + cp.sum_squares(cp.multiply(self.cost_mask[:, None], self.Uopt_opto))
-            + cp.sum_squares(self.Uopt_opto) * self.Rcost / self.k_opto
+            + cp.sum_squares(Uopt_opto_unzscored) * self.Rcost / self.k_opto
         )
 
         if self.k_task > 0:
             task_input = self.Uopt_task @ self.B_task.T
         else:
             task_input = 0
-        u_min_zscored = self.zscore(0.0, "u")[: self.k_opto]
-        u_max_zscored = self.zscore(self.u_max_mWmm2, "u")[: self.k_opto]
         constraints = [
             # initial state
             self.Xopt[0, :] == self.x0opt,
@@ -109,12 +111,14 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             == self.Xopt[:-1, :] @ self.A.T
             + self.Uopt_opto @ self.B_opto.T
             + task_input,
-            self.Uopt_opto >= u_min_zscored,
-            self.Uopt_opto <= u_max_zscored,
+            Uopt_opto_unzscored >= 0,
+            Uopt_opto_unzscored <= self.u_max_mWmm2,
         ]
         self.prob = cp.Problem(cp.Minimize(cost), constraints)
 
-        self.Uopt_opto.value = np.zeros((self.n_horizon, self.k_opto))
+        self.Uopt_opto.value = self.zscore(np.zeros((self.n_horizon, self.k)), "u")[
+            :, : self.k_opto
+        ]
         self.Xopt.value = np.zeros((self.n_horizon + 1, self.n))
 
         assert self.prob.is_dcp(dpp=False), "problem not DCP"
@@ -225,8 +229,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             xhat, P = self.update_state(self.xpred, counts, self.Ppred)
         elif self.state_estimation == "ground truth":
             # need to be careful to create an entirely new array; strange crash even for array(y_mon.y)
-            xhat = np.zeros(self.n)
-            xhat[:] = self.cleo_prep.fsnn.ng_y.y[:]
+            # xhat = np.zeros(self.n)
+            # xhat[:] = self.cleo_prep.fsnn.ng_y.y[:]
+            # need to zscore
+            xhat = self.zscore(self.cleo_prep.fsnn.ng_y.y[:], "x")
 
         self._Xhat.append(xhat)
         if self.ref_type == "X":
@@ -270,7 +276,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         if self.ref_type == "Z":
             ref = self.zscore(Zref, "z")
         elif self.ref_type == "X":
-            ref = Xref
+            ref = self.zscore(Xref, "x")
         t_start = self.t_now
         self.reference_zscored = lambda t: array_vals_by_t(
             ref, t - t_start, self.base_dt

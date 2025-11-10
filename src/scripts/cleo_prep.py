@@ -108,7 +108,7 @@ class CleoPrep(BaseDataClass):
             source_dir_uvec=np.array([0, 0, 1]),
             target_coords=[0, 0, typical_distance_from_fiber_mm] * b2.mm,
         ).item()
-        typical_Irr = 1 * b2.mwatt / b2.mm**2 * typical_transmittance
+        typical_Irr = 5 * b2.mwatt / b2.mm**2 * typical_transmittance
         I_per_Irr = typical_task_input / typical_Irr
         log.debug(f"{typical_task_input=}, {typical_transmittance=}, {I_per_Irr=}")
         opsin = cleo.opto.ProportionalCurrentOpsin(I_per_Irr=I_per_Irr)

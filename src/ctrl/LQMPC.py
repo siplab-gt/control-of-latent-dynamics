@@ -13,8 +13,7 @@ class LQMPCController(Controller):
 
     def compute_control(self, xhat):
         if self.t_now < self.t_ctrl_bounds[0] or self.t_now >= self.t_ctrl_bounds[1]:
-            # if True:
-            return np.zeros(self.k_opto)
+            return self.zscore(np.zeros(self.k), "u")[: self.k_opto]
         self.update_opt_problem(xhat, self.t_now)
         self.prob.solve(warm_start=True, enforce_dpp=True)
         return self.Uopt_opto.value[0]

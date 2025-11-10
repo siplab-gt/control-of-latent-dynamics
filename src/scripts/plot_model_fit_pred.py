@@ -30,14 +30,14 @@ def plot_model_fit_predictions(
     dt = expt_data.t_ms[1] - expt_data.t_ms[0]
     # plot rollouts of different lengths
     i_ahead_start = 0
-    Xhat_ahead = expt_data.X
+    Xhat_ahead = (expt_data.X - lds.x_mean) / lds.x_std
     for n_ahead, color in [(5, "xkcd:crimson"), (25, "xkcd:red"), (50, "xkcd:coral")]:
         for i_ahead in range(i_ahead_start, n_ahead):
             Xhat_ahead = Xhat_ahead @ lds.A.T + U_lds[i_ahead] @ lds.B.T
         i_ahead_start = n_ahead
 
         t_ms = expt_data.t_ms + n_ahead * dt
-        axs[0].plot(t_ms, Xhat_ahead, c=color, ls=ls, lw=lw)
+        axs[0].plot(t_ms, Xhat_ahead * lds.x_std + lds.x_mean, c=color, ls=ls, lw=lw)
         axs[1].plot(
             t_ms, lds.x2z(Xhat_ahead) * lds.z_std + lds.z_mean, c=color, ls=ls, lw=lw
         )
