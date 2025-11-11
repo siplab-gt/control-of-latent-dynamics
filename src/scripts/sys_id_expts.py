@@ -100,7 +100,11 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
             if cleo_prep.probe is not None:
                 t, i, counts = state_dict["Probe"]["mua"]
                 spike_counts.append(counts)
-            value = rng.uniform(0, u_max, k) * b2.mwatt / b2.mm2
+            u_logmean = np.log(base_params.typical_Irr0_mWmm2)
+            u_logstd = np.log(u_max) / 3
+            value = (
+                rng.lognormal(u_logmean, u_logstd, k).clip(0, u_max) * b2.mwatt / b2.mm2
+            )
             return {"light array": value}, t_samp
 
     cleo_prep.sim.set_io_processor(

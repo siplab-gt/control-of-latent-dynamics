@@ -17,7 +17,6 @@ from src.scripts.cleo_prep import CleoPrep
 
 @define
 class Controller(cleo.ioproc.LatencyIOProcessor):
-    rng: np.random.Generator = None
     sim: cleo.CLSimulator = None
     u_max_mWmm2: float = None
     add_latency: bool = True
@@ -163,15 +162,15 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         assert ssf == int(ssf), "sample period not integer multiple of b2 dt"
         return int(ssf)
 
-    def measure_latency(self) -> tuple[b2.Quantity, b2.Quantity]:
+    def measure_latency(self, rng) -> tuple[b2.Quantity, b2.Quantity]:
         """returns mean, std of control computation (with Brian unit)"""
         durations = []
         xpred = np.zeros(self.n)
         Ppred = np.eye(self.n)
-        u = self.rng.normal(self.lds.u_mean, self.lds.u_std, self.k)
+        u = rng.normal(self.lds.u_mean, self.lds.u_std, self.k)
         for i in range(100):
             avg_rate = 20 / second
-            y = self.rng.poisson(lam=avg_rate * self.sample_period)
+            y = rng.poisson(lam=avg_rate * self.sample_period)
 
             start = time.perf_counter()
             xhat, P = self.update_state(xpred, y, Ppred)

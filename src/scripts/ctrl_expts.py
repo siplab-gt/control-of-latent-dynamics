@@ -109,7 +109,6 @@ def ctrl_expts(
     )
     add_latency = (cond_params.ctrl_type != "OL") and str2bool(cond_params.latency)
     ctrl_proc: Controller = ControllerType(
-        rng=rng,
         sim=cleo_prep.sim,
         u_max_mWmm2=u_max,
         lds=lds,
@@ -130,7 +129,10 @@ def ctrl_expts(
     )
 
     if add_latency:
-        latency_mean, latency_std = ctrl_proc.measure_latency()
+        # use separate RNG for latency measurement so trials are same regardless
+        latency_mean, latency_std = ctrl_proc.measure_latency(
+            np.random.default_rng(seed + 18010630)
+        )
         log.info(
             f"measured control computation latency: {latency_mean} +/- {latency_std=}"
         )

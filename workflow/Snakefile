@@ -297,7 +297,16 @@ def na_wildcards_through_step(desired_step):
 
 rule analyze_ctrl_data:
     input:
-        ctrl_data=f"results/{params_str}/ctrl_data.pkl.gz",
+        ctrl_data=paths_for_params(
+            "ctrl_data.pkl.gz",
+            **na_wildcards_through_step("ctrl_expts"),
+        ),
+        null_ctrl_data=paths_for_params(
+            "ctrl_data.pkl.gz",
+            **na_wildcards_through_step("ctrl_expts"),
+            ctrl_type="NULL",
+            latency=False,
+        ),
         sys_id_data=paths_for_params(
             "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
         ),
@@ -447,7 +456,7 @@ rule sys_id_expts:
     input:
         paths_for_params("cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")),
     params:
-        step_params("expts", "sys_id_expts"),
+        step_params("cleo_prep", "expts", "sys_id_expts"),
         n_trials_sys_id_max=config["star_sweep_params"]["n_trials_sys_id"][-1],
     output:
         f"results/{params_str}/sys_id_data.pkl.gz",

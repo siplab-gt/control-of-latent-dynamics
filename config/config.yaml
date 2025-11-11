@@ -107,7 +107,7 @@ reference_params:
   latent_dim: 2
   total_scale: 1
   network_area_scale: 1.1
-  beam_width_um: 200
+  beam_width_um: 100
   beam_spacing: 2
   connection_distance_penalty: 0.5
   connection_l2_penalty: 0
@@ -244,6 +244,7 @@ prep_fsnn_reaching:
 cleo_prep:
   array_side_length_mm: 4
   array_n_per_side: 8
+  typical_Irr0_mWmm2: 5
 
 model_fit:
   linear_Cz: true
@@ -267,10 +268,10 @@ sys_id_expts:
 
 ctrl_expts:
   Q_cost: 1
-  R_cost: 0.1
+  R_cost: 1e-3
   ctrl_horizon_ms: 300
   # n_trials_ctrl: 100
-  n_trials_ctrl: 2
+  n_trials_ctrl: 10
   baseline_latency_ms: 1
 
 ctrl_expts_sufficient_stim:
