@@ -121,7 +121,6 @@ def ctrl_expts(
         ctrl_horizon=base_params.ctrl_horizon,
         Qcost=float(base_params.Q_cost),
         Rcost=float(base_params.R_cost),
-        reference_zscored=lambda t: np.zeros((*np.shape(t), lds.n)),
         cleo_prep=cleo_prep,
         state_estimation="ground truth"
         if cond_params.setting == "sufficient_stim"
@@ -161,10 +160,9 @@ def ctrl_expts(
         cleo_prep.sim.io_processor.t_samp,
         base_params.subsample_factor,
     )
-    log.info("computing Zref and Zhat from Xref and Xhat")
-    Zref = lds.x2z(ctrl_proc.Xref) * lds.z_std + lds.z_mean
-    Zhat = lds.x2z(ctrl_proc.Xhat) * lds.z_std + lds.z_mean
-    # setup_debugger()
+    log.info("extracting Zref and Zhat")
+    Zref = ctrl_proc.Zref * lds.z_std + lds.z_mean
+    Zhat = ctrl_proc.Zhat * lds.z_std + lds.z_mean
     ctrl_data.set(
         C=lds.C,
         Xref_lds=ctrl_proc.Xref,
@@ -183,6 +181,7 @@ def ctrl_expts(
 
 if __name__ == "__main__" and "snakemake" in locals():
     fh = setup_logging(snakemake.config, snakemake.log[0])
+    setup_debugger()
 
     ctrl_expts(
         preprocess_params(snakemake.wildcards),

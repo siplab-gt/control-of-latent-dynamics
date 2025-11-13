@@ -36,7 +36,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     spike_counts: list = field(factory=list)
     _Xhat: list = field(factory=list)
-    _Xref: list = field(factory=list)
+    _R: list = field(factory=list)
     xpred: np.ndarray = None
     Ppred: np.ndarray = None
 
@@ -46,12 +46,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     """task inputs over horizon"""
     Xopt: cp.Variable = None
     """x trajectory over horizon including initial state"""
-    Xopt_ref: cp.Parameter = None
+    Ropt: cp.Parameter = None
     """reference trajectory over horizon"""
     x0opt: cp.Parameter = None
     """initial state parameter for optimization"""
-    cost_mask: cp.Parameter = None
-    """mask for what parts of the horizon to calculate the cost from"""
     prob: cp.Problem = None
     """cvxpy optimization problem"""
 
@@ -64,6 +62,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     Rounded to sample period to fully include trial."""
 
     def __attrs_post_init__(self):
+        self.reference_zscored = lambda t: np.zeros((*np.shape(t), self.n_r))
         self.reset()
 
     # don't know why I need to make this a field to avoid attrs error
@@ -75,26 +74,22 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         self.Ppred = np.eye(self.n)  # initial covariance
         self.spike_counts = []
         self._Xhat = []
-        self._Xref = []
+        self._R = []
 
     def init_optimization(self):
         self.Uopt_opto = cp.Variable((self.n_horizon, self.k_opto))
         if self.k_task > 0:
             self.Uopt_task = cp.Parameter((self.n_horizon, self.k_task))
         self.Xopt = cp.Variable((self.n_horizon + 1, self.n))
-        self.Xopt_ref = cp.Parameter((self.n_horizon, self.n))
+        self.Ropt = cp.Parameter((self.n_horizon, self.n_r))
         self.x0opt = cp.Parameter(self.n)
-        self.cost_mask = cp.Parameter(self.n_horizon, boolean=True)
         Uopt_opto_unzscored = (
             cp.multiply(self.Uopt_opto, self.lds.u_std[None, : self.k_opto])
             + self.lds.u_mean[None, : self.k_opto]
         )
+        ctrl_var_traj = self.Xopt if self.ref_type == "X" else self.lds.x2z(self.Xopt)
         cost = (
-            # cp.sum_squares(
-            #     cp.multiply(self.cost_mask[:, None], (self.Xopt[1:] - self.Xopt_ref))
-            # )
-            cp.sum_squares(self.Xopt[1:] - self.Xopt_ref) * self.Qcost / self.n
-            # + cp.sum_squares(cp.multiply(self.cost_mask[:, None], self.Uopt_opto))
+            cp.sum_squares(ctrl_var_traj[1:] - self.Ropt) * self.Qcost / self.n_r
             + cp.sum_squares(Uopt_opto_unzscored) * self.Rcost / self.k_opto
         )
 
@@ -121,8 +116,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         self.Xopt.value = np.zeros((self.n_horizon + 1, self.n))
 
         assert self.prob.is_dcp(dpp=False), "problem not DCP"
-        # not DPP anymore with cost_mask
-        # assert self.prob.is_dcp(dpp=True), "problem not DPP"
+        assert self.prob.is_dcp(dpp=True), "problem not DPP"
 
     def update_opt_problem(self, xhat, t_samp):
         self.x0opt.value = xhat[:]
@@ -131,21 +125,37 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
                 t_samp + np.arange(self.n_horizon) * self.sample_period
             )
         t_horizon = self.t_now + np.arange(1, self.n_horizon + 1) * self.sample_period
-        self.Xopt_ref.value = self.reference_zscored(t_horizon)
-        self.cost_mask.value = (self.t_trial_bounds[0] <= t_horizon) & (
-            t_horizon < self.t_trial_bounds[1]
-        )
+        self.Ropt.value = self.reference_zscored(t_horizon)
 
     @property
     def Xhat(self) -> Float[np.ndarray, "T n"]:
+        """in LDS (z-scored) space"""
         return np.array(self._Xhat)
 
     @property
     def Xref(self) -> Float[np.ndarray, "T n"]:
-        return np.array(self._Xref)
+        """in LDS (z-scored) space"""
+        if self.ref_type == "Z":
+            return None
+        assert self.ref_type == "X"
+        return np.array(self._R)
+
+    @property
+    def Zref(self) -> Float[np.ndarray, "T m_z"]:
+        """in LDS (z-scored) space"""
+        if self.ref_type == "X":
+            return self.lds.x2z(self.Xref)
+        assert self.ref_type == "Z"
+        return np.array(self._R)
+
+    @property
+    def Zhat(self) -> Float[np.ndarray, "T m_z"]:
+        """in LDS (z-scored) space"""
+        return self.lds.x2z(self.Xhat)
 
     @property
     def Yhat(self) -> Float[np.ndarray, "T m"]:
+        """in original (unnormalized) space"""
         return self.unzscore(self.Xhat @ self.C.T, "y")
 
     @property
@@ -155,6 +165,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     @property
     def n_horizon(self) -> int:
         return int(round(self.ctrl_horizon / self.sample_period))
+
+    @property
+    def n_r(self) -> int:
+        return self.lds.m_z if self.ref_type == "Z" else self.n
 
     @property
     def subsample_factor(self) -> int:
@@ -234,8 +248,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             xhat = self.zscore(self.cleo_prep.fsnn.ng_y.y[:], "x")
 
         self._Xhat.append(xhat)
-        if self.ref_type == "X":
-            self._Xref.append(self.reference_zscored(t_samp))
+        self._R.append(self.reference_zscored(t_samp))
         uopto = self.compute_control(xhat)
         u = np.concatenate((uopto, self.u_task_zscored(t_samp)))
 
@@ -307,6 +320,7 @@ for attrib in [
     "Q",
     "n",
     "m",
+    "m_z",
     "k",
     "k_task",
     "k_opto",

@@ -121,12 +121,13 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     if cleo_prep.probe is not None:
         spike_count_array = np.array(spike_counts)
         assert spike_count_array.shape == (
-            len(cleo_prep.fsnn.y_mon.t),
+            len(cleo_prep.sim.io_processor.t_samp),
             cleo_prep.probe.signals[0].n,
         )
     else:
-        spike_count_array = np.zeros((len(cleo_prep.fsnn.y_mon.t), 0), dtype=np.uint32)
-
+        spike_count_array = np.zeros(
+            (len(cleo_prep.sim.io_processor.t_samp), 0), dtype=np.uint32
+        )
     # skip first sample from Cleo devices since there's a repeat after reset
     assert np.all(
         cleo_prep.light.t[1:] == cleo_prep.fsnn.y_mon.t[:: base_params.subsample_factor]

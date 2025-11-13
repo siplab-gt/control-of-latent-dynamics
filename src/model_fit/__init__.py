@@ -27,6 +27,10 @@ class LDS(BaseDataClass):
         return self.C.shape[0]
 
     @property
+    def m_z(self) -> int:
+        return self.Cz.shape[0]
+
+    @property
     def k(self) -> int:
         return self.B.shape[1]
 

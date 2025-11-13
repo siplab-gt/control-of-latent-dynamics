@@ -1,0 +1,60 @@
+# #####################################################################
+# # parameters to sweep, constituting different experimental conditions
+# #####################################################################
+star_sweep_params:
+  n_trials_sys_id:
+    - 15
+
+# #################
+reference_params:
+  #   ###############
+  #   # n_trials_sys_id: 50
+  n_trials_sys_id: 15 # TODO
+#   latent_dim: 2
+#   total_scale: 1
+#   network_area_scale: 1.1
+#   beam_width_um: 100
+#   beam_spacing: 2
+#   connection_distance_penalty: 0.5
+#   connection_l2_penalty: 0
+#   layeredness: 0
+#   dales_law: false
+#   latency: true
+#   n_pcs: 20
+#   model_task_inputs: true
+
+# #########################################
+# # base parameters, used across conditions
+# #########################################
+
+# power_per_neuron_uW: 1 # when normalizing power
+
+# # organized by step to easily group in Snakefile params statements
+# ##################################################################
+
+prep_fsnn_demean:
+  n_init_trials: 5 # 50
+  n_main_trials: 10 # 250
+prep_fsnn_train:
+  n_init_trials: 5
+  n_main_trials: 15
+  n_settle_trials: 5 # basically doing init trials for test here
+prep_fsnn_test:
+  n_main_trials: 10
+# # task-specific
+# prep_fsnn_cycling:
+#   iti_min_s: 0
+#   iti_lambda_s: 0
+#   t_event_s: [0.5, 1.95]
+#   muf: -0.5 # recurrent inhibtion
+prep_fsnn_reaching:
+  n_rate_neurons: 200 # 800
+  n_trials_pca: 20 # for rate network  TODO: 50
+
+ctrl_expts:
+  #   Q_cost: 1
+  #   R_cost: 1e-3
+  #   ctrl_horizon_ms: 300
+  #   # n_trials_ctrl: 100
+  n_trials_ctrl: 1
+#   baseline_latency_ms: 1

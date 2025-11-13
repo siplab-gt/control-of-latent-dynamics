@@ -6,7 +6,6 @@ from sklearn.metrics import r2_score
 from snakemake.script import snakemake
 
 from src.helpers import setup_debugger, setup_logging
-from src.log_redirector import redirect_output_to_file
 from src.scripts.ctrl_expts import CtrlData
 from src.scripts.model_fit import ModelFitPredData
 from src.scripts.sys_id_expts import ExptData
@@ -28,8 +27,6 @@ def analyze_ctrl_data(
     null_ctrl_data: CtrlData,
     fsnn_data_analysis_file,
     model_fit_analysis_file,
-    sys_id_data: ExptData,
-    model_fit_preds: ModelFitPredData,
     outfile,
 ):
     results = {**cond_params}
@@ -87,15 +84,11 @@ if __name__ == "__main__" and "snakemake" in locals():
 
     ctrl_data = CtrlData.load(snakemake.input.ctrl_data)
     null_ctrl_data = CtrlData.load(snakemake.input.null_ctrl_data)
-    sys_id_data = ExptData.load(snakemake.input.sys_id_data)
-    model_fit_preds = ModelFitPredData.load(snakemake.input.model_fit_preds)
     analyze_ctrl_data(
         snakemake.wildcards,
         ctrl_data,
         null_ctrl_data,
         snakemake.input.fsnn_data_analysis,
         snakemake.input.model_fit_analysis,
-        sys_id_data,
-        model_fit_preds,
         snakemake.output[0],
     )

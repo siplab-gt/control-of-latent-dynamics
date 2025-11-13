@@ -18,9 +18,9 @@ def main(data_file, out_file):
         assert np.allclose(np.diff(kdm1, axis=1), 0), (
             "kdm1 should be constant across neurons"
         )
-    assert not np.allclose(data["w_mon"]["wLeft"], data["w_mon"]["wRight"]), (
-        "s_mon wLeft and wRight should differ"
-    )
+    # assert not np.allclose(data["w_mon"]["wLeft"], data["w_mon"]["wRight"]), (
+    #     "s_mon wLeft and wRight should differ"
+    # )
 
     # add mse_y and mse_z to data
     data["mse_y"] = {

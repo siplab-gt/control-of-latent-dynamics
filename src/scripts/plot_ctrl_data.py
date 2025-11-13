@@ -11,7 +11,9 @@ def plot_all(ctrl_data: CtrlData, outfile, setting="", explode=False):
     dashed_vars = ["Xref_fsnn", "Xref_lds", "Zref", "Yref", None, None]
     light_vars = ["Xhat_fsnn", None, "Zhat", "Yhat", None, None]
 
-    to_ignore = dict(sufficient_stim=[])[setting]
+    to_ignore = dict(
+        sufficient_stim=[], optimal_stim_rec=["Xref_fsnn", "Xref_lds", "Yref"]
+    )[setting]
 
     nrows = len(vars)
     figwidth = 1 * ctrl_data.n_trials
@@ -109,6 +111,7 @@ def plot_all(ctrl_data: CtrlData, outfile, setting="", explode=False):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
+    # setup_debugger()
     style_plots()
     expt_data = CtrlData.load(snakemake.input[0])
     plot_all(expt_data, snakemake.output[0], setting=snakemake.wildcards.setting)
