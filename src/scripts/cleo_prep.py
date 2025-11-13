@@ -43,6 +43,7 @@ class CleoPrep(BaseDataClass):
         import cleo
         import cleo.opto
         import numpy as np
+        from cleo.ephys import MultiUnitActivity, Probe
 
         from src.grouped_light import GroupedLight
         from src.helpers import seed_everything
@@ -118,8 +119,18 @@ class CleoPrep(BaseDataClass):
 
         if probe_coords is not None:
             # use higher cutoff to avoid memory explosion
-            mua = cleo.ephys.MultiUnitActivity(name="mua", recording_recall_cutoff=0.01)
-            probe = cleo.ephys.Probe(probe_coords, signals=[mua])
+            mua = MultiUnitActivity(
+                name="mua",
+                recording_recall_cutoff=0.01,
+                r_noise_floor=200 * b2.um,
+                threshold_sigma=3,
+            )
+            # drop probe coords down into middle of L2/3
+            mid_l23_depth = (
+                base_params.layer_boundaries[1] - base_params.layer_boundaries[0]
+            ) / 2
+            probe_coords[:, 2] += mid_l23_depth
+            probe = Probe(probe_coords, signals=[mua])
             sim.inject(probe, fsnn.ng_main)
         else:
             probe = None

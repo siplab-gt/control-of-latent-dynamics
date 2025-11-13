@@ -6,7 +6,7 @@ from src.plot_style import style_plots
 from src.scripts.ctrl_expts import CtrlData
 
 
-def plot_all(ctrl_data: CtrlData, outfile, setting="", explode=False):
+def plot_all(ctrl_data: CtrlData, outfile, setting="", style="default"):
     vars = ["X_fsnn", "Xhat_lds", "Z", "spikes", "Uopto", "Utask"]
     dashed_vars = ["Xref_fsnn", "Xref_lds", "Zref", "Yref", None, None]
     light_vars = ["Xhat_fsnn", None, "Zhat", "Yhat", None, None]
@@ -16,11 +16,11 @@ def plot_all(ctrl_data: CtrlData, outfile, setting="", explode=False):
     )[setting]
 
     nrows = len(vars)
-    figwidth = 1 * ctrl_data.n_trials
-    if not explode:
+    figwidth = 1.3 * ctrl_data.n_trials
+    if style != "exploded":
         figheight = 2 * nrows
         kwargs = {}
-    elif explode:
+    elif style == "exploded":
         ht_per_series = 0.3
         num_series_per_row = [getattr(ctrl_data, v).shape[1] for v in vars]
         figheight = ht_per_series * sum(num_series_per_row)
@@ -56,26 +56,43 @@ def plot_all(ctrl_data: CtrlData, outfile, setting="", explode=False):
             print(f"skipping {varname} since empty")
             continue
         offsets = (
-            np.arange(data.shape[1]) * np.percentile(np.ptp(data), 60) if explode else 0
+            np.arange(data.shape[1]) * np.percentile(np.ptp(data), 60)
+            if style == "exploded"
+            else 0
         )
 
         dashed_varname = dashed_varname if dashed_varname not in to_ignore else None
         light_varname = light_varname if light_varname not in to_ignore else None
 
-        ax.plot(t, data + offsets)
-        ax.set_prop_cycle(None)  # reset color cycler
-        if dashed_varname is not None:
-            print(f" with {dashed_varname}")
-            ax.plot(t, getattr(ctrl_data, dashed_varname) + offsets, c="k", ls="--")
-            ax.set_prop_cycle(None)  # reset color cycler
-        if light_varname is not None:
-            print(f" and {light_varname}")
-            ax.plot(t, getattr(ctrl_data, light_varname) + offsets, alpha=0.5)
         title = varname
-        if dashed_varname is not None:
-            title += f", {dashed_varname} dashed"
-        if light_varname is not None:
-            title += f", {light_varname} light"
+        if style != "heatmap":
+            ax.plot(t, data + offsets)
+            ax.set_prop_cycle(None)  # reset color cycler
+            if dashed_varname is not None:
+                print(f" with {dashed_varname}")
+                ax.plot(t, getattr(ctrl_data, dashed_varname) + offsets, c="k", ls="--")
+                ax.set_prop_cycle(None)  # reset color cycler
+                title += f", {dashed_varname} dashed"
+            if light_varname is not None:
+                print(f" and {light_varname}")
+                ax.plot(t, getattr(ctrl_data, light_varname) + offsets, alpha=0.5)
+                title += f", {light_varname} light"
+        elif style == "heatmap":
+            im = ax.imshow(
+                data.T,
+                aspect="auto",
+                extent=[t[0], t[-1], -0.5, data.shape[1] - 0.5],
+                origin="lower",
+                cmap="viridis",
+                interpolation="nearest",
+            )
+            # ensure no sub-integer yticks
+            yticks = ax.get_yticks()
+            ax.set_yticks(
+                yticks[(yticks % 1 == 0) & (yticks >= 0) & (yticks < data.shape[1])]
+            )
+            fig.colorbar(im, ax=ax)
+
         ax.set(
             title=title,
             ylabel=varname,
@@ -114,10 +131,7 @@ if __name__ == "__main__" and "snakemake" in locals():
     # setup_debugger()
     style_plots()
     expt_data = CtrlData.load(snakemake.input[0])
-    plot_all(expt_data, snakemake.output[0], setting=snakemake.wildcards.setting)
+    style = snakemake.wildcards.get("style", "default")
     plot_all(
-        expt_data,
-        snakemake.output[1],
-        setting=snakemake.wildcards.setting,
-        explode=True,
+        expt_data, snakemake.output[0], setting=snakemake.wildcards.setting, style=style
     )

@@ -46,6 +46,8 @@ class CtrlData(ExptData):
 
     @property
     def Xref_fsnn(self) -> Float[np.ndarray, "T n"]:
+        if self.Xref_lds is None or np.size(self.Xref_lds) == 0:
+            return None
         return self.linreg_lds2fsnn.predict(self.Xref_lds)
 
     @property
@@ -115,6 +117,7 @@ def ctrl_expts(
         ref_type=base_params.ref_type,
         add_latency=add_latency,
         baseline_latency=base_params.baseline_latency,
+        latency_rng=np.random.default_rng(seed + 18010630),
         sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor,
         u_task=cleo_prep.fsnn.u_task_,
         # in OL, ctrl_horizon is pre-trial control time; horizon includes whole trial
@@ -125,17 +128,16 @@ def ctrl_expts(
         state_estimation="ground truth"
         if cond_params.setting == "sufficient_stim"
         else "kalman",
+        # use separate RNG for latency measurement/sampling so trials are same regardless
     )
 
     if add_latency:
-        # use separate RNG for latency measurement so trials are same regardless
-        latency_mean, latency_std = ctrl_proc.measure_latency(
-            np.random.default_rng(seed + 18010630)
-        )
+        latency_mean, latency_std = ctrl_proc.measure_latency()
         log.info(
             f"measured control computation latency: {latency_mean} +/- {latency_std=}"
         )
-        ctrl_proc.compute_latency = latency_mean
+        ctrl_proc.compute_latency_mean = latency_mean
+        ctrl_proc.compute_latency_std = latency_std
     else:
         latency_mean, latency_std = 0 * b2.ms, 0 * b2.ms
 
@@ -174,14 +176,14 @@ def ctrl_expts(
         Zref=Zref,
         compute_latency_mean_ms=latency_mean / b2.ms,
         compute_latency_std_ms=latency_std / b2.ms,
-        total_latency_ms=ctrl_proc.latency / b2.ms,
+        total_latency_ms=ctrl_proc.latency_mean / b2.ms,
     )
     ctrl_data.save(out_data_file)
 
 
 if __name__ == "__main__" and "snakemake" in locals():
     fh = setup_logging(snakemake.config, snakemake.log[0])
-    setup_debugger()
+    # setup_debugger()
 
     ctrl_expts(
         preprocess_params(snakemake.wildcards),

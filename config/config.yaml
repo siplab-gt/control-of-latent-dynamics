@@ -257,7 +257,7 @@ model_fit_sufficient_stim:
   #     epochs: 100
 
 model_fit_optimal_stim_rec:
-  epochs: 10 # only needed here for braid
+  epochs: 2500 # only needed here for braid
 
 expts: # common to sys ID and ctrl expts
   u_max_mWmm2: 75

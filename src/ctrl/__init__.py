@@ -21,7 +21,9 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     u_max_mWmm2: float = None
     add_latency: bool = True
     baseline_latency: Quantity = None
-    compute_latency: Quantity = None
+    compute_latency_mean: Quantity = None
+    compute_latency_std: Quantity = None
+    latency_rng: np.random.Generator = None
     lds: LDS = None
     ref_type: str = None
     reference_zscored: Callable[[Quantity], Quantity] = None
@@ -176,15 +178,15 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         assert ssf == int(ssf), "sample period not integer multiple of b2 dt"
         return int(ssf)
 
-    def measure_latency(self, rng) -> tuple[b2.Quantity, b2.Quantity]:
+    def measure_latency(self) -> tuple[b2.Quantity, b2.Quantity]:
         """returns mean, std of control computation (with Brian unit)"""
         durations = []
         xpred = np.zeros(self.n)
         Ppred = np.eye(self.n)
-        u = rng.normal(self.lds.u_mean, self.lds.u_std, self.k)
+        u = self.latency_rng.normal(self.lds.u_mean, self.lds.u_std, self.k)
         for i in range(100):
             avg_rate = 20 / second
-            y = rng.poisson(lam=avg_rate * self.sample_period)
+            y = self.latency_rng.poisson(lam=avg_rate * self.sample_period)
 
             start = time.perf_counter()
             xhat, P = self.update_state(xpred, y, Ppred)
@@ -258,12 +260,23 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         uopto = self.unzscore(u, "u")[: self.k_opto]
         uopto = np.clip(uopto, 0, self.u_max_mWmm2)
 
-        return {"light array": uopto * mwatt / mm2}, t_samp + self.latency
+        return {"light array": uopto * mwatt / mm2}, t_samp + self.sample_latency()
 
     @property
-    def latency(self):
+    def latency_mean(self) -> b2.Quantity:
         if self.add_latency:
-            return self.baseline_latency + self.compute_latency
+            return self.baseline_latency + self.compute_latency_mean
+        else:
+            return 0 * ms
+
+    def sample_latency(self) -> b2.Quantity:
+        if self.add_latency:
+            sampled = self.latency_rng.normal(
+                loc=self.compute_latency_mean / b2.ms,
+                scale=self.compute_latency_std / b2.ms,
+            )
+            sampled = max(sampled, 0)
+            return self.baseline_latency + sampled * ms
         else:
             return 0 * ms
 

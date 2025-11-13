@@ -208,7 +208,7 @@ rule sufficient_stim_tabulate:
             for ctrl, latency in [("OL", False), ("LQMPC", True)]
         ],
     output:
-        "results/sufficient_stim_{task}.csv",
+        protected("results/sufficient_stim_{task}.csv"),
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -263,7 +263,7 @@ rule optimal_stim_rec_tabulate:
             for k, m in get_q2_kms()
         ],
     output:
-        "results/optimal_stim_rec_{task}.csv",
+        protected("results/optimal_stim_rec_{task}.csv"),
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -327,11 +327,15 @@ rule plot_ctrl_data_wide:
         paths_for_params("ctrl_data.pkl.gz"),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/ctrl_data_wide_plot.png",
-        f"results/{params_str}/ctrl_data_wide_plot_exploded.png",
+        f"results/{params_str}/ctrl_data_wide_plot_{{style}}.png",
     localrule: True
     script:
         "../src/scripts/plot_ctrl_data.py"
+
+
+use rule plot_ctrl_data_wide as plot_ctrl_data_wide_default with:
+    output:
+        f"results/{params_str}/ctrl_data_wide_plot.png",
 
 
 rule ctrl_expts:

@@ -62,6 +62,10 @@ def model_fit(
             log.warning(
                 f"Flat dimensions of {arr}: {np.where(is_flat(locals()[arr], axis=0))[0]}"
             )
+            # actually just throw error. this shouldn't happen
+            raise ValueError(
+                f"Some dimensions of {arr} are flat; there must be something wrong with the data."
+            )
 
     n_x = X.shape[1]  # just assume we know this
 

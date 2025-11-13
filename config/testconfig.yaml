@@ -51,10 +51,13 @@ prep_fsnn_reaching:
   n_rate_neurons: 200 # 800
   n_trials_pca: 20 # for rate network  TODO: 50
 
+model_fit_optimal_stim_rec:
+  epochs: 2500 # only needed here for braid
+
 ctrl_expts:
   #   Q_cost: 1
   #   R_cost: 1e-3
   #   ctrl_horizon_ms: 300
   #   # n_trials_ctrl: 100
-  n_trials_ctrl: 1
+  n_trials_ctrl: 5
 #   baseline_latency_ms: 1

@@ -21,6 +21,10 @@ def nrmse(R, X, Xbaseline):
     return np.linalg.norm(errors) / np.linalg.norm(baseline_errors)
 
 
+def is_empty(arr):
+    return arr is None or arr.size == 0
+
+
 def analyze_ctrl_data(
     cond_params,
     ctrl_data: CtrlData,
@@ -36,9 +40,13 @@ def analyze_ctrl_data(
     assert np.all(ctrl_data.i_trial_boundaries == null_ctrl_data.i_trial_boundaries)
 
     def r2_score_masked(y_true, y_pred):
+        if is_empty(y_true) or is_empty(y_pred):
+            return np.nan
         return r2_score(y_true[eval_mask], y_pred[eval_mask])
 
     def q_track_masked(ref, achieved, baseline):
+        if is_empty(ref) or is_empty(achieved) or is_empty(baseline):
+            return np.nan
         return 1 - nrmse(ref[eval_mask], achieved[eval_mask], baseline[eval_mask])
 
     # R2
