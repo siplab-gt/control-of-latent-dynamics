@@ -23,7 +23,6 @@ class fSNN(BaseDataClass):
     """target outputs (i.e., EMG)"""
     fin_ta: b2.TimedArray
     """inputs"""
-    n_pcs: int
     i_trial_boundaries: UInt[np.ndarray, "n_trials n_events"] = field(
         default_factory=list
     )
@@ -338,7 +337,8 @@ class fSNN(BaseDataClass):
             base_params.array_side_length * np.sqrt(cond_params.network_area_scale)
         ) / b2.um
         vol = (side_length_um * b2.um) ** 2 * thickness
-        n_ng = vol * (base_params["base_neuron_density"] * b2.mm**-3)
+        density = base_params.base_neuron_density * cond_params.density_scale
+        n_ng = vol * (density * b2.mm**-3)
         n_ng = int(round(n_ng))
         print(f"side_length_um: {side_length_um}, volume: {vol}, n_ng: {n_ng}")
         hor_lim = (-side_length_um / 2, side_length_um / 2)
@@ -364,6 +364,7 @@ class fSNN(BaseDataClass):
                     base_params[cond_params.task],
                     n_ng,
                     weight_params.g,
+                    cond_params.n_latent_dims_offset,
                 )
                 for task in task_names
             ]
@@ -747,7 +748,6 @@ class fSNN(BaseDataClass):
             ytilde_ta,
             fout_ta,
             fin_ta,
-            cond_params["n_pcs"],
             _cond_params=cond_params,
             _base_params=base_params,
             tasks=tasks,

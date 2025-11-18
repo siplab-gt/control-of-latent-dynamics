@@ -43,10 +43,11 @@ def model_fit(
     expt_data = ExptData.load(expt_data_file)
     n_trials = int(cond_params.n_trials_sys_id)
     assert n_trials <= expt_data.n_trials, f"{n_trials=} > {expt_data.n_trials=}"
-    # cut data to end of last trial
-    T = expt_data.i_trial_boundaries[n_trials - 1, -1]
+    # cut data to end of last trial. wait: why?
+    # T = expt_data.i_trial_boundaries[n_trials - 1, -1]
+    T = len(expt_data.t_ms)
     X = expt_data.X[:T]
-    Y = expt_data.spikes[:T]
+    Y = expt_data.Y[:T]
     Z = expt_data.Z[:T]
     if str2bool(cond_params.model_task_inputs):
         U = np.hstack([expt_data.Uopto, expt_data.Utask])

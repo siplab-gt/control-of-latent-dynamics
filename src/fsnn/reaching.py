@@ -197,7 +197,7 @@ class ReachingTask(fSNNTask):
         )
 
 
-def init_task(seed, base_params, task_params, n_ng, g):
+def init_task(seed, base_params, task_params, n_ng, g, n_latent_dims_offset):
     rng = np.random.default_rng(seed + 19320812)
     clss = ReachingTask
     DATA_FILE = __file__.replace(".py", "_data.npz")
@@ -252,7 +252,7 @@ def init_task(seed, base_params, task_params, n_ng, g):
     d = np.flipud(d)
 
     fracPCA = 0.99
-    P = np.argmax(np.cumsum(d) / np.sum(d) > fracPCA) + 1
+    P = np.argmax(np.cumsum(d) / np.sum(d) > fracPCA) + 1 + n_latent_dims_offset
 
     V = V[:, :P]
     reaching_task.V = V

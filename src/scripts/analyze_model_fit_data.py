@@ -9,9 +9,10 @@ from src.scripts.sys_id_expts import ExptData
 def analyze_model_fit_data(
     cond_params, model_fit_pred_data: ModelFitPredData, sys_id_data: ExptData, outfile
 ):
-    T = sys_id_data.i_trial_boundaries[int(cond_params.n_trials_sys_id) - 1, -1]
+    # T = sys_id_data.i_trial_boundaries[int(cond_params.n_trials_sys_id) - 1, -1]
+    T = len(sys_id_data.t_ms)
     X = sys_id_data.X[:T]
-    Y = sys_id_data.spikes[:T]
+    Y = sys_id_data.Y[:T]
     Z = sys_id_data.Z[:T]
     # save R2 for model fit quality
     r2s = {

@@ -35,8 +35,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     Rcost: float = None
     cleo_prep: CleoPrep = None
     state_estimation: str = None
+    signals: str = None
+    """spikes, LFP, or both"""
 
-    spike_counts: list = field(factory=list)
+    spike_counts: list | None = None
     _Xhat: list = field(factory=list)
     _R: list = field(factory=list)
     xpred: np.ndarray = None
@@ -74,7 +76,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         super().reset()
         self.xpred = np.zeros(self.n)
         self.Ppred = np.eye(self.n)  # initial covariance
-        self.spike_counts = []
+        self.spike_counts = [] if self.signals in ["spikes", "both"] else None
         self._Xhat = []
         self._R = []
 
@@ -235,13 +237,21 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     def process(self, state_dict, t_samp):
         if self.cleo_prep.probe is not None:
-            t, i, counts = state_dict["Probe"]["mua"]
-        else:
-            counts = np.zeros(0, dtype=np.uint32)
-        self.spike_counts.append(counts)
+            if self.signals in ["spikes", "both"]:
+                t, i, counts = state_dict["Probe"]["mua"]
+                self.spike_counts.append(counts)
+            else:
+                counts = np.zeros(0)
+
+            if self.signals in ["lfp", "both"]:
+                lfp = state_dict["Probe"]["lfp"]
+            else:
+                lfp = np.zeros(0)
+            y = np.concatenate([counts, lfp])
+            assert y.shape == (self.m,), f"{y.shape=} not equal to {(self.m,)=}"
 
         if self.state_estimation == "kalman":
-            xhat, P = self.update_state(self.xpred, counts, self.Ppred)
+            xhat, P = self.update_state(self.xpred, y, self.Ppred)
         elif self.state_estimation == "ground truth":
             # need to be careful to create an entirely new array; strange crash even for array(y_mon.y)
             # xhat = np.zeros(self.n)

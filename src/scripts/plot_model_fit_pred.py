@@ -1,5 +1,6 @@
 import numpy as np
 
+from src.helpers import preprocess_params, setup_debugger
 from src.model_fit import LDS
 from src.plot_style import style_plots
 from src.scripts.model_fit import ModelFitPredData
@@ -8,7 +9,7 @@ from src.scripts.sys_id_expts import ExptData
 
 
 def plot_model_fit_predictions(
-    mfpd: ModelFitPredData, expt_data: ExptData, lds: LDS, outfiles
+    cond_params: dict, mfpd: ModelFitPredData, expt_data: ExptData, lds: LDS, outfiles
 ):
     style_plots()
     fig, axs = plot_expt_data_wide(expt_data, None)
@@ -18,9 +19,15 @@ def plot_model_fit_predictions(
     # predict true factors X from inferred X
     lw = 0.5
     ls = ":"
+    if cond_params.signals in ["both", "spikes"]:
+        i_split = expt_data.spikes.shape[1]
+    elif cond_params.signals == "lfp":
+        i_split = 0
+    pred_spikes, pred_lfp = np.split(mfpd.Yhat, [i_split], axis=1)
     axs[0].plot(mfpd.t_ms, mfpd.Xhat_lds2fsnn, c="k", ls=ls, lw=lw)
     axs[1].plot(mfpd.t_ms, mfpd.Zhat, c="k", ls=ls, lw=lw)
-    axs[2].plot(mfpd.t_ms, mfpd.Yhat, c="k", ls=ls, lw=lw)
+    axs[2].plot(mfpd.t_ms, pred_spikes, c="k", ls=ls, lw=lw)
+    axs[3].plot(mfpd.t_ms, pred_lfp, c="k", ls=ls, lw=lw)
 
     U_lds = expt_data.Uopto
     if lds.k_task > 0:
@@ -41,9 +48,11 @@ def plot_model_fit_predictions(
         axs[1].plot(
             t_ms, lds.x2z(Xhat_ahead) * lds.z_std + lds.z_mean, c=color, ls=ls, lw=lw
         )
-        axs[2].plot(
-            t_ms, Xhat_ahead @ lds.C.T * lds.y_std + lds.y_mean, c=color, ls=ls, lw=lw
+        spikes_ahead, lfp_ahead = np.split(
+            Xhat_ahead @ lds.C.T * lds.y_std + lds.y_mean, [i_split], axis=1
         )
+        axs[2].plot(t_ms, spikes_ahead, c=color, ls=ls, lw=lw)
+        axs[3].plot(t_ms, lfp_ahead, c=color, ls=ls, lw=lw)
 
     for f in outfiles:
         print(f"Saving figure to {f}")
@@ -56,5 +65,12 @@ if __name__ == "__main__" and "snakemake" in locals():
     model_fit_pred_data = ModelFitPredData.load(snakemake.input[0])
     expt_data = ExptData.load(snakemake.input[1])
     lds = LDS.load(snakemake.input[2])
+    # setup_debugger()
 
-    plot_model_fit_predictions(model_fit_pred_data, expt_data, lds, snakemake.output)
+    plot_model_fit_predictions(
+        preprocess_params(snakemake.wildcards),
+        model_fit_pred_data,
+        expt_data,
+        lds,
+        snakemake.output,
+    )

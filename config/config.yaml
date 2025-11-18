@@ -22,63 +22,38 @@ star_sweep_params:
     # - 100
     - 2
     - 5
-  latent_dim: # only possible on integration?
+  # offset to number of PCs used to train fSNN, which is also used as ground-truth n_x
+  n_latent_dims_offset:
+    # - -4
+    # - -3
+    - -2
+    # - -1
+    - 0
     - 1
     # - 2
-    # - 4
-    # - 8
-    - 16
-  total_scale:
-    - 0.1
-    # - 1
-    - 10
-  # TODO: don't think I can do this and beam_spacing together. pick one
+  density_scale:
+    - 1
+    # - 1.33
+    # - 1.67
+    - 2
   network_area_scale: # proportional to array area
-    - 1.1
+    - 1.44 # minimum for 0.4 mm padding around 4x4mm array, which we want for LFP
     - 2
-    # - 3
-    # - 4
+    - 3
   beam_width_um:
-    - 10
+    # - 10
     # - 50
-    # - 100
+    - 100
     - 200
-  beam_spacing:
-    - 0.5
-    - 1
-    - 2
-    - 5
-    - 10
-  connection_distance_penalty:
-    - 0
-    # - 0.001
-    # - 0.01
-    - 0.1
-  connection_l2_penalty:
-    - 0
-    # - 0.001
-    # - 0.01
-    - 0.1
-  # keep the same L4-L2/3-L5 structure everywhere, but alter weights
-  # single "layeredness" variable that controls both layer connectivity penalty
-  # and density variation by layer
-  layeredness:
-    - 0
-    # - 0.33
-    # - 0.67
-    - 1
-  dales_law:
-    - false
-    - true
-  n_pcs:
-    - 1
-    # - 5
-    - 10
-    # - 15
-    - 20
   model_task_inputs:
     - false
     - true
+
+star_sweep_params_measurement_only:
+  signals:
+    - spikes
+    - lfp
+    - both
 
 # don't automatically sweep these, will be handled manually in Snakefile
 ########################################################################
@@ -103,19 +78,14 @@ manual_sweep_params:
 reference_params:
   ###############
   # n_trials_sys_id: 50
-  n_trials_sys_id: 5 # TODO
-  latent_dim: 2
-  total_scale: 1
-  network_area_scale: 1.1
+  n_trials_sys_id: 15 # TODO
+  n_latent_dims_offset: 0
+  density_scale: 1
+  network_area_scale: 1.44
   beam_width_um: 100
-  beam_spacing: 2
-  connection_distance_penalty: 0.5
-  connection_l2_penalty: 0
-  layeredness: 0
-  dales_law: false
   latency: true
-  n_pcs: 20
   model_task_inputs: true
+  signals: lfp
 
 ##############################
 # question-specific parameters
@@ -186,7 +156,7 @@ prep_fsnn:
   dt_ms: 1
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
-  base_neuron_density: 175 # neurons per mm^3. 65k is realistic
+  base_neuron_density: 125 # neurons per mm^3. 65k is realistic
   layer_density_ratios:
     - 1.231 # L2/3, =80/65
     - 1.539 # L4, =100/65
@@ -245,6 +215,8 @@ cleo_prep:
   array_side_length_mm: 4
   array_n_per_side: 8
   typical_Irr0_mWmm2: 5
+  # needed early for LFe
+  subsample_factor: 5 # ctrl/sample period relative to fsnn dt
 
 model_fit:
   linear_Cz: true
@@ -258,10 +230,12 @@ model_fit_sufficient_stim:
 
 model_fit_optimal_stim_rec:
   epochs: 2500 # only needed here for braid
+  # as explained in BRAID tutorial, this makes U observable when forecasting and programs steps_ahead=[1, 10]
+  # steps_ahead_model_code: "ObsUKfw_ObsUCfw_sta1;9;10"
+  steps_ahead_model_code: ""
 
 expts: # common to sys ID and ctrl expts
   u_max_mWmm2: 75
-  subsample_factor: 5 # ctrl/sample period relative to fsnn dt
 
 sys_id_expts:
   foo: bar

@@ -83,7 +83,6 @@ def ctrl_expts(
 
     # careful to load before setting seed, since loading sets seed as side effect
     cleo_prep = CleoPrep.load(cleo_prep_file)
-    cleo_prep.reset()
 
     seed = seed_everything(int(cond_params["seed"]), "ctrl_expts")
     random.seed(seed)
@@ -117,6 +116,7 @@ def ctrl_expts(
         ref_type=base_params.ref_type,
         add_latency=add_latency,
         baseline_latency=base_params.baseline_latency,
+        # use separate RNG for latency measurement/sampling so trials are same regardless
         latency_rng=np.random.default_rng(seed + 18010630),
         sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor,
         u_task=cleo_prep.fsnn.u_task_,
@@ -128,7 +128,7 @@ def ctrl_expts(
         state_estimation="ground truth"
         if cond_params.setting == "sufficient_stim"
         else "kalman",
-        # use separate RNG for latency measurement/sampling so trials are same regardless
+        signals=cond_params.signals,
     )
 
     if add_latency:
@@ -156,9 +156,11 @@ def ctrl_expts(
         ctrl_proc.update_with_trial_info(*trial_params)
         cleo_prep.fsnn.run_trial(rng=None, trial_params=trial_params)
 
+    spike_counts = np.array(ctrl_proc.spike_counts) if ctrl_proc.spike_counts else None
+
     ctrl_data = CtrlData.from_cleo_prep(
         cleo_prep,
-        np.array(ctrl_proc.spike_counts),
+        spike_counts,
         cleo_prep.sim.io_processor.t_samp,
         base_params.subsample_factor,
     )

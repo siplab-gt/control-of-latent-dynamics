@@ -19,8 +19,10 @@ class CleoPrep(BaseDataClass):
     fsnn: fSNN
     light: cleo.light.Light
     probe: cleo.ephys.Probe
-    mua: cleo.ephys.MultiUnitActivity
     sim: cleo.CLSimulator
+
+    mua: cleo.ephys.MultiUnitActivity = None
+    lfp: cleo.ephys.LFPSignalBase = None
     _cond_params: dict = None
     _base_params: dict = None
     _cache: dict = field(repr=False, default_factory=dict)
@@ -43,7 +45,12 @@ class CleoPrep(BaseDataClass):
         import cleo
         import cleo.opto
         import numpy as np
-        from cleo.ephys import MultiUnitActivity, Probe
+        from cleo.ephys import (
+            MultiUnitActivity,
+            Probe,
+            RWSLFPSignalFromPSCs,
+            TKLFPSignal,
+        )
 
         from src.grouped_light import GroupedLight
         from src.helpers import seed_everything
@@ -59,7 +66,6 @@ class CleoPrep(BaseDataClass):
         grid = get_interface_array(
             base_params.layer_boundaries[0] / b2.mm,
             base_params.array_side_length / b2.mm,
-            cond_params.total_scale,
             base_params.array_n_per_side,
         )
 
@@ -117,26 +123,43 @@ class CleoPrep(BaseDataClass):
         opsin = cleo.opto.ProportionalCurrentOpsin(I_per_Irr=I_per_Irr)
         sim.inject(opsin, fsnn.ng_main)
 
+        mua = None
+        lfp = None
         if probe_coords is not None:
-            # use higher cutoff to avoid memory explosion
-            mua = MultiUnitActivity(
-                name="mua",
-                recording_recall_cutoff=0.01,
-                r_noise_floor=200 * b2.um,
-                threshold_sigma=3,
-            )
             # drop probe coords down into middle of L2/3
             mid_l23_depth = (
                 base_params.layer_boundaries[1] - base_params.layer_boundaries[0]
             ) / 2
             probe_coords[:, 2] += mid_l23_depth
-            probe = Probe(probe_coords, signals=[mua])
-            sim.inject(probe, fsnn.ng_main)
-        else:
-            probe = None
-            mua = None
+            signals = []
+            inj_kwargs = {}
+            if cond_params.signals in ["spikes", "both"]:
+                # use higher cutoff to avoid memory explosion
+                mua = MultiUnitActivity(
+                    name="mua",
+                    recording_recall_cutoff=0.01,
+                    r_noise_floor=200 * b2.um,
+                    threshold_sigma=3,
+                )
+                signals.append(mua)
+            if cond_params.signals in ["lfp", "both"]:
+                # we don't have separate AMPA and GABA currents, but we will
+                # use the sum ΣI as a rudimentary LFP proxy (as shown in Mazzoni 2015)
+                signals.append(lfp := RWSLFPSignalFromPSCs(name="lfp"))
+                # SCLFP works quite a bit better than TKLFP from preliminary experiments.
+                # signals.append(lfp := TKLFPSignal(name="lfp"))
+                inj_kwargs |= dict(
+                    Iampa_var_names=["vinf"],
+                    Igaba_var_names=[],
+                    tklfp_type="exc",
+                    sample_period=fsnn.dt * base_params.subsample_factor,
+                )
+            probe = Probe(probe_coords, signals=signals)
+            sim.inject(probe, fsnn.ng_main, **inj_kwargs)
 
-        return cls(fsnn, light_array, probe, mua, sim, cond_params, base_params, cache)
+        return cls(
+            fsnn, light_array, probe, sim, mua, lfp, cond_params, base_params, cache
+        )
 
     def __reduce__(self):
         return (
@@ -157,6 +180,7 @@ if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
     log_fh = setup_logging(snakemake.config, snakemake.log[0])
+    # setup_debugger()
 
     main(
         preprocess_params(snakemake.wildcards),

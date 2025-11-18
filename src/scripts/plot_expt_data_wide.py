@@ -1,30 +1,31 @@
 import matplotlib.pyplot as plt
 
 from src.helpers import setup_debugger
-from src.plot_style import style_plots, cmap
+from src.plot_style import cmap, style_plots
 from src.scripts.sys_id_expts import ExptData
 
 
 def plot_expt_data_wide(expt_data: ExptData, outfile, style="default"):
     assert style in ["default", "heatmap"]
-    vars = ["X", "Z", "spikes", "Uopto", "Utask"]
-    nrows = len(vars)
+    varnames = ["X", "Z", "spikes", "lfp", "Uopto", "Utask"]
+    nrows = len(varnames)
     figwidth = 1 * expt_data.n_trials
     figheight = 2 * nrows
     fig, axs = plt.subplots(nrows, 1, figsize=(figwidth, figheight), sharex=True)
     for ax, varname, t in zip(
         axs,
-        vars,
+        varnames,
         [
             expt_data.t_ms,
             expt_data.t_ms,
+            expt_data.t_samp_ms,
             expt_data.t_samp_ms,
             expt_data.t_opto_ms,
             expt_data.t_ms,
         ],
     ):
         data = getattr(expt_data, varname)
-        if data.size == 0:
+        if data is None or data.size == 0:
             print(f"skipping {varname} since empty")
             continue
         print(f"plotting {varname}")

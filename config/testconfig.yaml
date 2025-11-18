@@ -3,25 +3,20 @@
 # #####################################################################
 star_sweep_params:
   n_trials_sys_id:
-    - 15
+    - 10
 
 # #################
 reference_params:
   #   ###############
   #   # n_trials_sys_id: 50
-  n_trials_sys_id: 15 # TODO
-#   latent_dim: 2
-#   total_scale: 1
-#   network_area_scale: 1.1
-#   beam_width_um: 100
-#   beam_spacing: 2
-#   connection_distance_penalty: 0.5
-#   connection_l2_penalty: 0
-#   layeredness: 0
-#   dales_law: false
-#   latency: true
-#   n_pcs: 20
-#   model_task_inputs: true
+  n_trials_sys_id: 10 # TODO
+  # n_latent_dims_offset: 0
+  # density_scale: 1
+  # network_area_scale: 1.44
+  # beam_width_um: 100
+  # latency: true
+  # model_task_inputs: true
+  signals: lfp
 
 # #########################################
 # # base parameters, used across conditions

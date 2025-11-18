@@ -7,7 +7,7 @@ from src.scripts.ctrl_expts import CtrlData
 
 
 def plot_all(ctrl_data: CtrlData, outfile, setting="", style="default"):
-    vars = ["X_fsnn", "Xhat_lds", "Z", "spikes", "Uopto", "Utask"]
+    vars = ["X_fsnn", "Xhat_lds", "Z", "Y", "Uopto", "Utask"]
     dashed_vars = ["Xref_fsnn", "Xref_lds", "Zref", "Yref", None, None]
     light_vars = ["Xhat_fsnn", None, "Zhat", "Yhat", None, None]
 

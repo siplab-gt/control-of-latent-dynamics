@@ -29,7 +29,12 @@ rule all:
 
 cond_params = [
     param
-    for param_type in ["manual_sweep_params", "grid_sweep_params", "star_sweep_params"]
+    for param_type in [
+        "manual_sweep_params",
+        "grid_sweep_params",
+        "star_sweep_params",
+        "star_sweep_params_measurement_only",
+    ]
     for param in config[param_type].keys()
 ]
 
@@ -126,6 +131,7 @@ rule testq1:
             m=NA,
             # m=16,
             seed=0,
+            signals=NA,
         ),
     output:
         "results/testq1/{file}",
@@ -187,6 +193,7 @@ rule sufficient_stim_tabulate:
                 m=NA,
                 k=config["q1"]["k"],
                 seed=config["grid_sweep_params"]["seed"],
+                signals=NA,
                 fill_in_ref=True,
             )
             for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
@@ -199,8 +206,9 @@ rule sufficient_stim_tabulate:
                 latency=latency,
                 ctrl_type=ctrl,
                 k=config["q1"]["k"],
-                m=0,
+                m=NA,
                 seed=config["grid_sweep_params"]["seed"],
+                signals=NA,
                 **{var: config["star_sweep_params"][var]},
                 fill_in_ref=True,
             )
@@ -255,10 +263,13 @@ rule optimal_stim_rec_tabulate:
                 k=k,
                 m=m,
                 seed=config["grid_sweep_params"]["seed"],
-                **{var: config["star_sweep_params"][var]},
+                **{var: values},
                 fill_in_ref=True,
             )
-            for var in config["star_sweep_params"]
+            for var, values in (
+                config["star_sweep_params"]
+                | config["star_sweep_params_measurement_only"]
+            ).items()
             for ctrl, latency in [("OL", False), ("LQMPC", True)]
             for k, m in get_q2_kms()
         ],
@@ -287,7 +298,9 @@ def na_wildcards_through_step(desired_step):
         # introduced by sys_id_expts:
         ("cleo_prep", []),
         # introduced by cleo_prep:
-        ("prep_fsnn", ["beam_width_um", "beam_spacing", "k", "m"]),
+        ("prep_fsnn", ["beam_width_um", "signals", "k", "m"]),
+        # these change results from the very beginning, with prep_fsnn:
+        # n_latent_dims_offset, density_scale, network_area_scale, setting, task, seed
     ]:
         irrelevant_wcs += step_irrs
         if step == desired_step:
@@ -349,7 +362,7 @@ rule ctrl_expts:
             "model_fit_lds.pkl.gz", **na_wildcards_through_step("model_fit")
         ),
     params:
-        step_params("expts", "ctrl_expts"),
+        step_params("cleo_prep", "expts", "ctrl_expts"),
     output:
         data=f"results/{params_str}/ctrl_data.pkl.gz",
     log:
