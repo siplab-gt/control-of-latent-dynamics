@@ -156,6 +156,8 @@ class CleoPrep(BaseDataClass):
                 )
             probe = Probe(probe_coords, signals=signals)
             sim.inject(probe, fsnn.ng_main, **inj_kwargs)
+        else:
+            probe = None
 
         return cls(
             fsnn, light_array, probe, sim, mua, lfp, cond_params, base_params, cache

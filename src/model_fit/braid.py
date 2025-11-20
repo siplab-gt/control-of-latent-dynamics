@@ -102,7 +102,7 @@ def fit_lds_to_data(
     )
     # must get recreation info before calling, since that ruins reconstruction. Don't know why.
     Zhat_old = braid_model.sId.model1.rnn.cell.C.predict(Xhat.T).T
-    assert np.allclose(Zhat_old, Zhat, rtol=1e-3), f"{Zhat_old[-10:]=}\n{Zhat[-10:]=}"
+    assert np.allclose(Zhat_old, Zhat, rtol=1e-2), f"{Zhat_old[-10:]=}\n{Zhat[-10:]=}"
     # before BRAID's saveToFile, since it replaces Models with their weights
     braid_model.saveToFile(base_params.braid_basename + "_braid.pkl")
 

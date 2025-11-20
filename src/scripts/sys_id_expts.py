@@ -65,6 +65,8 @@ class ExptData(BaseDataClass):
             Y = self.spikes
         elif self.lfp is not None:
             Y = self.lfp
+        else:
+            Y = np.empty((self.X.shape[0], 0))
         return Y
 
     @classmethod
