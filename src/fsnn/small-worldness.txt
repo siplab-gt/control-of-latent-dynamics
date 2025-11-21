@@ -1,0 +1,251 @@
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import networkx as nx
+from brian2 import Synapses
+
+class SmallWorldnessAnalyzer:
+    def __init__(self):
+        self.metrics_history = []
+    
+    @staticmethod
+    def _largest_connected_subgraph(G):
+        """Extract the largest connected component of the graph"""
+        if G.number_of_nodes() == 0:
+            return G
+        if nx.is_connected(G):
+            return G
+        largest_cc = max(nx.connected_components(G), key=len)
+        return G.subgraph(largest_cc).copy()
+
+    def calculate_small_worldness_metrics(self, G):
+        """Calculate direct small-worldness metrics without random network comparisons
+        Returns: clustering coefficient and characteristic path length """
+        try:
+            # Check if graph has enough nodes and edges
+            if G.number_of_nodes() < 5 or G.number_of_edges() == 0:
+                return 0.0, 0.0, 0, 0
+            
+            # Calculate actual clustering coefficient
+            C = nx.average_clustering(G)
+            
+            # Calculate characteristic path length on largest connected component
+            G_cc = self._largest_connected_subgraph(G)
+            if G_cc.number_of_nodes() < 2:
+                return 0.0, 0.0, G.number_of_nodes(), G.number_of_edges()
+            
+            L = nx.average_shortest_path_length(G_cc)
+            
+            return float(C), float(L), G.number_of_nodes(), G.number_of_edges()
+            
+        except Exception as e:
+            print(f"Error calculating metrics: {e}")
+            return 0.0, 0.0, 0, 0
+
+    def extract_connectivity_matrix(self, synapses, N_neurons=None):
+        """Extract adjacency matrix from Brian2 Synapses object"""
+        try:
+            # Get source and target indices
+            i_idx = synapses.i[:]  # pre-synaptic neurons
+            j_idx = synapses.j[:]  # post-synaptic neurons
+            
+            if len(i_idx) == 0:
+                return None
+            
+            # Determine network size
+            if N_neurons is None:
+                try:
+                    N_neurons = int(synapses.source.N)
+                except:
+                    N_neurons = int(max(np.max(i_idx), np.max(j_idx))) + 1
+            
+            # Create adjacency matrix
+            A = np.zeros((N_neurons, N_neurons), dtype=np.uint8)
+            A[i_idx, j_idx] = 1
+            
+            return A
+            
+        except Exception as e:
+            print(f"Error extracting connectivity: {e}")
+            return None
+
+    def matrix_to_graph(self, connectivity_matrix):
+        """ Convert adjacency matrix to NetworkX graph"""
+        if connectivity_matrix is None:
+            return nx.Graph()
+        try:
+            if connectivity_matrix.ndim != 2:
+                return nx.Graph()
+            
+            # Ensure square matrix
+            if connectivity_matrix.shape[0] != connectivity_matrix.shape[1]:
+                n = max(connectivity_matrix.shape)
+                A = np.zeros((n, n), dtype=np.uint8)
+                A[:connectivity_matrix.shape[0], :connectivity_matrix.shape[1]] = connectivity_matrix
+            else:
+                A = connectivity_matrix
+            
+            # Remove self-connections
+            np.fill_diagonal(A, 0)
+            
+            return nx.from_numpy_array(A)
+            
+        except Exception as e:
+            print(f"Error converting matrix to graph: {e}")
+            return nx.Graph()
+
+    def analyze_network(self, synapses, N_neurons=None, description=""):
+        """
+        calculate network metrics for given synapses
+        """
+        print(f"Analyzing network: {description}")
+        
+        # Extract connectivity
+        A = self.extract_connectivity_matrix(synapses, N_neurons)
+        if A is None:
+            print("  Could not extract connectivity matrix")
+            return None
+        
+        # Convert to graph
+        G = self.matrix_to_graph(A)
+        
+        # Calculate basic graph properties
+        n_nodes = G.number_of_nodes()
+        n_edges = G.number_of_edges()
+        density = nx.density(G)
+        
+        print(f"  Nodes: {n_nodes}, Edges: {n_edges}, Density: {density:.4f}")
+        
+        if n_nodes < 5 or n_edges == 0:
+            print("  Network too small or disconnected for analysis")
+            return None
+        
+        # Calculate small-worldness metrics
+        C, L, _, _ = self.calculate_small_worldness_metrics(G)
+        
+        # Calculate additional metrics
+        G_cc = self._largest_connected_subgraph(G)
+        cc_size = G_cc.number_of_nodes()
+        n_components = nx.number_connected_components(G)
+        
+        # Store results
+        metrics = {
+            'description': description,
+            'clustering_coefficient': C,
+            'characteristic_path_length': L,
+            'n_nodes': n_nodes,
+            'n_edges': n_edges,
+            'density': density,
+            'connected_components': n_components,
+            'largest_component_size': cc_size,
+            'connectivity_matrix': A
+        }
+        
+        self.metrics_history.append(metrics)
+        
+        # Print results
+        print(f"  Clustering coefficient (C): {C:.3f}")
+        print(f"  Characteristic path length (L): {L:.3f}")
+        print(f"  Connected components: {n_components}")
+        print(f"  Largest component size: {cc_size}/{n_nodes} ({cc_size/n_nodes*100:.1f}%)")
+        
+        # Small-world interpretation
+        if C > 0.1 and L < 10:  # Typical thresholds for small-world networks
+            print("  → Network exhibits small-world characteristics")
+            print("     (High clustering + Short path length)")
+        else:
+            print("  → Network does not exhibit strong small-world characteristics")
+        
+        return metrics
+
+    def plot_network_analysis(self, synapses, N_neurons=None, title="Network Analysis"):
+        """
+        Visualize the network connectivity and metrics
+        """
+        A = self.extract_connectivity_matrix(synapses, N_neurons)
+        if A is None:
+            return
+        
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        
+        # Plot adjacency matrix
+        im = axes[0,0].imshow(A, cmap='binary', aspect='equal')
+        plt.colorbar(im, ax=axes[0,0], label='Connection')
+        axes[0,0].set_title(f'{title}\nAdjacency Matrix')
+        axes[0,0].set_xlabel('Post-synaptic neuron')
+        axes[0,0].set_ylabel('Pre-synaptic neuron')
+        
+        # Plot degree distribution
+        G = self.matrix_to_graph(A)
+        degrees = [d for n, d in G.degree()]
+        axes[0,1].hist(degrees, bins=20, alpha=0.7, edgecolor='black')
+        axes[0,1].set_title('Degree Distribution')
+        axes[0,1].set_xlabel('Degree')
+        axes[0,1].set_ylabel('Frequency')
+        axes[0,1].grid(True, alpha=0.3)
+        
+        # Plot network graph (if not too large)
+        if G.number_of_nodes() <= 100:
+            pos = nx.spring_layout(G, seed=42)
+            nx.draw(G, pos, ax=axes[1,0], node_size=50, node_color='lightblue', 
+                   with_labels=False, edge_color='gray', alpha=0.7)
+            axes[1,0].set_title('Network Structure')
+        else:
+            axes[1,0].text(0.5, 0.5, 'Network too large to visualize', 
+                          ha='center', va='center', transform=axes[1,0].transAxes)
+            axes[1,0].set_title('Network Structure (too large to plot)')
+        
+        # Plot metrics summary
+        if self.metrics_history:
+            latest = self.metrics_history[-1]
+            metrics_text = f"""
+            Clustering (C): {latest['clustering_coefficient']:.3f}
+            Path Length (L): {latest['characteristic_path_length']:.3f}
+            Nodes: {latest['n_nodes']}
+            Edges: {latest['n_edges']}
+            Density: {latest['density']:.4f}
+            Components: {latest['connected_components']}
+            Largest CC: {latest['largest_component_size']}
+            """
+            axes[1,1].text(0.1, 0.9, metrics_text, fontfamily='monospace', 
+                          verticalalignment='top', fontsize=10)
+            axes[1,1].set_title('Network Metrics')
+            axes[1,1].axis('off')
+        
+        plt.tight_layout()
+        plt.show()
+
+    def save_metrics(self, filename="small_world_metrics.txt"):
+        """Save all metrics to a text file"""
+        with open(filename, 'w') as f:
+            f.write("Small-World Network Analysis Results\n")
+            f.write("=" * 50 + "\n\n")
+            
+            for i, metrics in enumerate(self.metrics_history):
+                f.write(f"Analysis {i+1}: {metrics['description']}\n")
+                f.write(f"  Clustering coefficient (C): {metrics['clustering_coefficient']:.4f}\n")
+                f.write(f"  Characteristic path length (L): {metrics['characteristic_path_length']:.4f}\n")
+                f.write(f"  Nodes: {metrics['n_nodes']}\n")
+                f.write(f"  Edges: {metrics['n_edges']}\n")
+                f.write(f"  Density: {metrics['density']:.6f}\n")
+                f.write(f"  Connected components: {metrics['connected_components']}\n")
+                f.write(f"  Largest component: {metrics['largest_component_size']}\n")
+                f.write("\n")
+        
+        print(f"Metrics saved to {filename}")
+
+    def print_summary(self):
+        """Print summary of all analyses"""
+        if not self.metrics_history:
+            print("No analyses performed yet.")
+            return
+        
+        print("\n" + "="*60)
+        print("SMALL-WORLD NETWORK ANALYSIS SUMMARY")
+        print("="*60)
+        
+        for i, metrics in enumerate(self.metrics_history):
+            print(f"\n{i+1}. {metrics['description']}:")
+            print(f"   C = {metrics['clustering_coefficient']:.3f}, L = {metrics['characteristic_path_length']:.3f}")
+            print(f"   Nodes: {metrics['n_nodes']}, Edges: {metrics['n_edges']}, Density: {metrics['density']:.4f}")
+
