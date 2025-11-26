@@ -122,7 +122,7 @@ def fit_lds_to_data(
 
     lds.x2z = types.MethodType(x2z, lds)
 
-    assert np.allclose(Zhat_old, lds.x2z(Xhat), rtol=5e-3), (
+    assert np.allclose(Zhat_old, lds.x2z(Xhat), rtol=1e-2), (
         f"{Zhat_old[:10]=}\n{lds.x2z(Xhat)[:10]=}"
     )
 

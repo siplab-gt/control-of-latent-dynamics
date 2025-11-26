@@ -3,6 +3,7 @@ import pandas as pd
 import seaborn as sns
 
 import src.plot_style as psty
+from src.helpers import setup_debugger
 
 
 def main(cfg, results_csv, outfiles):
@@ -34,7 +35,13 @@ def main(cfg, results_csv, outfiles):
     ref_cond_except_latency = ref_condition.copy()
     del ref_cond_except_latency["latency"]
     ref_data = df.query(
-        " and ".join([f"{k} == {v}" for k, v in ref_cond_except_latency.items()])
+        # need k.isnull() for variables that don't apply (signals in Q1)
+        " and ".join(
+            [
+                f"({k} == {v!r} or {k}.isnull())"
+                for k, v in ref_cond_except_latency.items()
+            ]
+        )
     ).copy()
 
     # Create a combined key for hue
@@ -71,18 +78,31 @@ def main(cfg, results_csv, outfiles):
         lw=2,
     )
 
-    vmin, vmax = 0, 1
+    # vmin, vmax = 0, 1
     # TODO: use 0, 1 for real, but using data range for now to see more variation
     vmin, vmax = df[metric].min(), df[metric].max()
+    # TODO
+    vmin = max(vmin, -1)
+    vmax = min(vmax, 1)
     for ep, ax in zip(expl_params, axs_grid.flatten()):
         conds2keep = ref_condition.copy()
         del conds2keep[ep]
-        query_str = " and ".join([f"{k} == {v}" for k, v in conds2keep.items()])
+        query_str = " and ".join(
+            [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
+        )
         subset = df.query(query_str)
         # average over seeds
         subset = subset.groupby([ep, "k"])[[metric]].mean().reset_index()
         subset = subset.pivot(index="k", columns=ep, values=metric)
-        sns.heatmap(subset, ax=ax, vmin=vmin, vmax=vmax, cmap=psty.cmap, cbar=False)
+        sns.heatmap(
+            subset,
+            ax=ax,
+            vmin=vmin,
+            vmax=vmax,
+            center=0,
+            cmap=psty.div_cmap,
+            cbar=False,
+        )
 
     for ax in axs_grid[:, 1:].flatten():
         ax.set(ylabel="")
@@ -99,5 +119,7 @@ def main(cfg, results_csv, outfiles):
 
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
+
+    # setup_debugger()
 
     main(snakemake.config, snakemake.input[0], snakemake.output)

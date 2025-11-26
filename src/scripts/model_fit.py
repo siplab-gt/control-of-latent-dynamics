@@ -128,6 +128,7 @@ if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
     log_fh = setup_logging(snakemake.config, snakemake.log[0])
+    setup_debugger(snakemake.config["debug"])
 
     model_fit(
         preprocess_params(snakemake.wildcards),

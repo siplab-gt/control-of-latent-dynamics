@@ -21,13 +21,14 @@ c["y"] = c["a2"]
 c["z"] = c["a3"]
 
 cmap = sns.light_palette(c["dark"], as_cmap=True)
+div_cmap = sns.color_palette("icefire", as_cmap=True)
 
 double_col_width = 17 / 2.54
 
 sns_errorbar_kwargs = dict(errorbar=("ci", 95), seed=19120731, n_boot=1000)
 
 
-def style_plots(context='paper', fontscale=5 / 6):
+def style_plots(context="paper", fontscale=5 / 6):
     """fontscale=5/6 goes from default paper font size of 9.6 down to 8"""
 
     plt.style.use("default")

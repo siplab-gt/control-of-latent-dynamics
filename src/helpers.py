@@ -84,7 +84,9 @@ def setup_logging(cfg, logfile):
         return log_fh
 
 
-def setup_debugger(port=5678):
+def setup_debugger(debug=True, port=5678):
+    if not str2bool(debug):
+        return
     import debugpy
 
     debugpy.listen(port)

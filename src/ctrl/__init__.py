@@ -324,6 +324,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             self.t_trial_bounds[0] - self.ctrl_horizon,
             self.t_trial_bounds[1],
         ]
+        # round to nearest ms so modulo will work as expected (not get 4.999999 for example)
+        self.t_ctrl_bounds = [round(t / ms) * ms for t in self.t_ctrl_bounds]
         # round down/up to nearest sample period to fully include trial
         self.t_ctrl_bounds[0] -= self.t_ctrl_bounds[0] % self.sample_period
         self.t_ctrl_bounds[1] += (

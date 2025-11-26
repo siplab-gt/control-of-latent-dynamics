@@ -135,6 +135,7 @@ rule testq1:
         ),
     output:
         "results/testq1/{file}",
+    localrule: True
     shell:
         # NOTE: could have used ln -r (relative) instead of realpath
         # "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
@@ -158,6 +159,7 @@ rule testq2:
         ),
     output:
         "results/testq2/{file}",
+    localrule: True
     shell:
         # "rm -r $(dirname {output}) || true && \\"
         # "ln -sf $(realpath $(dirname {input})) $(dirname {output})"
@@ -177,6 +179,7 @@ rule main_figs:
         lineplots=multiext("results/figs/{setting}_{task}_lineplots", *fig_exts),
         heatmaps_mean=multiext("results/figs/{setting}_{task}_heatmaps_mean", *fig_exts),
         heatmaps_std=multiext("results/figs/{setting}_{task}_heatmaps_std", *fig_exts),
+    localrule: True
     script:
         "../src/scripts/{wildcards.setting}_fig.py"
 
@@ -331,6 +334,7 @@ rule analyze_ctrl_data:
         f"results/{params_str}/summary.csv",
     log:
         f"logs/{params_str}/analyze_ctrl_data.log",
+    localrule: True
     script:
         "../src/scripts/analyze_ctrl_data.py"
 
@@ -367,6 +371,7 @@ rule ctrl_expts:
         data=f"results/{params_str}/ctrl_data.pkl.gz",
     log:
         f"logs/{params_str}/ctrl_expts.log",
+    retries: 2
     script:
         "../src/scripts/ctrl_expts.py"
 
@@ -408,6 +413,10 @@ rule analyze_model_fit_data:
         "../src/scripts/analyze_model_fit_data.py"
 
 
+def gpu_for_model_fit(wc):
+    return int(wc.setting == "sufficient_stim" and config["model_fit_device"] == "gpu")
+
+
 rule model_fit:
     input:
         "src/model_fit/__init__.py",
@@ -425,8 +434,12 @@ rule model_fit:
     output:
         lds_model=f"results/{params_str}/model_fit_lds.pkl.gz",
         pred_data=f"results/{params_str}/model_fit_pred_data.pkl.gz",
+    threads: lambda wc: 8 * gpu_for_model_fit(wc)
+    resources:
+        gpu=gpu_for_model_fit,
+        gpu_jobs=gpu_for_model_fit,
     group:
-        "model_fit"
+        "model_fit_{setting}"
     log:
         f"logs/{params_str}/model_fit.log",
     script:
@@ -480,6 +493,7 @@ rule sys_id_expts:
         "sys_id"
     log:
         f"logs/{params_str}/sys_id_expts.log",
+    retries: 2  # since there can be conflicts hitting the cython cache
     script:
         "../src/scripts/sys_id_expts.py"
 
@@ -515,7 +529,6 @@ def fsnn_params(wc):
     # include array side length since network size depends on it
     params["array_side_length_mm"] = config["cleo_prep"]["array_side_length_mm"]
     params["report_period_s"] = config["report_period_s"]
-    params["debug"] = str2bool(config.get("debug", "false"))
     return params
 
 
@@ -637,8 +650,11 @@ rule _prep_fsnn:
         fsnn_params,
     log:
         f"logs/{params_str}/prep_fsnn_{{mode}}.log",
+    resources:
+        # need GPU only for training
+        gpu=lambda wc: int(wc["mode"] == "train" and config["train_device"] == "cuda"),
     group:
-        "prep_fsnn"
+        "prep_fsnn_{mode}"
     script:
         "../src/scripts/prep_fsnn.py"
 

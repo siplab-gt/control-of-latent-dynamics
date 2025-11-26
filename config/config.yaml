@@ -254,11 +254,12 @@ ctrl_expts_sufficient_stim:
 ctrl_expts_optimal_stim_rec:
   ref_type: Z # controlling output
 
-# non-essential stuff, don't need to pass in as params to trigger re-runs
-#########################################################################
+# non-essential stuff, don't need to pass in as params to trigger re-runs when changed
+######################################################################################
 report_period_s: 60 # for brian report printing frequency
 train_device: cuda # cuda or cython
 model_fit_device: gpu # cpu or gpu
 log_level: DEBUG # DEBUG, INFO, WARNING, ERROR, CRITICAL
 auto_plot: true # automatically plot data from individual experiments
-debug: true # save/plot extra data (e.g., from fSNN training)
+# wait for debugger attach. also save/plot extra data (e.g., from fSNN training)
+debug: false

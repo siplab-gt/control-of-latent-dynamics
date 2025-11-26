@@ -1,0 +1,7 @@
+# this is for PACE cluster-specific things
+# workflow-specific things are in profiles/default/config.v9+.yaml
+executor: slurm
+jobs: 500
+logger: snkmt
+resources:
+  gpu_jobs: 10
