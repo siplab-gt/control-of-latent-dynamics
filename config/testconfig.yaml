@@ -1,14 +1,54 @@
 # #####################################################################
 # # parameters to sweep, constituting different experimental conditions
 # #####################################################################
+# to automatically sweep all combinations
+#########################################
+grid_sweep_params:
+  seed:
+    - 17230616
+    # - 18051223
+    # - 16320829
+    # - 18060520
+    # - 18220427
+
+# exploratory vars to sweep one at a time in Q1, Q2
+# i.e., explore space in star pattern
+###################################################
 star_sweep_params:
   n_trials_sys_id:
+    - 5
     - 10
+  # offset to number of PCs used to train fSNN, which is also used as ground-truth n_x
+  n_latent_dims_offset:
+    - -2
+    - 0
+  density_scale:
+    - 1
+    - 1.33
+    # - 1.67
+    # - 2
+  network_area_scale: # proportional to array area
+    - 1.44 # minimum for 0.4 mm padding around 4x4mm array, which we want for LFP
+    - 2
+    # - 3
+  beam_width_um:
+    # - 10
+    # - 50
+    - 100
+    - 200
+  model_task_inputs:
+    - false
+    - true
+
+star_sweep_params_measurement_only:
+  signals:
+    # - spikes
+    - lfp
+    # - both
 
 # #################
 reference_params:
   #   ###############
-  #   # n_trials_sys_id: 50
   n_trials_sys_id: 10 # TODO
   # n_latent_dims_offset: 0
   # density_scale: 1
@@ -44,10 +84,10 @@ prep_fsnn_test:
 #   muf: -0.5 # recurrent inhibtion
 prep_fsnn_reaching:
   n_rate_neurons: 200 # 800
-  n_trials_pca: 20 # for rate network  TODO: 50
+  n_trials_pca: 20 # for rate network
 
 model_fit_optimal_stim_rec:
-  epochs: 2500 # only needed here for braid
+  epochs: 10 # only needed here for braid
 
 ctrl_expts:
   #   Q_cost: 1

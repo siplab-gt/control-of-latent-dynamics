@@ -9,40 +9,36 @@ grid_sweep_params:
     - 17230616
     - 18051223
     - 16320829
-    # - 18060520
-    # - 18220427
+    - 18060520
+    - 18220427
 
 # exploratory vars to sweep one at a time in Q1, Q2
 # i.e., explore space in star pattern
 ###################################################
 star_sweep_params:
   n_trials_sys_id:
-    # - 10
-    # - 50
-    # - 100
-    - 2
-    - 5
+    - 10
+    - 40
+    - 70
+    - 100
   # offset to number of PCs used to train fSNN, which is also used as ground-truth n_x
   n_latent_dims_offset:
-    # - -4
-    # - -3
     - -2
-    # - -1
+    - -1
     - 0
     - 1
-    # - 2
   density_scale:
     - 1
-    # - 1.33
-    # - 1.67
+    - 1.33
+    - 1.67
     - 2
   network_area_scale: # proportional to array area
     - 1.44 # minimum for 0.4 mm padding around 4x4mm array, which we want for LFP
     - 2
     - 3
   beam_width_um:
-    # - 10
-    # - 50
+    - 10
+    - 50
     - 100
     - 200
   model_task_inputs:
@@ -77,8 +73,7 @@ manual_sweep_params:
 #################
 reference_params:
   ###############
-  # n_trials_sys_id: 50
-  n_trials_sys_id: 15 # TODO
+  n_trials_sys_id: 100
   n_latent_dims_offset: 0
   density_scale: 1
   network_area_scale: 1.44
@@ -188,14 +183,14 @@ prep_fsnn:
 
 # mode-specific
 prep_fsnn_demean:
-  n_init_trials: 2 # 50
-  n_main_trials: 5 # 250
-  n_settle_trials: 1 # basically doing init trials for train here
+  n_init_trials: 20 # 50
+  n_main_trials: 100 # 250
+  n_settle_trials: 20 # basically doing init trials for train here
 prep_fsnn_train:
-  n_main_trials: 15
-  n_settle_trials: 1 # basically doing init trials for test here
+  n_main_trials: 100
+  n_settle_trials: 20 # basically doing init trials for test here
 prep_fsnn_test:
-  n_main_trials: 10
+  n_main_trials: 50
 
 # task-specific
 prep_fsnn_cycling:
@@ -207,8 +202,8 @@ prep_fsnn_reaching:
   iti_min_s: .4
   iti_lambda_s: 2
   t_event_s: [0.35, 0.15, 0.31]
-  n_rate_neurons: 100 # 800
-  n_trials_pca: 10 # for rate network  TODO: 50
+  n_rate_neurons: 800 # 800
+  n_trials_pca: 100 # for rate network
   g: 3 # feedback gain. more like input gain?
 
 cleo_prep:
@@ -244,8 +239,7 @@ ctrl_expts:
   Q_cost: 1
   R_cost: 1e-3
   ctrl_horizon_ms: 300
-  # n_trials_ctrl: 100
-  n_trials_ctrl: 10
+  n_trials_ctrl: 100
   baseline_latency_ms: 1
 
 ctrl_expts_sufficient_stim:
