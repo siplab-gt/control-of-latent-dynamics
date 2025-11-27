@@ -190,8 +190,8 @@ prep_fsnn:
 prep_fsnn_demean:
   n_init_trials: 2 # 50
   n_main_trials: 5 # 250
+  n_settle_trials: 1 # basically doing init trials for train here
 prep_fsnn_train:
-  n_init_trials: 1
   n_main_trials: 15
   n_settle_trials: 1 # basically doing init trials for test here
 prep_fsnn_test:

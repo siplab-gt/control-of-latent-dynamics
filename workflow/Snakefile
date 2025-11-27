@@ -21,10 +21,11 @@ wildcard_constraints:
 rule all:
     input:
         expand(
-            "results/figs/{setting}__{task}.pdf",
+            "results/figs/{setting}_{task}.pdf",
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
+    localrule: True
 
 
 cond_params = [
@@ -369,6 +370,8 @@ rule ctrl_expts:
         step_params("cleo_prep", "expts", "ctrl_expts"),
     output:
         data=f"results/{params_str}/ctrl_data.pkl.gz",
+    conda:
+        "envs/main.yaml"
     log:
         f"logs/{params_str}/ctrl_expts.log",
     retries: 2
@@ -391,8 +394,6 @@ rule plot_model_fit_pred:
     output:
         f"results/{params_str}/model_fit_pred_plot.png",
     localrule: True
-    group:
-        "model_fit"
     script:
         "../src/scripts/plot_model_fit_pred.py"
 
@@ -407,14 +408,13 @@ rule analyze_model_fit_data:
         ),
     output:
         f"results/{params_str}/model_fit_analysis.csv",
-    group:
-        "model_fit"
+    localrule: True
     script:
         "../src/scripts/analyze_model_fit_data.py"
 
 
 def gpu_for_model_fit(wc):
-    return int(wc.setting == "sufficient_stim" and config["model_fit_device"] == "gpu")
+    return int(wc.setting == "optimal_stim_rec" and config["model_fit_device"] == "gpu")
 
 
 rule model_fit:
@@ -434,12 +434,13 @@ rule model_fit:
     output:
         lds_model=f"results/{params_str}/model_fit_lds.pkl.gz",
         pred_data=f"results/{params_str}/model_fit_pred_data.pkl.gz",
-    threads: lambda wc: 8 * gpu_for_model_fit(wc)
+    threads: lambda wc: max(1, 8 * gpu_for_model_fit(wc))
     resources:
         gpu=gpu_for_model_fit,
         gpu_jobs=gpu_for_model_fit,
-    group:
-        "model_fit_{setting}"
+    retries: 1
+    conda:
+        "envs/main.yaml"
     log:
         f"logs/{params_str}/model_fit.log",
     script:
@@ -455,8 +456,6 @@ rule plot_sys_id_data_trials:
     output:
         f"results/{params_str}/sys_id_trials_plot.{{ext}}",
     localrule: True
-    group:
-        "sys_id"
     script:
         "../src/scripts/plot_expt_data_trials.py"
 
@@ -470,8 +469,6 @@ rule plot_sys_id_data_wide:
     output:
         f"results/{params_str}/sys_id_wide_plot_{{style}}.{{ext}}",
     localrule: True
-    group:
-        "sys_id"
     script:
         "../src/scripts/plot_expt_data_wide.py"
 
@@ -489,11 +486,11 @@ rule sys_id_expts:
         n_trials_sys_id_max=config["star_sweep_params"]["n_trials_sys_id"][-1],
     output:
         f"results/{params_str}/sys_id_data.pkl.gz",
-    group:
-        "sys_id"
     log:
         f"logs/{params_str}/sys_id_expts.log",
-    retries: 2  # since there can be conflicts hitting the cython cache
+    conda:
+        "envs/main.yaml"
+    retries: 1  # since there can be conflicts hitting the cython cache
     script:
         "../src/scripts/sys_id_expts.py"
 
@@ -506,6 +503,7 @@ rule impulse_responses:
     output:
         f"results/{params_str}/impulse_responses_wide_plot.png",
         f"results/{params_str}/impulse_responses_trials_plot.png",
+    localrule: True
     script:
         "../src/scripts/impulse_responses.py"
 
@@ -544,8 +542,6 @@ rule plot_cleo:
         fsnn_params,
         step_params("cleo_prep"),
     localrule: True
-    group:
-        "prep_fsnn"
     script:
         "../src/scripts/plot_cleo.py"
 
@@ -565,8 +561,7 @@ rule cleo_prep:
         f"results/{params_str}/cleo_prep.pkl.gz",
     log:
         f"logs/{params_str}/cleo_prep.log",
-    group:
-        "prep_fsnn"
+    localrule: True
     script:
         "../src/scripts/cleo_prep.py"
 
@@ -578,8 +573,6 @@ rule plot_fsnn:
     output:
         f"results/{params_str}/fsnn_plot.png",
     localrule: True
-    group:
-        "prep_fsnn"
     script:
         "../src/scripts/plot_fsnn.py"
 
@@ -598,8 +591,7 @@ rule analyze_fsnn_data:
         f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz",
     output:
         f"results/{params_str}/fsnn_{{mode}}_data_analysis.csv",
-    group:
-        "prep_fsnn"
+    localrule: True
     script:
         "../src/scripts/analyze_fsnn_data.py"
 
@@ -613,8 +605,6 @@ rule plot_fsnn_data:
     output:
         f"results/{params_str}/fsnn_{{mode}}_data_plot.{{ext}}",
     localrule: True
-    group:
-        "prep_fsnn"
     script:
         "../src/scripts/plot_fsnn_data.py"
 
@@ -642,6 +632,29 @@ def fsnn_outputs(save_fsnn, save_data):
     return outputs
 
 
+def gpu_for_fsnn_train(wc):
+    return int(wc["mode"] == "train" and config["train_device"] == "cuda")
+
+
+def fsnn_runtime(wc):
+    params = fsnn_params(wc)
+    scale = float(wc["density_scale"]) * float(wc["network_area_scale"])
+    # observed per-trial runtimes for small networks
+    # got 5.4 seconds per trial for demean on big network (*6)
+    base_no_train_s = 1 * scale**1.2  # scales less than quadratically
+    base_train_s = 60 * scale**2  # scales quadratically (with synapses)
+    runtime_s = params["n_init_trials"] * base_no_train_s
+    if wc["mode"] == "train":
+        runtime_s += params["n_main_trials"] * base_train_s
+    else:
+        runtime_s += params["n_main_trials"] * base_no_train_s
+    runtime_s += params["n_settle_trials"] * base_no_train_s
+
+    runtime_s += 120  # for compilation, overhead, etc.
+
+    return int(runtime_s / 60)  # in minutes
+
+
 # 3 fsnn rules, flexibly save fSNN and/or data
 rule _prep_fsnn:
     input:
@@ -650,11 +663,14 @@ rule _prep_fsnn:
         fsnn_params,
     log:
         f"logs/{params_str}/prep_fsnn_{{mode}}.log",
+    threads: lambda wc: max(1, 8 * gpu_for_fsnn_train(wc))
     resources:
-        # need GPU only for training
-        gpu=lambda wc: int(wc["mode"] == "train" and config["train_device"] == "cuda"),
-    group:
-        "prep_fsnn_{mode}"
+        gpu=gpu_for_fsnn_train,
+        gpu_jobs=gpu_for_fsnn_train,
+        runtime=fsnn_runtime,
+    retries: 1
+    conda:
+        "envs/main.yaml"
     script:
         "../src/scripts/prep_fsnn.py"
 
@@ -688,5 +704,6 @@ rule plot_schematic:
         side=multiext(f"results/{params_str}/side_schematic", ".svg", ".png"),
     params:
         step_params("prep_fsnn", "cleo_prep"),
+    localrule: True
     script:
         "../src/scripts/plot_schematic.py"
