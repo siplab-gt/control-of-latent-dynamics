@@ -185,7 +185,7 @@ def ctrl_expts(
 
 if __name__ == "__main__" and "snakemake" in locals():
     fh = setup_logging(snakemake.config, snakemake.log[0])
-    # setup_debugger()
+    setup_debugger(snakemake.config["debug"])
 
     ctrl_expts(
         preprocess_params(snakemake.wildcards),

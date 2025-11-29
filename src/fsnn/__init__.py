@@ -297,7 +297,6 @@ class fSNN(BaseDataClass):
                 namespace=self._get_namespace(t_ta_start=0 * b2.ms),
                 profile=(_mode == mode),
             )
-        # setup_debugger()
 
     def __reduce__(self):
         net_state = {}

@@ -168,7 +168,7 @@ if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
     log_fh = setup_logging(snakemake.config, snakemake.log[0])
-    # setup_debugger()
+    setup_debugger(snakemake.config["debug"])
 
     run_sys_id_expts(
         preprocess_params(snakemake.wildcards),

@@ -65,7 +65,7 @@ if __name__ == "__main__" and "snakemake" in locals():
     model_fit_pred_data = ModelFitPredData.load(snakemake.input[0])
     expt_data = ExptData.load(snakemake.input[1])
     lds = LDS.load(snakemake.input[2])
-    # setup_debugger()
+    setup_debugger(snakemake.config["debug"])
 
     plot_model_fit_predictions(
         preprocess_params(snakemake.wildcards),

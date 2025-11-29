@@ -377,7 +377,7 @@ rule ctrl_expts:
         "envs/main.yaml"
     log:
         f"logs/{params_str}/ctrl_expts.log",
-    retries: 2
+    retries: 1
     script:
         "../src/scripts/ctrl_expts.py"
 

@@ -128,7 +128,7 @@ def plot_all(ctrl_data: CtrlData, outfile, setting="", style="default"):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    # setup_debugger()
+    setup_debugger(snakemake.config["debug"])
     style_plots()
     expt_data = CtrlData.load(snakemake.input[0])
     style = snakemake.wildcards.get("style", "default")

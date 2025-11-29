@@ -99,7 +99,7 @@ def impulse_responses(
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    # setup_debugger()
+    setup_debugger(snakemake.config["debug"])
     impulse_responses(
         preprocess_params(snakemake.wildcards),
         preprocess_params(snakemake.params),

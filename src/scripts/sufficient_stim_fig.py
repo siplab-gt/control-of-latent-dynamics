@@ -120,6 +120,6 @@ def main(cfg, results_csv, outfiles):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    # setup_debugger()
+    setup_debugger(snakemake.config["debug"])
 
     main(snakemake.config, snakemake.input[0], snakemake.output)
