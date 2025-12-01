@@ -39,6 +39,7 @@ class fSNN(BaseDataClass):
             syn_y2s=["wLeft", "wRight"],
             syn_z2yPlus=["W"],
             ng_y=["y"],
+            ng_z=["z"],
         )
     )
     _cache: dict = field(repr=False, default_factory=dict)
