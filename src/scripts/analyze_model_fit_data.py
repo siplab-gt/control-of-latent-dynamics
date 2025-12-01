@@ -22,9 +22,7 @@ def analyze_model_fit_data(
             Z, model_fit_pred_data.Zhat, multioutput="variance_weighted"
         ),
         # sanity check: should be 1
-        "R2_model_fit_Z_X": LinearRegression()
-        .fit(X, Z)
-        .score(X, Z, multioutput="variance_weighted"),
+        "R2_model_fit_Z_X": LinearRegression().fit(X, Z).score(X, Z),
         "R2_model_fit_Y_Yhat": r2_score(Y, model_fit_pred_data.Yhat)
         if Y.shape[1] > 0
         else np.nan,
