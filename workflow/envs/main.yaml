@@ -1,3 +1,5 @@
+# mostly has snakemake dependencies
+# others are defined in pyproject.toml and are included in the pip install
 name: cold
 channels:
   - bioconda
@@ -7,7 +9,8 @@ dependencies:
   - pip
   # - cuda-11.6 # for brian2cuda
   - snakemake
+  - conda>=24.7.1
   - pip:
-      - -e ../..
+      - -e . # must run from repo root
       - snakemake-logger-plugin-snkmt
       - snakemake-executor-plugin-slurm

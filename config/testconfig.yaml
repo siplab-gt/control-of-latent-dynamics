@@ -6,7 +6,7 @@
 grid_sweep_params:
   seed:
     - 17230616
-    # - 18051223
+    - 18051223
     # - 16320829
     # - 18060520
     # - 18220427
@@ -16,8 +16,8 @@ grid_sweep_params:
 ###################################################
 star_sweep_params:
   n_trials_sys_id:
-    - 5
     - 10
+    - 20
   # offset to number of PCs used to train fSNN, which is also used as ground-truth n_x
   n_latent_dims_offset:
     - -2
@@ -42,14 +42,14 @@ star_sweep_params:
 
 star_sweep_params_measurement_only:
   signals:
-    # - spikes
+    - spikes
     - lfp
     # - both
 
 # #################
 reference_params:
   #   ###############
-  n_trials_sys_id: 10 # TODO
+  n_trials_sys_id: 20 # TODO
   # n_latent_dims_offset: 0
   # density_scale: 1
   # network_area_scale: 1.44
@@ -58,6 +58,26 @@ reference_params:
   # model_task_inputs: true
   signals: lfp
 
+# question-specific parameters
+##############################
+
+q1: # a.k.a. sufficient stim, how many channels are good enough?
+  ##############################################################
+  sufficient_ctrl: 0.9
+  k:
+    - 1
+    # - 2
+    # - 4
+    - 8
+    # - 16
+    - 32
+    - 64
+  m: NA
+
+q2: # a.k.a. optimal stim/rec balance
+  ###################################
+  channel_budget: 64
+  num_stim_ratio_levels: 4 # instead of 7
 # #########################################
 # # base parameters, used across conditions
 # #########################################
@@ -94,5 +114,5 @@ ctrl_expts:
   #   R_cost: 1e-3
   #   ctrl_horizon_ms: 300
   #   # n_trials_ctrl: 100
-  n_trials_ctrl: 5
+  n_trials_ctrl: 10
 #   baseline_latency_ms: 1

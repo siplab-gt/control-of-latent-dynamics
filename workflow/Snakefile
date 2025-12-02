@@ -1,7 +1,5 @@
-conda: "envs/main.yaml"
-
-
 from copy import deepcopy
+from math import ceil
 import numpy as np
 import pandas as pd
 import itertools
@@ -359,6 +357,30 @@ use rule plot_ctrl_data_wide as plot_ctrl_data_wide_default with:
         f"results/{params_str}/ctrl_data_wide_plot.png",
 
 
+def fsnn_mem_required(wc):
+    return 4000 * (1 + float(wc["density_scale"]) * float(wc["network_area_scale"]) / 6)
+
+
+def runtime_min(n_trials, n_train_trials=0, multiplier=1):
+    def f(wc):
+        scale = float(wc["density_scale"]) * float(wc["network_area_scale"])
+        # observed per-trial runtimes for small networks
+        # got 5.4 seconds per trial for demean on big network (*6)
+        # get ~1s/trial on Myelin, but ~7 for PACE.
+        # actually, around 16 on average for control on PACE.
+        # scales less than quadratically
+        trial_runtime_min = 16 / 60 * scale**1.2 * multiplier
+        # scales quadratically (with synapses)
+        train_trial_runtime_min = 60 / 60 * scale**2 * multiplier
+
+        runtime = 2  # overhead
+        runtime += n_trials * trial_runtime_min
+        runtime += n_train_trials * train_trial_runtime_min
+        return ceil(runtime)
+
+    return f
+
+
 rule ctrl_expts:
     input:
         "src/ctrl/__init__.py",
@@ -374,7 +396,10 @@ rule ctrl_expts:
     output:
         data=f"results/{params_str}/ctrl_data.pkl.gz",
     conda:
-        "envs/main.yaml"
+        "cold"
+    resources:
+        mem_mb=fsnn_mem_required,
+        runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=2),
     log:
         f"logs/{params_str}/ctrl_expts.log",
     retries: 1
@@ -421,8 +446,9 @@ rule analyze_model_fit_data:
         "../src/scripts/analyze_model_fit_data.py"
 
 
+# assume BRAID, GPU, heavier resources when not sufficient stim (known factors)
 def gpu_for_model_fit(wc):
-    return int(wc.setting == "optimal_stim_rec" and config["model_fit_device"] == "gpu")
+    return int(wc.setting != "sufficient_stim" and config["model_fit_device"] == "gpu")
 
 
 rule model_fit:
@@ -446,9 +472,13 @@ rule model_fit:
     resources:
         gpu=gpu_for_model_fit,
         gpu_jobs=gpu_for_model_fit,
+        mem_mb=lambda wc: 32000 if wc.setting != "sufficient_stim" else 4000,
+        # since slurm executor sets to 1, which breaks
+        tasks_per_gpu=0,
+        runtime=lambda wc: 60 if wc.setting != "sufficient_stim" else 2,
     retries: 1
     conda:
-        "envs/main.yaml"
+        "cold"
     log:
         f"logs/{params_str}/model_fit.log",
     script:
@@ -486,18 +516,24 @@ use rule plot_sys_id_data_wide as plot_sys_id_data_wide_default with:
         f"results/{params_str}/sys_id_wide_plot.{{ext}}",
 
 
+n_trials_sys_id_max = config["star_sweep_params"]["n_trials_sys_id"][-1]
+
+
 rule sys_id_expts:
     input:
         paths_for_params("cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")),
     params:
         step_params("cleo_prep", "expts", "sys_id_expts"),
-        n_trials_sys_id_max=config["star_sweep_params"]["n_trials_sys_id"][-1],
+        n_trials_sys_id_max=n_trials_sys_id_max,
     output:
         f"results/{params_str}/sys_id_data.pkl.gz",
     log:
         f"logs/{params_str}/sys_id_expts.log",
     conda:
-        "envs/main.yaml"
+        "cold"
+    resources:
+        mem_mb=fsnn_mem_required,
+        runtime=runtime_min(n_trials_sys_id_max, multiplier=1.5),
     retries: 1  # since there can be conflicts hitting the cython cache
     script:
         "../src/scripts/sys_id_expts.py"
@@ -646,21 +682,15 @@ def gpu_for_fsnn_train(wc):
 
 def fsnn_runtime(wc):
     params = fsnn_params(wc)
-    scale = float(wc["density_scale"]) * float(wc["network_area_scale"])
-    # observed per-trial runtimes for small networks
-    # got 5.4 seconds per trial for demean on big network (*6)
-    base_no_train_s = 1 * scale**1.2  # scales less than quadratically
-    base_train_s = 60 * scale**2  # scales quadratically (with synapses)
-    runtime_s = params["n_init_trials"] * base_no_train_s
-    if wc["mode"] == "train":
-        runtime_s += params["n_main_trials"] * base_train_s
+    n_train_trials = 0
+    n_trials = params["n_init_trials"]
+    if wc.get("mode", None) == "train":
+        n_train_trials += params["n_main_trials"]
     else:
-        runtime_s += params["n_main_trials"] * base_no_train_s
-    runtime_s += params["n_settle_trials"] * base_no_train_s
+        n_trials += params["n_main_trials"]
+    n_trials += params["n_settle_trials"]
 
-    runtime_s += 120  # for compilation, overhead, etc.
-
-    return int(runtime_s / 60)  # in minutes
+    return runtime_min(n_trials, n_train_trials)
 
 
 # 3 fsnn rules, flexibly save fSNN and/or data
@@ -671,14 +701,16 @@ rule _prep_fsnn:
         fsnn_params,
     log:
         f"logs/{params_str}/prep_fsnn_{{mode}}.log",
-    threads: lambda wc: max(1, 8 * gpu_for_fsnn_train(wc))
+    # only use 2 threads; more requires a lot of memory for parallel compilation
+    threads: lambda wc: max(1, 4 * gpu_for_fsnn_train(wc))
     resources:
         gpu=gpu_for_fsnn_train,
         gpu_jobs=gpu_for_fsnn_train,
         runtime=fsnn_runtime,
+        mem_mb=lambda wc: fsnn_mem_required(wc) if wc["mode"] != "train" else 64000,
     retries: 1
     conda:
-        "envs/main.yaml"
+        "cold"
     script:
         "../src/scripts/prep_fsnn.py"
 

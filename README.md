@@ -22,8 +22,16 @@ mamba env create -f workflow/envs/main.yaml
 mamba activate cold
 ```
 
+Since Snakemake's conda method straight from the file struggles with the relative path to install the source package here, we just make sure to prepare the environment first.
+Keep this environment up-to-date with the env file like so:
+
+```bash
+mamba env update -n cold -f workflow/envs/main.yaml --prune 
+```
+
 ## Usage
 
 Simply run `snakemake`.
-To run on GT's PACE, include the `--profile pace` flag.
+To run on GT's PACE, include the `--profile pace` flag---better yet, copy or link this file to `~/.config/snakemake/default` so it's automatic.
 To debug a given output, run `snakemake [target] --config debug=true`
+The recommended way to run is from a login node, not as a SLURM job---since this is long-running, make sure to do so from a tmux session.

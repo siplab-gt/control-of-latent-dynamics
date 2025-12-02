@@ -41,6 +41,11 @@ def main(
     else:
         assert device == "cython"
         b2.prefs.codegen.target = "cython"
+        # this will result in subsequent steps being unable to use the cache.
+        # an unfortunate necessity to be able to deactivate the slow multiprocess_safe file-locking
+        cache_dir = f"resources/cython_cache/{os.uname().nodename}-{os.getpid()}"
+        b2.prefs.codegen.runtime.cython.cache_dir = cache_dir
+        b2.prefs.codegen.runtime.cython.multiprocess_safe = False
 
     if fsnn_infile is not None:
         log.info(f"loading fSNN from {fsnn_infile}")

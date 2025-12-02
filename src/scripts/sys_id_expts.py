@@ -99,6 +99,10 @@ class ExptData(BaseDataClass):
             i_trial_boundaries=i_trial_bounds,
         )
         assert np.all(expt_data.t_ms == expt_data.t_samp_ms)
+        assert expt_data.X.shape[0] == expt_data.Y.shape[0] == expt_data.Z.shape[0], (
+            f"{expt_data.X.shape}, {expt_data.Y.shape}, {expt_data.Z.shape}"
+        )
+
         return expt_data
 
 
