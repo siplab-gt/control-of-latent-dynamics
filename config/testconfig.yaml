@@ -63,7 +63,6 @@ reference_params:
 
 q1: # a.k.a. sufficient stim, how many channels are good enough?
   ##############################################################
-  sufficient_ctrl: 0.9
   k:
     - 1
     # - 2

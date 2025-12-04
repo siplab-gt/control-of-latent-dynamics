@@ -10,7 +10,7 @@ def main(cfg, results_csv, outfiles):
     psty.style_plots()
     df = pd.read_csv(results_csv)
     expl_params = cfg["star_sweep_params"]
-    plots_per_row = 4
+    plots_per_row = 3
     rows = (len(expl_params) + plots_per_row - 1) // plots_per_row
 
     fig, axs = plt.subplots(
@@ -78,43 +78,77 @@ def main(cfg, results_csv, outfiles):
         lw=2,
     )
 
-    # vmin, vmax = 0, 1
-    # TODO: use 0, 1 for real, but using data range for now to see more variation
-    vmin, vmax = df[metric].min(), df[metric].max()
-    # TODO
-    vmin = max(vmin, -1)
-    vmax = min(vmax, 1)
-    for ep, ax in zip(expl_params, axs_grid.flatten()):
-        conds2keep = ref_condition.copy()
-        del conds2keep[ep]
-        query_str = " and ".join(
-            [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
-        )
-        subset = df.query(query_str)
-        # average over seeds
-        subset = subset.groupby([ep, "k"])[[metric]].mean().reset_index()
-        subset = subset.pivot(index="k", columns=ep, values=metric)
-        sns.heatmap(
-            subset,
-            ax=ax,
-            vmin=vmin,
-            vmax=vmax,
-            center=0,
-            cmap=psty.div_cmap,
-            cbar=False,
+    def plot_heatmaps(hm_fig, hm_axs, mean_or_std):
+        # vmin, vmax = 0, 1
+        # TODO: use 0, 1 for real, but using data range for now to see more variation
+        vmin, vmax = df[metric].min(), df[metric].max()
+        # TODO
+        vmin = max(vmin, -1)
+        vmax = min(vmax, 1)
+        heatmap_kwargs = dict(
+            mean=dict(
+                vmin=vmin,
+                vmax=vmax,
+                center=0,
+                cmap=psty.div_cmap,
+            ),
+            std=dict(cmap=psty.cmap),
+        )[mean_or_std]
+        for ep, ax in zip(expl_params, hm_axs.flatten()):
+            conds2keep = ref_condition.copy()
+            del conds2keep[ep]
+            query_str = " and ".join(
+                [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
+            )
+            subset = df.query(query_str)
+            # average over seeds
+            subset = subset.groupby([ep, "k"])[[metric]]
+            subset = getattr(subset, mean_or_std)().reset_index()
+            subset = subset.pivot(index="k", columns=ep, values=metric)
+            sns.heatmap(
+                subset,
+                ax=ax,
+                cbar=False,
+                **heatmap_kwargs,
+            )
+            ax.invert_yaxis()
+
+        for ax in hm_axs[:, 1:].flatten():
+            ax.set(ylabel="")
+
+        hm_fig.colorbar(
+            hm_axs[0, 0].collections[0],
+            ax=hm_axs,
+            label=mean_or_std + r" $Q_\text{track}\left(X_\text{ref}, X\right)$",
         )
 
-    for ax in axs_grid[:, 1:].flatten():
-        ax.set(ylabel="")
-
-    fig.colorbar(
-        axs_grid[0, 0].collections[0],
-        ax=axs_grid,
-        label=r"$Q_\text{track}\left(X_\text{ref}, X\right)$",
-    )
+    # main fig (top + heatmaps)
+    plot_heatmaps(fig, axs_grid, "mean")
     for f in outfiles:
         print(f"Saving figure to {f}")
         fig.savefig(f)
+
+    fig_hm_mean, axs_hm_mean = plt.subplots(
+        rows,
+        plots_per_row,
+        figsize=(psty.double_col_width, 2 * (rows)),
+        layout="compressed",
+        sharey="row",
+    )
+    plot_heatmaps(fig_hm_mean, axs_hm_mean, "mean")
+    for f in outfiles.heatmaps_mean:
+        fig_hm_mean.savefig(f)
+
+    fig_hm_std, axs_hm_std = plt.subplots(
+        rows,
+        plots_per_row,
+        figsize=(psty.double_col_width, 2 * (rows)),
+        layout="compressed",
+        sharey="row",
+    )
+    plot_heatmaps(fig_hm_std, axs_hm_std, "std")
+    for f in outfiles.heatmaps_std:
+        fig_hm_std.savefig(f)
 
 
 if __name__ == "__main__" and "snakemake" in locals():

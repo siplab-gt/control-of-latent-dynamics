@@ -20,8 +20,14 @@ c["ol"] = c["a1"]
 c["y"] = c["a2"]
 c["z"] = c["a3"]
 
+ctrl_palette = {
+    "OL": c["ol"],
+    "LQMPC": c["mpc"],
+    "LQMPC no latency": "black",
+}
+
 cmap = sns.light_palette(c["dark"], as_cmap=True)
-div_cmap = sns.color_palette("icefire", as_cmap=True)
+div_cmap = sns.color_palette("icefire_r", as_cmap=True)
 
 double_col_width = 17 / 2.54
 

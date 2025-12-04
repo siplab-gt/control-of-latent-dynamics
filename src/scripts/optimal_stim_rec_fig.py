@@ -14,7 +14,7 @@ def main(cfg, results_csv, outfiles):
         {True: ", w/ latency", False: ""}
     )
     expl_params = cfg["star_sweep_params"]
-    plots_per_row = 4
+    plots_per_row = 3
     rows = (len(expl_params) + plots_per_row - 1) // plots_per_row
 
     fig, axs = plt.subplots(
@@ -34,11 +34,16 @@ def main(cfg, results_csv, outfiles):
     ref_condition = cfg["reference_params"]
 
     # top plot
-    metric = "Q_track_Xref_X_fsnn"
+    metric = "Q_track_Zref_Z"
     ref_cond_except_latency = ref_condition.copy()
     del ref_cond_except_latency["latency"]
     ref_data = df.query(
-        " and ".join([f"{k} == {v}" for k, v in ref_cond_except_latency.items()])
+        " and ".join(
+            [
+                f"({k} == {v!r} or {k}.isnull())"
+                for k, v in ref_cond_except_latency.items()
+            ]
+        )
     ).copy()
 
     sns.lineplot(
@@ -76,7 +81,9 @@ def main(cfg, results_csv, outfiles):
         for ep, ax in zip(expl_params, lp_axs.flatten()):
             conds2keep = ref_condition.copy()
             del conds2keep[ep], conds2keep["latency"]
-            query_str = " and ".join([f"{k} == {v}" for k, v in conds2keep.items()])
+            query_str = " and ".join(
+                [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
+            )
             subset = df.query(query_str)
             assert len(subset[ep].unique()) > 1, f"No variation in {ep} in subset"
             # get p_stim values corresponding to max Q (argmax)
@@ -99,28 +106,48 @@ def main(cfg, results_csv, outfiles):
         for ax in lp_axs[:, 1:].flatten():
             ax.set(ylabel="")
 
-    def plot_heatmaps(hm_axs, mean_or_std):
+    def plot_heatmaps(hm_fig, hm_axs, mean_or_std):
         vmin, vmax = 0, 1
         # TODO: use 0, 1 for real, but using data range for now to see more variation
         vmin, vmax = df[metric].min(), df[metric].max()
+        # TODO: limit vmin, vmax to reasonable range
+        # vmin = max(vmin, -1)
+        # vmax = min(vmax, 1)
+        heatmap_kwargs = dict(
+            mean=dict(
+                vmin=vmin,
+                vmax=vmax,
+                center=0,
+                cmap=psty.div_cmap,
+            ),
+            std=dict(cmap=psty.cmap),
+        )[mean_or_std]
         for ep, ax in zip(expl_params, hm_axs.flatten()):
             conds2keep = ref_condition.copy()
             del conds2keep[ep]
-            query_str = " and ".join([f"{k} == {v}" for k, v in conds2keep.items()])
+            query_str = " and ".join(
+                [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
+            )
             subset = df.query(query_str)
             # average over seeds
             subset = subset.groupby([ep, "k"])[[metric]]
             subset = getattr(subset, mean_or_std)().reset_index()
             subset = subset.pivot(index="k", columns=ep, values=metric)
-            sns.heatmap(subset, ax=ax, vmin=vmin, vmax=vmax, cmap=psty.cmap, cbar=False)
+            sns.heatmap(
+                subset,
+                ax=ax,
+                cbar=False,
+                **heatmap_kwargs,
+            )
+            ax.invert_yaxis()
 
         for ax in hm_axs[:, 1:].flatten():
             ax.set(ylabel="")
 
-        fig.colorbar(
+        hm_fig.colorbar(
             hm_axs[0, 0].collections[0],
             ax=hm_axs,
-            label=mean_or_std + r" $Q_\text{track}\left(X_\text{ref}, X\right)$",
+            label=mean_or_std + r" $Q_\text{track}\left(Z_\text{ref}, Z\right)$",
         )
 
     # main fig
@@ -136,7 +163,7 @@ def main(cfg, results_csv, outfiles):
         layout="compressed",
         sharey="row",
     )
-    plot_heatmaps(axs_hm_mean, "mean")
+    plot_heatmaps(fig_hm_mean, axs_hm_mean, "mean")
     for f in outfiles.heatmaps_mean:
         fig_hm_mean.savefig(f)
 
@@ -147,7 +174,7 @@ def main(cfg, results_csv, outfiles):
         layout="compressed",
         sharey="row",
     )
-    plot_heatmaps(axs_hm_std, "std")
+    plot_heatmaps(fig_hm_std, axs_hm_std, "std")
     for f in outfiles.heatmaps_std:
         fig_hm_std.savefig(f)
 

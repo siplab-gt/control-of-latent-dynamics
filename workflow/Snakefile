@@ -183,7 +183,7 @@ rule main_figs:
         heatmaps_std=multiext("results/figs/{setting}_{task}_heatmaps_std", *fig_exts),
     localrule: True
     script:
-        "../src/scripts/{wildcards.setting}_fig.py"
+        "../src/scripts/main_figs.py"
 
 
 rule sufficient_stim_tabulate:
