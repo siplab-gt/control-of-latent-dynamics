@@ -37,8 +37,22 @@ def compute_k_suff(subset_df, ep, metric, ref_data, cfg, **kwargs):
         suff_rows = group[group[metric] >= Q_suff]
         if suff_rows.empty:
             return pd.Series({"k_suff": float("nan")})
-        else:
+
+        first_sufficient_idx = suff_rows.index[0]
+        if first_sufficient_idx == group.index[0]:
+            # First point is already sufficient
             return pd.Series({"k_suff": suff_rows.k.min()})
+
+        # Get last insufficient and first sufficient points
+        last_insufficient = group.loc[:first_sufficient_idx].iloc[-2]
+        first_sufficient = group.loc[first_sufficient_idx]
+
+        # Linear interpolation
+        k1, q1 = last_insufficient["k"], last_insufficient[metric]
+        k2, q2 = first_sufficient["k"], first_sufficient[metric]
+        k_suff = k1 + (Q_suff - q1) * (k2 - k1) / (q2 - q1)
+
+        return pd.Series({"k_suff": k_suff})
 
     return (
         subset_df.groupby([ep, "ctrl_latency", "seed"])
@@ -159,6 +173,7 @@ def main(
                 legend=False,
                 palette=psty.ctrl_palette,
                 **psty.sns_errorbar_kwargs,
+                marker="D",
             )
             # ax.set(ylim=(0, 1))
         for ax in lp_axs[:, 1:].flatten():
