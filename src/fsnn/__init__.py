@@ -178,6 +178,10 @@ class fSNN(BaseDataClass):
         """weights from inputs to neurons"""
         return np.hstack([task.u_in for task in self.tasks])
 
+    @property
+    def W(self) -> Float[np.ndarray, "{self.n_out} {self.n_factors + 1}"]:
+        return self.syn_z2yPlus.W[:].reshape((self.ng_z.N, self.ng_yPlus.N))
+
     def generate_trial(
         self, rng, ctrl=False
     ) -> tuple[
@@ -186,7 +190,9 @@ class fSNN(BaseDataClass):
         """returns ytilde,fout,fin,nsteps_trial,cond,i_trial_start_end,nsteps_iti"""
         task = rng.choice(self.tasks)
         gen_trial_state = self._cache.get("gen_trial_state", {})
-        trial_params = task.generate_trial(rng, ctrl=ctrl, **gen_trial_state)
+        # only get output weights W when needed for control trials
+        W = self.W if ctrl else None
+        trial_params = task.generate_trial(rng, ctrl=ctrl, W=W, **gen_trial_state)
         # e.g., x for rate network state
         self._cache["gen_trial_state"] = trial_params[-1]
         return trial_params[:-1]
