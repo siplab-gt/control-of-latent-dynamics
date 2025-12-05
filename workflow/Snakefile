@@ -186,6 +186,32 @@ rule main_figs:
         "../src/scripts/main_figs.py"
 
 
+rule diagnostic_figs:
+    input:
+        "src/plot_style.py",
+        csvs=["results/{setting}_{task}.csv"],
+    output:
+        multiext("results/figs/{setting}_{task}_diagnostics", *fig_exts),
+    localrule: True
+    script:
+        "../src/scripts/diagnostic_figs.py"
+
+
+rule diagnostic_figs_combined:
+    input:
+        "src/plot_style.py",
+        csvs=expand(
+            "results/{setting}_{task}.csv",
+            setting=config["manual_sweep_params"]["setting"],
+            task=config["manual_sweep_params"]["task"],
+        ),
+    output:
+        multiext("results/figs/diagnostics", *fig_exts),
+    localrule: True
+    script:
+        "../src/scripts/diagnostic_figs.py"
+
+
 rule sufficient_stim_tabulate:
     input:
         # to get main fig
