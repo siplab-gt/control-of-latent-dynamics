@@ -1,5 +1,6 @@
 import importlib
 import logging
+import os
 from dataclasses import dataclass, field
 
 import brian2.only as b2
@@ -331,6 +332,11 @@ class fSNN(BaseDataClass):
         dt = base_params.dt
         b2.defaultclock.dt = dt
         b2.prefs.core.default_float_dtype = getattr(np, base_params.default_float_dtype)
+        # this will result in subsequent steps being unable to use the cache.
+        # an unfortunate necessity to be able to deactivate the slow multiprocess_safe file-locking
+        cache_dir = f"resources/cython_cache/{os.uname().nodename}-{os.getpid()}"
+        b2.prefs.codegen.runtime.cython.cache_dir = cache_dir
+        b2.prefs.codegen.runtime.cython.multiprocess_safe = False
 
         seed = seed_everything(cond_params["seed"], "train_fsnn")
         rng = np.random.default_rng(seed)

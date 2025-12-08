@@ -501,7 +501,7 @@ rule model_fit:
         mem_mb=lambda wc: 32000 if wc.setting != "sufficient_stim" else 4000,
         # since slurm executor sets to 1, which breaks
         tasks_per_gpu=0,
-        runtime=lambda wc: 60 if wc.setting != "sufficient_stim" else 2,
+        runtime=lambda wc: 120 if wc.setting != "sufficient_stim" else 10,
     retries: 1
     conda:
         "cold"

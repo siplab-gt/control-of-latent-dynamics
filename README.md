@@ -31,7 +31,11 @@ mamba env update -n cold -f workflow/envs/main.yaml --prune
 
 ## Usage
 
-Simply run `snakemake`.
-To run on GT's PACE, include the `--profile pace` flag---better yet, copy or link this file to `~/.config/snakemake/default` so it's automatic.
-To debug a given output, run `snakemake [target] --config debug=true`
-The recommended way to run is from a login node, not as a SLURM job---since this is long-running, make sure to do so from a tmux session.
+- Simply run `snakemake`.
+- To run on GT's PACE, include the `--profile pace` flag---better yet, copy or link this file to `~/.config/snakemake/default` so it's automatic.
+- To debug a given output, run `snakemake [target] --config debug=true`
+- The recommended way to run is from a login node, not as a SLURM job---since this is long-running, make sure to do so from a tmux session.
+- Though sometimes local rules get killed, I presume from using too much memory.
+    - Better to use a small job instead---`sbatch --account {...} workflow/smk-submit-slurm.sbatch`.
+    - Snakemake bails when not run from a main process though...I commented out the `assert workflow.is_main_process` line that did that.
+
