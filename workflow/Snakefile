@@ -425,7 +425,7 @@ rule ctrl_expts:
         "cold"
     resources:
         mem_mb=fsnn_mem_required,
-        runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=2),
+        runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=4),
     log:
         f"logs/{params_str}/ctrl_expts.log",
     retries: 1
