@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 import brian2.only as b2
@@ -14,6 +15,8 @@ from src.helpers import (
     setup_logging,
 )
 from src.scripts.cleo_prep import CleoPrep
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -139,12 +142,15 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     cleo_prep.sim.set_io_processor(
         SysIDProcessor(sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor)
     )
-    cleo_prep.fsnn.record = True
-    cleo_prep.fsnn.mode = "test"
-    for i_trial in range(n_trials):
-        print(f"running sys ID trial {i_trial}")
-        cleo_prep.fsnn.run_trial(rng)
-
+    log.info(f"running {n_trials} sys ID trials")
+    cleo_prep.fsnn.run_trials(
+        n_trials,
+        mode="test",
+        rng=rng,
+        record=True,
+        n_init_trials=0,
+        n_settle_trials=0,
+    )
     print("successfully ran")
 
     if cleo_prep.probe is not None and cond_params.signals in ["spikes", "both"]:

@@ -17,7 +17,7 @@ grid_sweep_params:
 star_sweep_params:
   n_trials_sys_id:
     - 10
-    - 20
+    - 11
   # offset to number of PCs used to train fSNN, which is also used as ground-truth n_x
   n_latent_dims_offset:
     - -2
@@ -49,7 +49,7 @@ star_sweep_params_measurement_only:
 # #################
 reference_params:
   #   ###############
-  n_trials_sys_id: 20 # TODO
+  n_trials_sys_id: 10 # TODO
   # n_latent_dims_offset: 0
   # density_scale: 1
   # network_area_scale: 1.44
@@ -86,11 +86,16 @@ q2: # a.k.a. optimal stim/rec balance
 # # organized by step to easily group in Snakefile params statements
 # ##################################################################
 
+prep_fsnn:
+  n_init_trials: 0
+  n_main_trials: 0
+  # n_settle_trials: 0
+
 prep_fsnn_demean:
   n_init_trials: 5 # 50
   n_main_trials: 10 # 250
+  n_settle_trials: 5 # basically doing init trials for test here
 prep_fsnn_train:
-  n_init_trials: 5
   n_main_trials: 15
   n_settle_trials: 5 # basically doing init trials for test here
 prep_fsnn_test:
@@ -113,5 +118,5 @@ ctrl_expts:
   #   R_cost: 1e-3
   #   ctrl_horizon_ms: 300
   #   # n_trials_ctrl: 100
-  n_trials_ctrl: 10
+  n_trials_ctrl: 5
 #   baseline_latency_ms: 1

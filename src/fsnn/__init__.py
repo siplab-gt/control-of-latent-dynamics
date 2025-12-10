@@ -1,10 +1,12 @@
 import importlib
 import logging
 import os
+import shutil
 from dataclasses import dataclass, field
 
 import brian2.only as b2
 from brian2 import np
+from brian2.codegen.runtime.cython_rt.extension_manager import get_cython_cache_dir
 from jaxtyping import Float, UInt
 from tqdm import tqdm
 
@@ -60,6 +62,19 @@ class fSNN(BaseDataClass):
             return self.net[name]
         return super().__getattribute__(name)
 
+    def __del__(self):
+        # delete cython cache files upon garbage collection
+        # (since we don't reuse them, multiprocess_safe=False)
+        cache_dir = get_cython_cache_dir()
+        assert not cache_dir.endswith("brian_extensions"), (
+            "shouldn't have the default here"
+        )
+        assert (
+            cache_dir == f"resources/cython_cache/{os.uname().nodename}-{os.getpid()}"
+        )
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir, ignore_errors=True)
+
     @property
     def k_task(self) -> int:
         return self.ng_in.N
@@ -95,10 +110,10 @@ class fSNN(BaseDataClass):
 
     @mode.setter
     def mode(self, new_mode):
+        log.debug(f"setting fSNN mode to {new_mode}")
         # settle is an alias for init, for running after main mode
         if new_mode == "settle":
             new_mode = "init"
-        log.debug(f"setting fSNN mode to {new_mode}")
 
         # only update vJsbar during demean
         self.vJsbar_update.active = new_mode == "demean"
@@ -253,7 +268,7 @@ class fSNN(BaseDataClass):
         phases = [
             ("init", n_init_trials, False),
             (mode, n_main_trials, record),
-            ("init", n_settle_trials, False),
+            ("settle", n_settle_trials, False),
         ]
         # must be single giant timed arrays for multiple run calls
         for _mode, n_trials, _record in phases:
