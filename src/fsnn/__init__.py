@@ -213,37 +213,38 @@ class fSNN(BaseDataClass):
         self._cache["gen_trial_state"] = trial_params[-1]
         return trial_params[:-1]
 
-    def run_trial(self, rng, trial_params=None):
-        """run a single trial of the current mode"""
-        # relies on object state to keep track of task state, time, nsteps
-        if trial_params is None:
-            (ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti) = (
-                self.generate_trial(rng)
-            )
-        else:
-            (ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti) = (
-                trial_params
-            )
+    # def run_trial(self, rng, trial_params=None):
+    #     BROKEN SINCE REFACTOR TO RUN EVERYTHING WITH run_trials()
+    #     """run a single trial of the current mode"""
+    #     # relies on object state to keep track of task state, time, nsteps
+    #     if trial_params is None:
+    #         (ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti) = (
+    #             self.generate_trial(rng)
+    #         )
+    #     else:
+    #         (ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti) = (
+    #             trial_params
+    #         )
 
-        T_trial = nsteps_trial * self.dt
-        self.fin_ta = b2.TimedArray(fin, dt=self.dt)
-        self.fout_ta = b2.TimedArray(fout, dt=self.dt)
-        self.ytilde_ta = b2.TimedArray(ytilde, dt=self.dt)
-        self.net.run(
-            T_trial,
-            report="stdout",
-            report_period=self._base_params.report_period,
-            # need this so TimedArrays can work with respect to trial start
-            namespace=self._get_namespace(t_ta_start=self._t_prev),
-        )
-        self._t_prev += T_trial
+    #     T_trial = nsteps_trial * self.dt
+    #     self.fin_ta = b2.TimedArray(fin, dt=self.dt)
+    #     self.fout_ta = b2.TimedArray(fout, dt=self.dt)
+    #     self.ytilde_ta = b2.TimedArray(ytilde, dt=self.dt)
+    #     self.net.run(
+    #         T_trial,
+    #         report="stdout",
+    #         report_period=self._base_params.report_period,
+    #         # need this so TimedArrays can work with respect to trial start
+    #         namespace=self._get_namespace(t_ta_start=self._t_prev),
+    #     )
+    #     self._t_prev += T_trial
 
-        if self.record:
-            self.conditions.append(condition)
-            self.i_trial_boundaries.append(
-                tuple(i + self._i_record_prev for i in i_trial_bounds)
-            )
-            self._i_record_prev += nsteps_trial
+    #     if self.record:
+    #         self.conditions.append(condition)
+    #         self.i_trial_boundaries.append(
+    #             tuple(i + self._i_record_prev for i in i_trial_bounds)
+    #         )
+    #         self._i_record_prev += nsteps_trial
 
     def run_trials(
         self,
@@ -253,9 +254,11 @@ class fSNN(BaseDataClass):
         record=False,
         n_init_trials=50,
         n_settle_trials=0,
+        ctrl=False,
     ):
         """needed for CUDA standalone training: mainly to prep TimedArrays
-        with all trials in advance"""
+        with all trials in advance.
+        Actually, wanted everywhere since with run_trial() cython compiles every time"""
 
         self.mode = "init"
 
@@ -286,7 +289,7 @@ class fSNN(BaseDataClass):
                     condition,
                     i_trial_bounds,
                     nsteps_iti,
-                ) = self.generate_trial(rng)
+                ) = self.generate_trial(rng, ctrl=ctrl)
                 T_trial = nsteps_trial * self.dt
                 fin_all = np.vstack([fin_all, fin])
                 fout_all = np.vstack([fout_all, fout])

@@ -15,7 +15,7 @@ class OLController(Controller):
 
     @property
     def n_horizon(self) -> int:
-        return self.t_to_i(self.t_ctrl_bounds[1] - self.t_ctrl_bounds[0])
+        return self.t_to_i_ctrl(self.t_ctrl_bounds[1] - self.t_ctrl_bounds[0])
 
     def compute_control(self, xhat):
         if self.i_hzn < 0 or self.i_hzn >= self.n_horizon:
@@ -33,7 +33,4 @@ class OLController(Controller):
 
     @property
     def i_hzn(self) -> int:
-        return self.t_to_i(self.t_now - self.t_ctrl_bounds[0])
-
-    def t_to_i(self, t: b2.Quantity) -> int:
-        return int(round(t / self.sample_period))
+        return self.t_to_i_ctrl(self.t_now - self.t_ctrl_bounds[0])

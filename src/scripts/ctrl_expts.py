@@ -119,7 +119,6 @@ def ctrl_expts(
         # use separate RNG for latency measurement/sampling so trials are same regardless
         latency_rng=np.random.default_rng(seed + 18010630),
         sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor,
-        u_task=cleo_prep.fsnn.u_task_,
         # in OL, ctrl_horizon is pre-trial control time; horizon includes whole trial
         ctrl_horizon=base_params.ctrl_horizon,
         Qcost=float(base_params.Q_cost),
@@ -143,18 +142,16 @@ def ctrl_expts(
 
     cleo_prep.sim.set_io_processor(ctrl_proc)
 
-    cleo_prep.fsnn.record = True
-    cleo_prep.fsnn.mode = "test"
-    for i_trial in range(n_trials):
-        log.info(f"running control trial {i_trial}")
-        # in fSNN lingo the trial info is this:
-        # ytilde, fout, fin, nsteps_trial, cond, i_trial_bounds, nsteps_iti
-        # translated to control lingo:
-        Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti = (
-            trial_params := cleo_prep.fsnn.generate_trial(rng, ctrl=True)
-        )
-        ctrl_proc.update_with_trial_info(*trial_params)
-        cleo_prep.fsnn.run_trial(rng=None, trial_params=trial_params)
+    log.info(f"running {n_trials} control trials")
+    cleo_prep.fsnn.run_trials(
+        n_trials,
+        mode="test",
+        rng=rng,
+        record=True,
+        n_init_trials=0,
+        n_settle_trials=0,
+        ctrl=True,
+    )
 
     spike_counts = np.array(ctrl_proc.spike_counts) if ctrl_proc.spike_counts else None
 

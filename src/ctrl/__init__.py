@@ -1,6 +1,7 @@
+import logging
 import time
 from abc import abstractmethod
-from collections.abc import Callable
+from math import ceil, floor
 
 import brian2.only as b2
 import cleo
@@ -14,6 +15,8 @@ from src.helpers import array_vals_by_t
 from src.model_fit import LDS
 from src.scripts.cleo_prep import CleoPrep
 
+log = logging.getLogger(__name__)
+
 
 @define
 class Controller(cleo.ioproc.LatencyIOProcessor):
@@ -26,8 +29,6 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     latency_rng: np.random.Generator = None
     lds: LDS = None
     ref_type: str = None
-    reference_zscored: Callable[[Quantity], Quantity] = None
-    u_task: Callable[[Quantity], np.ndarray] = field(default=lambda t: np.zeros(0))
     """callable with signature t -> task inputs (shape ([T], k_task) array)"""
     ctrl_horizon: Quantity = None
     """control horizon (with time unit). In OL case, this is pre-trial control time."""
@@ -57,16 +58,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     prob: cp.Problem = None
     """cvxpy optimization problem"""
 
-    t_trial_bounds: tuple[Quantity, Quantity] = field(
-        factory=lambda: (0 * ms, 1000 * ms)
-    )
-    """t of start and end of trial (not ITI) where we want to minimize cost"""
-    t_ctrl_bounds: list = field(factory=lambda: [0 * ms, 1 * ms])
-    """t of start and end of control period (including pre-trial control).
-    Rounded to sample period to fully include trial."""
+    i_current_trial: int = 0
+    _measuring_latency: bool = False
 
     def __attrs_post_init__(self):
-        self.reference_zscored = lambda t: np.zeros((*np.shape(t), self.n_r))
         self.reset()
 
     # don't know why I need to make this a field to avoid attrs error
@@ -164,7 +159,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     @property
     def t_now(self) -> Quantity:
-        return self.sim.network.t
+        """rounded to nearest sample period to avoid floating point issues"""
+        return round(self.sim.network.t / self.sample_period) * self.sample_period
 
     @property
     def n_horizon(self) -> int:
@@ -182,6 +178,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     def measure_latency(self) -> tuple[b2.Quantity, b2.Quantity]:
         """returns mean, std of control computation (with Brian unit)"""
+        self._measuring_latency = True
         durations = []
         xpred = np.zeros(self.n)
         Ppred = np.eye(self.n)
@@ -200,6 +197,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
         # take off first 5 to let things warm up
         durations = np.array(durations[5:])
+        self._measuring_latency = False
         return durations.mean() * b2.second, durations.std() * b2.second
 
     def zscore(self, var: np.ndarray, varname: str):
@@ -235,7 +233,67 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     def compute_control(self, xhat):
         pass
 
+    def reference_zscored(self, t: Quantity) -> Quantity:
+        if self._measuring_latency:
+            return np.zeros((*np.shape(t), self.n_r))
+
+        fsnn = self.cleo_prep.fsnn
+        if self.ref_type == "Z":
+            ref = self.zscore(fsnn.fout_ta.values, "z")
+        elif self.ref_type == "X":
+            ref = self.zscore(fsnn.ytilde_ta.values, "x")
+        return array_vals_by_t(ref, t, self.base_dt)
+
+    def u_task(self, t: Quantity) -> np.ndarray:
+        fsnn = self.cleo_prep.fsnn
+        return array_vals_by_t(fsnn.fin_ta.values, t, self.base_dt)
+
+    @property
+    def t_ctrl_bounds(self) -> tuple[b2.Quantity, b2.Quantity]:
+        """t of start and end of control period (including pre-trial control).
+        Rounded to sample period to fully include trial.
+        Just for the current trial."""
+        if self._measuring_latency:
+            return (0 * ms, 1 * ms)
+        i_trial_bounds = self.cleo_prep.fsnn.i_trial_boundaries[self.i_current_trial]
+        t_trial_bounds = [i * self.base_dt for i in i_trial_bounds]
+        # control during trial and a little before
+        t_ctrl_bounds = [
+            t_trial_bounds[0] - self.ctrl_horizon,
+            t_trial_bounds[1],
+        ]
+        # round to nearest ms so modulo will work as expected (not get 4.999999 for example)
+        t_ctrl_bounds = [round(t / ms) * ms for t in t_ctrl_bounds]
+        # round down/up to nearest sample period to fully include trial
+        t_ctrl_bounds[0] = (
+            floor(t_ctrl_bounds[0] / self.sample_period)
+        ) * self.sample_period
+        t_ctrl_bounds[1] = (
+            ceil(t_ctrl_bounds[1] / self.sample_period)
+        ) * self.sample_period
+        T_ctrl = t_ctrl_bounds[1] - t_ctrl_bounds[0]
+        assert np.isclose(
+            round(T_ctrl / self.sample_period), T_ctrl / self.sample_period
+        ), f"{T_ctrl=} not multiple of {self.sample_period=}"
+        return tuple(t_ctrl_bounds)
+
     def process(self, state_dict, t_samp):
+        # update trial bounds if previous one is over
+        # round t_samp to avoid floating point issues
+        t_samp = round(t_samp / ms) * ms
+        n_trials = len(self.cleo_prep.fsnn.i_trial_boundaries)
+        if t_samp >= self.t_ctrl_bounds[1]:
+            if self.i_current_trial < n_trials - 1:
+                log.info(f"finished control trial {self.i_current_trial}")
+                self.i_current_trial += 1
+                assert t_samp < self.t_ctrl_bounds[1], (
+                    f"{t_samp=} not less than {self.t_ctrl_bounds[1]=} after incrementing trial"
+                )
+            else:
+                assert self.i_current_trial == n_trials - 1, (
+                    f"{self.i_current_trial=} not last trial {n_trials - 1=}. {self.t_ctrl_bounds=}"
+                )
+
         if self.cleo_prep.probe is not None:
             if self.signals in ["spikes", "both"]:
                 t, i, counts = state_dict["Probe"]["mua"]
@@ -304,37 +362,45 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         """Returns base simulation timestep"""
         return self.cleo_prep.fsnn.ng_main.clock.dt
 
-    def update_with_trial_info(
-        self, Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti
-    ):
-        """call at start of each trial to update reference and task inputs"""
-        if self.ref_type == "Z":
-            ref = self.zscore(Zref, "z")
-        elif self.ref_type == "X":
-            ref = self.zscore(Xref, "x")
-        t_start = self.t_now
-        self.reference_zscored = lambda t: array_vals_by_t(
-            ref, t - t_start, self.base_dt
-        )
-        self.u_task = lambda t: array_vals_by_t(Utask, t - t_start, self.base_dt)
-        self.t_trial_bounds = tuple(t_start + i * self.base_dt for i in i_trial_bounds)
+    def t_to_i_ctrl(self, t: b2.Quantity) -> int:
+        return int(round(t / self.sample_period))
 
-        # control during trial and a little before
-        self.t_ctrl_bounds = [
-            self.t_trial_bounds[0] - self.ctrl_horizon,
-            self.t_trial_bounds[1],
-        ]
-        # round to nearest ms so modulo will work as expected (not get 4.999999 for example)
-        self.t_ctrl_bounds = [round(t / ms) * ms for t in self.t_ctrl_bounds]
-        # round down/up to nearest sample period to fully include trial
-        self.t_ctrl_bounds[0] -= self.t_ctrl_bounds[0] % self.sample_period
-        self.t_ctrl_bounds[1] += (
-            self.sample_period - (self.t_ctrl_bounds[1] % self.sample_period)
-        ) % self.sample_period
-        T_ctrl = self.t_ctrl_bounds[1] - self.t_ctrl_bounds[0]
-        assert np.isclose(
-            round(T_ctrl / self.sample_period), T_ctrl / self.sample_period
-        ), f"{T_ctrl=} not multiple of {self.sample_period=}"
+    def t_to_i_sim(self, t: b2.Quantity) -> int:
+        return int(round(t / self.base_dt))
+
+    # def update_with_trial_info(
+    #     self, Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti
+    # ):
+    #     """call at start of each trial to update reference and task inputs.
+
+    #     WARNING: only needed when running per trial, not with run_trials()!"""
+    # if self.ref_type == "Z":
+    #     ref = self.zscore(Zref, "z")
+    # elif self.ref_type == "X":
+    #     ref = self.zscore(Xref, "x")
+    # t_start = self.t_now
+    # self.reference_zscored = lambda t: array_vals_by_t(
+    #     ref, t - t_start, self.base_dt
+    # )
+    # self.u_task = lambda t: array_vals_by_t(Utask, t - t_start, self.base_dt)
+    # self.t_trial_bounds = tuple(t_start + i * self.base_dt for i in i_trial_bounds)
+
+    # control during trial and a little before
+    # self.t_ctrl_bounds = [
+    #     self.t_trial_bounds[0] - self.ctrl_horizon,
+    #     self.t_trial_bounds[1],
+    # ]
+    # # round to nearest ms so modulo will work as expected (not get 4.999999 for example)
+    # self.t_ctrl_bounds = [round(t / ms) * ms for t in self.t_ctrl_bounds]
+    # # round down/up to nearest sample period to fully include trial
+    # self.t_ctrl_bounds[0] -= self.t_ctrl_bounds[0] % self.sample_period
+    # self.t_ctrl_bounds[1] += (
+    #     self.sample_period - (self.t_ctrl_bounds[1] % self.sample_period)
+    # ) % self.sample_period
+    # T_ctrl = self.t_ctrl_bounds[1] - self.t_ctrl_bounds[0]
+    # assert np.isclose(
+    #     round(T_ctrl / self.sample_period), T_ctrl / self.sample_period
+    # ), f"{T_ctrl=} not multiple of {self.sample_period=}"
 
 
 for attrib in [
