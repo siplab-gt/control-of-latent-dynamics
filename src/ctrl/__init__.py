@@ -60,6 +60,9 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     i_current_trial: int = 0
     _measuring_latency: bool = False
+    _cached_ref_trajectory: np.ndarray = None
+    """to avoid having to zscore repeatedly (which made memory explode).
+    should be once for all trials, since all trials are run as a block."""
 
     def __attrs_post_init__(self):
         self.reset()
@@ -74,6 +77,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         self.spike_counts = [] if self.signals in ["spikes", "both"] else None
         self._Xhat = []
         self._R = []
+        self._cached_ref_trajectory = None
 
     def init_optimization(self):
         self.Uopt_opto = cp.Variable((self.n_horizon, self.k_opto))
@@ -237,12 +241,16 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         if self._measuring_latency:
             return np.zeros((*np.shape(t), self.n_r))
 
-        fsnn = self.cleo_prep.fsnn
-        if self.ref_type == "Z":
-            ref = self.zscore(fsnn.fout_ta.values, "z")
-        elif self.ref_type == "X":
-            ref = self.zscore(fsnn.ytilde_ta.values, "x")
-        return array_vals_by_t(ref, t, self.base_dt)
+        # Cache reference trajectory once for all trials
+        if self._cached_ref_trajectory is None:
+            fsnn = self.cleo_prep.fsnn
+            if self.ref_type == "Z":
+                ref = self.zscore(fsnn.fout_ta.values, "z")
+            elif self.ref_type == "X":
+                ref = self.zscore(fsnn.ytilde_ta.values, "x")
+            self._cached_ref_trajectory = ref
+
+        return array_vals_by_t(self._cached_ref_trajectory, t, self.base_dt)
 
     def u_task(self, t: Quantity) -> np.ndarray:
         fsnn = self.cleo_prep.fsnn
