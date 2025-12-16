@@ -239,7 +239,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         # Solve the linear system S * X = P_CT for X
         # np.linalg.solve expects A and B such that AX = B
         # Since S is symmetric, solving S * X = P_CT is safe.
-        K = np.linalg.solve(S, P_CT).T
+        K = np.linalg.solve(S, P_CT.T).T
 
         xhat = xpred + K @ yerr
         P = (np.eye(self.n) - K @ self.C) @ Ppred
