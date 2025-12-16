@@ -10,6 +10,7 @@ import numpy as np
 from attrs import define, field
 from brian2 import Quantity, mm2, ms, mwatt, second
 from jaxtyping import Float
+from scipy import stats
 
 from src.helpers import array_vals_by_t
 from src.model_fit import LDS
@@ -200,9 +201,15 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             durations.append(end - start)
 
         # take off first 5 to let things warm up
+        log.debug(f"latency measurement durations (s):\n{durations}")
         durations = np.array(durations[5:])
+        log.debug(f"{stats.describe(durations, bias=False)=}")
         self._measuring_latency = False
-        return durations.mean() * b2.second, durations.std() * b2.second
+        # to make robust to outliers from unreliable compute speed on cluster,
+        # estimate mean and std using median and MAD
+        median = np.median(durations)
+        mad = np.median(np.abs(durations - median))
+        return median * b2.second, mad / 0.6745 * b2.second
 
     def zscore(self, var: np.ndarray, varname: str):
         mean = getattr(self.lds, f"{varname}_mean")

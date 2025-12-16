@@ -424,8 +424,8 @@ rule ctrl_expts:
     conda:
         "cold"
     resources:
-        mem_mb=fsnn_mem_required,
-        runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=4),
+        mem_mb=lambda wc: fsnn_mem_required(wc) * 2,
+        runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=8),
     log:
         f"logs/{params_str}/ctrl_expts.log",
     retries: 1
