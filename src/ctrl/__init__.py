@@ -229,8 +229,18 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         assert np.linalg.norm(Ppred) < 1e100, "Ppred exploded"
         y = self.zscore(y, "y")
         yerr = y - self.C @ xpred  # innovation
+
         # use pinv instead of inv in case of singular matrix (where C has an all-0 zero)
-        K = Ppred @ self.C.T @ np.linalg.pinv(self.C @ Ppred @ self.C.T + self.R)
+        # K = Ppred @ self.C.T @ np.linalg.pinv(self.C @ Ppred @ self.C.T + self.R)
+
+        # More Robust: Use solve
+        S = self.C @ Ppred @ self.C.T + self.R
+        P_CT = Ppred @ self.C.T
+        # Solve the linear system S * X = P_CT for X
+        # np.linalg.solve expects A and B such that AX = B
+        # Since S is symmetric, solving S * X = P_CT is safe.
+        K = np.linalg.solve(S, P_CT).T
+
         xhat = xpred + K @ yerr
         P = (np.eye(self.n) - K @ self.C) @ Ppred
         return xhat, P

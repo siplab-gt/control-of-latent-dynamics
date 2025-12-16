@@ -1,20 +1,23 @@
-from dataclasses import dataclass
-from functools import cache
+from dataclasses import dataclass, field
 
 
-@dataclass
+@dataclass(frozen=True)
 class Solver:
     name: str
     solve_kwargs: dict
     ctrl_type_specific_solve_kwargs: dict
+    _cached_output: dict = field(default_factory=dict, init=False)
 
-    @cache
     def get_solve_kwargs(self, ctrl_type: str) -> dict:
-        return {
-            "solver": self.name,
-            **self.solve_kwargs,
-            **self.ctrl_type_specific_solve_kwargs.get(ctrl_type, {}),
-        }
+        """warning: output is cached and won't autmomatically update
+        if settings are changed after first call"""
+        if ctrl_type not in self._cached_output:
+            self._cached_output[ctrl_type] = {
+                "solver": self.name,
+                **self.solve_kwargs,
+                **self.ctrl_type_specific_solve_kwargs.get(ctrl_type, {}),
+            }
+        return self._cached_output[ctrl_type]
 
 
 OL_MAX_ITERS = int(1e6)
