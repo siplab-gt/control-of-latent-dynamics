@@ -23,18 +23,7 @@ class OLController(Controller):
         if self.i_hzn == 0:
             self.init_optimization()
             self.update_opt_problem(xhat, self.t_now)
-            self.prob.solve(
-                solver="osqp",
-                max_iter=int(1e6),
-                time_limit=2,  # representative of inter-trial interval for reaching
-                ignore_dpp=True,
-                verbose=True,
-                # lower infeasibility threshold (from default 1e-4) since we know the problem is feasible
-                # this goes against the convention that smaller tolerances are more sensitive
-                eps_prim_inf=1e-10,
-                eps_dual_inf=1e-10,
-            )
-            assert self.prob.status not in ["infeasible", "unbounded"]
+            self.solve_optimization("OL")
             self.t_prev_soln = self.t_now
         assert self.i_hzn < self.n_horizon, f"{self.i_hzn=} >= {self.n_horizon=}"
         return self.Uopt_opto.value[self.i_hzn]

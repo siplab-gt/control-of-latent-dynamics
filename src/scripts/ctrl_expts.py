@@ -10,6 +10,7 @@ from sklearn.linear_model import LinearRegression
 from snakemake.script import snakemake
 
 from src.ctrl import Controller
+from src.ctrl.solvers import SOLVERS
 from src.helpers import (
     preprocess_params,
     seed_everything,
@@ -130,15 +131,35 @@ def ctrl_expts(
         signals=cond_params.signals,
     )
 
-    if add_latency:
-        latency_mean, latency_std = ctrl_proc.measure_latency()
+    # Test latency for each solver and order them from fastest to slowest
+    log.info("Testing latency for all solvers...")
+    solver_latencies = []
+    for solver in SOLVERS:
+        ctrl_proc.solvers = [solver]
+        mean_lat, std_lat = ctrl_proc.measure_latency()
+        solver_latencies.append((solver, mean_lat, std_lat))
         log.info(
-            f"measured control computation latency: {latency_mean} +/- {latency_std=}"
+            f"  Solver {solver.name}: {mean_lat / b2.ms:.2f} +/- {std_lat / b2.ms:.2f} ms"
         )
-        ctrl_proc.compute_latency_mean = latency_mean
-        ctrl_proc.compute_latency_std = latency_std
+
+    # Order solvers from fastest to slowest
+    solver_latencies.sort(key=lambda x: x[1])  # Sort by mean latency
+    ordered_solvers = [s[0] for s in solver_latencies]
+    fastest_mean_lat = solver_latencies[0][1]
+    fastest_std_lat = solver_latencies[0][2]
+
+    log.info(f"Fastest solver: {ordered_solvers[0].name}")
+    log.info(f"Solver order: {[s.name for s in ordered_solvers]}")
+
+    # Update controller with ordered solvers and fastest solver's latency stats
+    ctrl_proc.solvers = ordered_solvers
+
+    if add_latency:
+        ctrl_proc.compute_latency_mean = fastest_mean_lat
+        ctrl_proc.compute_latency_std = fastest_std_lat
     else:
-        latency_mean, latency_std = 0 * b2.ms, 0 * b2.ms
+        ctrl_proc.compute_latency_mean = 0 * b2.ms
+        ctrl_proc.compute_latency_std = 0 * b2.ms
 
     cleo_prep.sim.set_io_processor(ctrl_proc)
 
@@ -173,8 +194,8 @@ def ctrl_expts(
         y_mean=lds.y_mean,
         Zhat=Zhat,
         Zref=Zref,
-        compute_latency_mean_ms=latency_mean / b2.ms,
-        compute_latency_std_ms=latency_std / b2.ms,
+        compute_latency_mean_ms=ctrl_proc.compute_latency_mean / b2.ms,
+        compute_latency_std_ms=ctrl_proc.compute_latency_std / b2.ms,
         total_latency_ms=ctrl_proc.latency_mean / b2.ms,
     )
     ctrl_data.save(out_data_file)

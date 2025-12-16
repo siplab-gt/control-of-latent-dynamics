@@ -12,6 +12,7 @@ from brian2 import Quantity, mm2, ms, mwatt, second
 from jaxtyping import Float
 from scipy import stats
 
+from src.ctrl.solvers import Solver
 from src.helpers import array_vals_by_t
 from src.model_fit import LDS
 from src.scripts.cleo_prep import CleoPrep
@@ -39,6 +40,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     state_estimation: str = None
     signals: str = None
     """spikes, LFP, or both"""
+    solvers: list[Solver] = None
+    """list of solvers ordered from fastest to slowest"""
 
     spike_counts: list | None = None
     _Xhat: list = field(factory=list)
@@ -239,6 +242,41 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         Ppred = self.A @ P @ self.A.T + self.Q
 
         return xpred, Ppred
+
+    def solve_optimization(self, ctrl_type: str) -> None:
+        """Solve the optimization problem with fallback through ordered solvers.
+
+        Args:
+            ctrl_type: Control type string (e.g., 'LQMPC', 'OL') for solver-specific settings
+
+        Raises:
+            RuntimeError: If all solvers fail
+        """
+        for i, solver in enumerate(self.solvers):
+            try:
+                solve_kwargs = solver.get_solve_kwargs(ctrl_type)
+                self.prob.solve(**solve_kwargs)
+
+                if self.prob.status not in ["infeasible", "unbounded"]:
+                    if i > 0:
+                        log.warning(
+                            f"Solver {solver.name} succeeded after {i} failed attempts"
+                        )
+                    return
+                else:
+                    log.warning(
+                        f"Solver {solver.name} returned status: {self.prob.status}\n"
+                        f"solver_stats = {self.prob.solver_stats}"
+                    )
+            except Exception as e:
+                log.warning(
+                    f"Solver {solver.name} failed with error: {e}\n"
+                    f"solver_stats = {self.prob.solver_stats}"
+                )
+                if i == len(self.solvers) - 1:
+                    raise
+
+        raise RuntimeError(f"All solvers failed. Last status: {self.prob.status}")
 
     @abstractmethod
     def compute_control(self, xhat):
