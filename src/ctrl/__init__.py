@@ -447,6 +447,11 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     def t_to_i_sim(self, t: b2.Quantity) -> int:
         return int(round(t / self.base_dt))
 
+    @property
+    def R(self) -> Float[np.ndarray, "m m"]:
+        """measurement noise covariance"""
+        return np.reshape(self.lds.R, (self.m, self.m))
+
     # def update_with_trial_info(
     #     self, Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti
     # ):
@@ -484,7 +489,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
 for attrib in [
     "C",
-    "R",
+    # "R",  # defined above to reshape
     "A",
     "B",
     "Q",
