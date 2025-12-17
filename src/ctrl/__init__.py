@@ -275,7 +275,15 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
                 solve_kwargs = solver.get_solve_kwargs(ctrl_type)
                 self.prob.solve(**solve_kwargs)
 
-                if self.prob.status not in ["infeasible", "unbounded"]:
+                if self.prob.status in [
+                    "optimal",
+                    "optimal_inaccurate",
+                    "user_limit",
+                ]:
+                    if self.prob.status == "user_limit":
+                        log.warning(
+                            f"Solver {solver.name} reached user limit but found a solution."
+                        )
                     if i > 0:
                         log.warning(
                             f"Solver {solver.name} succeeded after {i} failed attempts"

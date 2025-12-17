@@ -136,7 +136,11 @@ def ctrl_expts(
     solver_latencies = []
     for solver in SOLVERS:
         ctrl_proc.solvers = [solver]
-        mean_lat, std_lat = ctrl_proc.measure_latency()
+        try:
+            mean_lat, std_lat = ctrl_proc.measure_latency()
+        except RuntimeError as e:
+            log.warning(f"  Solver {solver.name} failed latency test: {e}")
+            mean_lat, std_lat = b2.ms * 1e9, b2.ms * 1e9  # very large latency
         solver_latencies.append((solver, mean_lat, std_lat))
         log.info(
             f"  Solver {solver.name}: {mean_lat / b2.ms:.2f} +/- {std_lat / b2.ms:.2f} ms"
