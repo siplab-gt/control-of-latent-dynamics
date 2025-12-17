@@ -242,7 +242,15 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         K = np.linalg.solve(S, P_CT.T).T
 
         xhat = xpred + K @ yerr
-        P = (np.eye(self.n) - K @ self.C) @ Ppred
+
+        # standard P update is not very stable
+        # P = (np.eye(self.n) - K @ self.C) @ Ppred
+        # Joseph Form Update for P (Stability)
+        IKC = np.eye(self.n) - K @ self.C
+        P = IKC @ Ppred @ IKC.T + K @ self.R @ K.T
+        # Force Symmetry
+        P = (P + P.T) / 2
+
         return xhat, P
 
     def predict_state(self, xhat, u, P):
