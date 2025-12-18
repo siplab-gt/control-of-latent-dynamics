@@ -1,81 +1,48 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from functools import cache
+
+argname_map = {
+    "osqp": {
+        "eps_infeas": ["eps_prim_inf", "eps_dual_inf"],
+    },
+    "clarabel": {
+        "eps_infeas": ["tol_infeas_abs", "tol_infeas_rel"],
+    },
+    "scs": {
+        "max_iter": "max_iters",
+        "time_limit": "time_limit_secs",
+    },
+}
+"""Maps generic solver argument names to solver-specific names when necessary"""
 
 
-@dataclass(frozen=True)
+@cache
+def _generic_to_specific_args(solver_name: str, generic_args: frozenset) -> dict:
+    specific_args = {"solver": solver_name}
+    for k, v in generic_args:
+        k_mapped = argname_map.get(solver_name, {}).get(k, k)
+        if isinstance(k_mapped, list):
+            for kk in k_mapped:
+                specific_args[kk] = v
+        else:
+            specific_args[k_mapped] = v
+    return specific_args
+
+
+@dataclass
 class Solver:
     name: str
-    solve_kwargs: dict
-    ctrl_type_specific_solve_kwargs: dict
-    _cached_output: dict = field(default_factory=dict, init=False)
+    generic_args: dict
 
-    def get_solve_kwargs(self, ctrl_type: str) -> dict:
-        """warning: output is cached and won't autmomatically update
-        if settings are changed after first call"""
-        if ctrl_type not in self._cached_output:
-            self._cached_output[ctrl_type] = {
-                "solver": self.name,
-                **self.solve_kwargs,
-                **self.ctrl_type_specific_solve_kwargs.get(ctrl_type, {}),
-            }
-        return self._cached_output[ctrl_type]
+    @property
+    def specific_args(self) -> dict:
+        """kwargs with solver-specific argument names"""
+        return _generic_to_specific_args(
+            self.name, frozenset(self.generic_args.items())
+        )
 
 
-OL_MAX_ITERS = int(1e6)
-OL_TIME_LIMIT = 2  # representative of inter-trial interval for reaching
-EPS_INFEAS = 1e-10
-
-SHARED_OL = dict(
-    verbose=True,
-    ignore_dpp=True,
-)
-SHARED_LQMPC = dict(
-    warm_start=True,
-    enforce_dpp=True,
-)
-
-SOLVERS = [
-    Solver(
-        "osqp",
-        dict(
-            eps_prim_inf=EPS_INFEAS,
-            eps_dual_inf=EPS_INFEAS,
-        ),
-        dict(
-            OL=SHARED_OL
-            | dict(
-                max_iter=OL_MAX_ITERS,
-                time_limit=OL_TIME_LIMIT,
-            ),
-            LQMPC=SHARED_LQMPC | dict(),
-        ),
-    ),
-    Solver(
-        "clarabel",
-        dict(
-            tol_infeas_abs=EPS_INFEAS,
-            tol_infeas_rel=EPS_INFEAS,
-        ),
-        dict(
-            OL=SHARED_OL
-            | dict(
-                max_iter=OL_MAX_ITERS,
-                time_limit=OL_TIME_LIMIT,
-            ),
-            LQMPC=SHARED_LQMPC | dict(),
-        ),
-    ),
-    Solver(
-        "scs",
-        dict(
-            eps_infeas=EPS_INFEAS,
-        ),
-        dict(
-            OL=SHARED_OL
-            | dict(
-                max_iters=OL_MAX_ITERS,  # note: max_iters (with 's')
-                time_limit_secs=OL_TIME_LIMIT,
-            ),
-            LQMPC=SHARED_LQMPC | dict(),
-        ),
-    ),
-]
+def get_solvers(solvers: list[str], cfg: dict) -> list[Solver]:
+    if "max_iter" in cfg:
+        cfg["max_iter"] = int(cfg["max_iter"])
+    return [Solver(name=name, generic_args=cfg) for name in solvers]

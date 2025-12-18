@@ -104,39 +104,6 @@ q2: # a.k.a. optimal stim/rec balance
   channel_budget: 64
   num_stim_ratio_levels: 7
 
-q3: # how do results change with increasing realism?
-  ##################################################
-  # maybe don't need to hardcode this in? could interpolate
-  # realism_levels:
-  #   0: reference
-  #   1:
-  #     latent_dim: 4
-  #     network_size_um: 2000
-  #     connection_distance_penalty: 1
-  #     connection_layer_penalty: 1
-  #     num_tasks: 1
-  #     # dale's law
-  #   2:
-  #     total_scale: 1
-  #     network_size_um: 1000
-  #     beam_width_um: 100
-  #     beam_spacing: 2
-  #     connection_distance_penalty: 0
-  #     connection_l2_penalty: 0
-  #     stim_channels: 0.5
-
-  # interpolate from least to most realistic setting for each feature
-  # from the one-at-a-time sweeps
-  num_realism_levels: 10
-  realism_features:
-    - latent_dim
-    - network_size_um # or total_scale?
-    - connection_distance_penalty
-    - connection_layer_penalty
-    # TODO: num_tasks
-    # - num_tasks
-    - dales_law
-
 #########################################
 # base parameters, used across conditions
 #########################################
@@ -240,6 +207,26 @@ ctrl_expts:
   ctrl_horizon_ms: 300
   n_trials_ctrl: 100
   baseline_latency_ms: 1
+  solvers: ["osqp", "clarabel", "scs"]
+  # solver_args:
+  # need to define these below since recursive dict merging isn't
+  # implemented when we load params in Snakefile
+
+ctrl_expts_OL:
+  solver_args:
+    max_iter: 1e8 # very high since we want to rely on time limit
+    eps_infeas: 1e-8 # smaller is less sensitive
+    time_limit: 2 # representative of inter-trial interval for reaching
+    verbose: true
+    ignore_dpp: true
+
+ctrl_expts_LQMPC:
+  solver_args:
+    max_iter: 1e8 # very high since we want to rely on time limit
+    eps_infeas: 1e-8 # smaller is less sensitive
+    time_limit: 0.1
+    warm_start: true
+    enforce_dpp: true
 
 ctrl_expts_sufficient_stim:
   ref_type: X # controlling ground-truth factors

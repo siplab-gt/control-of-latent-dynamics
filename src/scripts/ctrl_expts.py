@@ -10,7 +10,7 @@ from sklearn.linear_model import LinearRegression
 from snakemake.script import snakemake
 
 from src.ctrl import Controller
-from src.ctrl.solvers import SOLVERS
+from src.ctrl.solvers import get_solvers
 from src.helpers import (
     preprocess_params,
     seed_everything,
@@ -97,6 +97,17 @@ def ctrl_expts(
 
     lds = LDS.load(lds_model_file)
 
+    # Check stability and scale down A and B if unstable
+    eigenvalues = np.linalg.eigvals(lds.A)
+    max_eigenvalue = np.max(np.abs(eigenvalues))
+    if max_eigenvalue >= 1.0:
+        scale_factor = 0.99 / max_eigenvalue
+        lds.A *= scale_factor
+        lds.B *= scale_factor
+        log.warning(
+            f"LDS unstable (max eigenvalue: {max_eigenvalue:.4f}). Scaled A and B by {scale_factor:.4f}"
+        )
+
     if str2bool(cond_params.model_task_inputs):
         k_task = cleo_prep.fsnn.k_task
     else:
@@ -109,7 +120,9 @@ def ctrl_expts(
         importlib.import_module(f"src.ctrl.{ctrl_type}"),
         f"{ctrl_type.upper()}Controller",
     )
-    add_latency = (cond_params.ctrl_type != "OL") and str2bool(cond_params.latency)
+    add_latency = (cond_params.ctrl_type not in ["NULL", "OL"]) and str2bool(
+        cond_params.latency
+    )
     ctrl_proc: Controller = ControllerType(
         sim=cleo_prep.sim,
         u_max_mWmm2=u_max,
@@ -131,34 +144,51 @@ def ctrl_expts(
         signals=cond_params.signals,
     )
 
-    # Test latency for each solver and order them from fastest to slowest
-    log.info("Testing latency for all solvers...")
-    solver_latencies = []
-    for solver in SOLVERS:
-        ctrl_proc.solvers = [solver]
-        try:
-            mean_lat, std_lat = ctrl_proc.measure_latency()
-        except RuntimeError as e:
-            log.warning(f"  Solver {solver.name} failed latency test: {e}")
-            mean_lat, std_lat = b2.ms * 1e9, b2.ms * 1e9  # very large latency
-        solver_latencies.append((solver, mean_lat, std_lat))
-        log.info(
-            f"  Solver {solver.name}: {mean_lat / b2.ms:.2f} +/- {std_lat / b2.ms:.2f} ms"
-        )
+    if ctrl_type != "NULL":
+        # Test latency for each solver and order them from fastest to slowest
+        log.info("Testing all solvers...")
+        solver_latencies = []
+        for solver in get_solvers(base_params.solvers, base_params.solver_args):
+            ctrl_proc.solvers = [solver]
+            orig_time_limit = solver.generic_args["time_limit"]
+            if ctrl_type == "LQMPC":
+                # raise time limit for LQMPC to choose best solver in case none
+                # can solve with a shorter time limit
+                assert solver.generic_args["time_limit"] < 2, (
+                    f"Time limit is already set to {solver.generic_args['time_limit']}, which is >= 2"
+                )
+                solver.generic_args["time_limit"] = 2
+            try:
+                mean_lat, std_lat = ctrl_proc.measure_latency()
+            except Exception as e:
+                log.warning(f"  Solver {solver.name} failed latency test: {e}")
+                mean_lat, std_lat = b2.ms * 1e9, b2.ms * 1e9  # very large latency
+                # just in case this doesn't get reset
+                ctrl_proc._measuring_latency = False
+            solver_latencies.append((solver, mean_lat, std_lat))
+            log.info(
+                f"  Solver {solver.name}: {mean_lat / b2.ms:.2f} +/- {std_lat / b2.ms:.2f} ms"
+            )
+            solver.generic_args["time_limit"] = orig_time_limit
 
-    # Order solvers from fastest to slowest
-    solver_latencies.sort(key=lambda x: x[1])  # Sort by mean latency
-    ordered_solvers = [s[0] for s in solver_latencies]
-    fastest_mean_lat = solver_latencies[0][1]
-    fastest_std_lat = solver_latencies[0][2]
+        # Order solvers from fastest to slowest
+        solver_latencies.sort(key=lambda x: x[1])  # Sort by mean latency
+        ordered_solvers = [s[0] for s in solver_latencies]
+        fastest_mean_lat = solver_latencies[0][1]
+        fastest_std_lat = solver_latencies[0][2]
 
-    log.info(f"Fastest solver: {ordered_solvers[0].name}")
-    log.info(f"Solver order: {[s.name for s in ordered_solvers]}")
+        log.info(f"Fastest solver: {ordered_solvers[0]}")
+        log.info(f"Solver order: {[s.name for s in ordered_solvers]}")
 
-    # Update controller with ordered solvers and fastest solver's latency stats
-    ctrl_proc.solvers = ordered_solvers
+        # Update controller with ordered solvers and fastest solver's latency stats
+        ctrl_proc.solvers = ordered_solvers
 
     if add_latency:
+        if ctrl_type == "LQMPC":
+            assert fastest_mean_lat / b2.second < base_params.solver_args.time_limit, (
+                f"Fastest solver mean latency {fastest_mean_lat / b2.second:.2f} s "
+                f"exceeds time limit {base_params.solver_args.time_limit} s"
+            )
         ctrl_proc.compute_latency_mean = fastest_mean_lat
         ctrl_proc.compute_latency_std = fastest_std_lat
     else:

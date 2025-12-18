@@ -102,7 +102,7 @@ def params_from_cfg_with_wildcards(
 
 
 def step_params(*steps: str) -> callable:
-    subcfg_vars = ["task", "mode", "setting"]
+    subcfg_vars = ["task", "mode", "setting", "ctrl_type"]
 
     def wc_fn(wildcards):
         params = {}

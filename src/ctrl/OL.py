@@ -23,7 +23,7 @@ class OLController(Controller):
         if self.i_hzn == 0:
             self.init_optimization()
             self.update_opt_problem(xhat, self.t_now)
-            self.solve_optimization("OL")
+            self.solve_optimization()
             self.t_prev_soln = self.t_now
         assert self.i_hzn < self.n_horizon, f"{self.i_hzn=} >= {self.n_horizon=}"
         return self.Uopt_opto.value[self.i_hzn]

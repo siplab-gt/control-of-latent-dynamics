@@ -190,7 +190,6 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         durations = []
         xpred = np.zeros(self.n)
         Ppred = np.eye(self.n)
-        u = self.latency_rng.normal(self.lds.u_mean, self.lds.u_std, self.k)
         for i in range(100):
             avg_rate = 20 / second
             y = self.latency_rng.poisson(lam=avg_rate * self.sample_period)
@@ -261,19 +260,15 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
         return xpred, Ppred
 
-    def solve_optimization(self, ctrl_type: str) -> None:
+    def solve_optimization(self) -> None:
         """Solve the optimization problem with fallback through ordered solvers.
-
-        Args:
-            ctrl_type: Control type string (e.g., 'LQMPC', 'OL') for solver-specific settings
 
         Raises:
             RuntimeError: If all solvers fail
         """
         for i, solver in enumerate(self.solvers):
             try:
-                solve_kwargs = solver.get_solve_kwargs(ctrl_type)
-                self.prob.solve(**solve_kwargs)
+                self.prob.solve(**solver.specific_args)
 
                 if self.prob.status in [
                     "optimal",
@@ -282,7 +277,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
                 ]:
                     if self.prob.status == "user_limit":
                         log.warning(
-                            f"Solver {solver.name} reached user limit but found a solution."
+                            f"Solver {solver.name} reached user limit but found a feasible solution."
                         )
                     if i > 0:
                         log.warning(
