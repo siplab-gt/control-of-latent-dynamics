@@ -3,12 +3,16 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
-from src.scripts.model_fit import ModelFitPredData
+from src.scripts.model_fit import LDS, ModelFitPredData
 from src.scripts.sys_id_expts import ExptData
 
 
-def analyze_model_fit_data(
-    cond_params, model_fit_pred_data: ModelFitPredData, sys_id_data: ExptData, outfile
+def analyze_model_fit(
+    cond_params,
+    lds: LDS,
+    model_fit_pred_data: ModelFitPredData,
+    sys_id_data: ExptData,
+    outfile,
 ):
     # T = sys_id_data.i_trial_boundaries[int(cond_params.n_trials_sys_id) - 1, -1]
     T = len(sys_id_data.t_ms)
@@ -17,7 +21,7 @@ def analyze_model_fit_data(
     Z = sys_id_data.Z[:T]
     Zhat_from_X = LinearRegression().fit(X, Z).predict(X)
     # save R2 for model fit quality
-    r2s = {
+    metrics = {
         "R2_model_fit_X_Xhat_fsnn": r2_score(X, model_fit_pred_data.Xhat_lds2fsnn),
         "R2_model_fit_Z_Zhat": r2_score(
             Z, model_fit_pred_data.Zhat, multioutput="variance_weighted"
@@ -29,17 +33,19 @@ def analyze_model_fit_data(
         if Y.shape[1] > 0
         else np.nan,
     }
-    print(r2s)
+    metrics["largest_eigval"] = np.max(np.abs(np.linalg.eigvals(lds.A)))
+    print(metrics)
     print(f"Saving R2 values to {outfile}")
-    pd.DataFrame([r2s]).to_csv(outfile, index=False)
+    pd.DataFrame([metrics]).to_csv(outfile, index=False)
 
 
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    model_fit_pred_data = ModelFitPredData.load(snakemake.input[0])
-    sys_id_data = ExptData.load(snakemake.input[1])
+    lds = LDS.load(snakemake.input[0])
+    model_fit_pred_data = ModelFitPredData.load(snakemake.input[1])
+    sys_id_data = ExptData.load(snakemake.input[2])
 
-    analyze_model_fit_data(
-        snakemake.wildcards, model_fit_pred_data, sys_id_data, snakemake.output[0]
+    analyze_model_fit(
+        snakemake.wildcards, lds, model_fit_pred_data, sys_id_data, snakemake.output[0]
     )

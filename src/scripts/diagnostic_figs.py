@@ -22,6 +22,7 @@ metric_groups = [
             "R2_model_fit_Z_Zhat",
             "R2_model_fit_Z_X",
             # "R2_model_fit_Y_Yhat",
+            "largest_eigval",
         ],
         "R2",
     ),

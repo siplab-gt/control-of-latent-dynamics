@@ -453,12 +453,16 @@ rule plot_model_fit_pred:
 
 
 use rule plot_model_fit_pred as plot_model_fit_pred_default with:
+    localrule: True
     output:
         f"results/{params_str}/model_fit_pred_plot.png",
 
 
-rule analyze_model_fit_data:
+rule analyze_model_fit:
     input:
+        paths_for_params(
+            "model_fit_lds.pkl.gz", **na_wildcards_through_step("model_fit")
+        ),
         paths_for_params(
             "model_fit_pred_data.pkl.gz", **na_wildcards_through_step("model_fit")
         ),
