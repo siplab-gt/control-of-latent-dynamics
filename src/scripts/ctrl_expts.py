@@ -9,7 +9,7 @@ from jaxtyping import Float
 from sklearn.linear_model import LinearRegression
 from snakemake.script import snakemake
 
-from src.ctrl import Controller
+from src.ctrl import Controller, get_variable_blocks, test_and_order_solvers
 from src.ctrl.solvers import get_solvers
 from src.helpers import (
     preprocess_params,
@@ -145,46 +145,84 @@ def ctrl_expts(
     )
 
     if ctrl_type != "NULL":
-        # Test latency for each solver and order them from fastest to slowest
-        log.info("Testing all solvers...")
-        solver_latencies = []
-        for solver in get_solvers(base_params.solvers, base_params.solver_args):
-            ctrl_proc.solvers = [solver]
-            orig_time_limit = solver.generic_args["time_limit"]
-            if ctrl_type == "LQMPC":
-                # raise time limit for LQMPC to choose best solver in case none
-                # can solve with a shorter time limit
-                assert solver.generic_args["time_limit"] < 2, (
-                    f"Time limit is already set to {solver.generic_args['time_limit']}, which is >= 2"
-                )
-                solver.generic_args["time_limit"] = 2
-            try:
-                mean_lat, std_lat = ctrl_proc.measure_latency()
-            except Exception as e:
-                log.warning(f"  Solver {solver.name} failed latency test: {e}")
-                mean_lat, std_lat = b2.ms * 1e9, b2.ms * 1e9  # very large latency
-                # just in case this doesn't get reset
-                ctrl_proc._measuring_latency = False
-            solver_latencies.append((solver, mean_lat, std_lat))
-            log.info(
-                f"  Solver {solver.name}: {mean_lat / b2.ms:.2f} +/- {std_lat / b2.ms:.2f} ms"
+        # For LQMPC and OL: binary search the number of control blocks to meet latency limit
+        assert ctrl_type in ["LQMPC", "OL"]
+        n_hzn = ctrl_proc.n_horizon
+        solvers = get_solvers(base_params.solvers, base_params.solver_args)
+        time_limit_s = base_params.solver_args.time_limit
+        time_limit = time_limit_s * b2.second
+
+        # Start with per-step control (no blocking)
+        log.info(f"Testing solvers with {n_hzn} control blocks")
+        ctrl_proc.control_block_nodes = None
+        ctrl_proc.init_optimization()
+        baseline = test_and_order_solvers(solvers, ctrl_proc, ctrl_type)
+        ordered_solvers = [s[0] for s in baseline]
+        fastest_mean_lat = baseline[0][1]
+        fastest_std_lat = baseline[0][2]
+
+        # +2 std to be almost always under limit
+        if fastest_mean_lat + 2 * fastest_std_lat > time_limit:
+            dense_args = base_params.solver_args | {"backend": "dense"}
+            solvers = get_solvers(
+                base_params.dense_solvers,
+                dense_args,
             )
-            solver.generic_args["time_limit"] = orig_time_limit
+            lo, hi = 1, n_hzn  # number of blocks
+            best_nodes = None
+            best_res = None
+            last_res = None
 
-        # Order solvers from fastest to slowest
-        solver_latencies.sort(key=lambda x: x[1])  # Sort by mean latency
-        ordered_solvers = [s[0] for s in solver_latencies]
-        fastest_mean_lat = solver_latencies[0][1]
-        fastest_std_lat = solver_latencies[0][2]
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                log.info(f"Testing solvers with {mid} control blocks")
+                nodes = get_variable_blocks(n_hzn, mid)
+                ctrl_proc.control_block_nodes = nodes
+                assert ctrl_proc.n_control == mid
+                ctrl_proc.init_optimization()
+                res = test_and_order_solvers(solvers, ctrl_proc, ctrl_type)
+                log.info(f"Results with {mid} blocks: ")
+                for solver, mean_lat, std_lat in res:
+                    log.info(
+                        f"  Solver {solver.name}: mean {mean_lat / b2.ms:.2f} ms, "
+                        f"std {std_lat / b2.ms:.2f} ms"
+                    )
 
-        log.info(f"Fastest solver: {ordered_solvers[0]}")
-        log.info(f"Solver order: {[s.name for s in ordered_solvers]}")
+                last_res = res
+                fastest = res[0]
+                if fastest[1] + 2 * fastest[2] <= time_limit:
+                    best_nodes = nodes
+                    best_res = res
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
 
-        # Update controller with ordered solvers and fastest solver's latency stats
+            if best_nodes is not None:
+                nodes = best_nodes
+                ctrl_proc.control_block_nodes = nodes
+                ordered_solvers = [s[0] for s in best_res]
+                fastest_mean_lat = best_res[0][1]
+                fastest_std_lat = best_res[0][2]
+                log.info(
+                    f"Selected {len(nodes) - 1} control blocks to meet {time_limit_s}s limit."
+                )
+            else:
+                # Could not meet time limit even with 1 block; keep whatever was last tried
+                assert last_res is not None
+                assert mid == 1
+                ctrl_proc.control_block_nodes = get_variable_blocks(n_hzn, 1)
+                ctrl_proc._init_opt_sparse()
+                ordered_solvers = [s[0] for s in last_res]
+                fastest_mean_lat = last_res[0][1]
+                fastest_std_lat = last_res[0][2]
+                log.warning(
+                    "Could not get reliably under time limit even with minimal blocks; proceeding with best found."
+                )
+        log.info(f"Ordered solvers: {ordered_solvers}")
         ctrl_proc.solvers = ordered_solvers
 
     if add_latency:
-        if ctrl_type == "LQMPC":
+        if ctrl_type in ["LQMPC", "OL"]:
             assert fastest_mean_lat / b2.second < base_params.solver_args.time_limit, (
                 f"Fastest solver mean latency {fastest_mean_lat / b2.second:.2f} s "
                 f"exceeds time limit {base_params.solver_args.time_limit} s"

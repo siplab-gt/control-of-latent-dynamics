@@ -20,6 +20,67 @@ from src.scripts.cleo_prep import CleoPrep
 log = logging.getLogger(__name__)
 
 
+def test_and_order_solvers(solvers, ctrl_proc, ctrl_type):
+    """test all solvers and return list ordered from fastest to slowest"""
+    log.info("Testing all solvers...")
+    results = []
+    for solver in solvers:
+        ctrl_proc.solvers = [solver]
+        orig_time_limit = solver.generic_args["time_limit"]
+        if ctrl_type == "LQMPC":
+            # temporarily raise time limit to rank solvers without premature cutoffs
+            if solver.generic_args["time_limit"] < 2:
+                solver.generic_args["time_limit"] = 2
+        try:
+            # Rebuild optimization once per solver to ensure clean state
+            ctrl_proc.init_optimization()
+            mean_lat, std_lat = ctrl_proc.measure_latency()
+        except Exception as e:
+            log.warning(f"  Solver {solver.name} failed latency test: {e}")
+            mean_lat, std_lat = b2.ms * 1e9, b2.ms * 1e9
+            ctrl_proc._measuring_latency = False
+        results.append((solver, mean_lat, std_lat))
+        log.info(
+            f"  Solver {solver.name}: {mean_lat / b2.ms:.2f} +/- {std_lat / b2.ms:.2f} ms"
+        )
+        solver.generic_args["time_limit"] = orig_time_limit
+    results.sort(key=lambda x: x[1])
+    return results
+
+
+def get_variable_blocks(n_hzn, n_ctrl, power=2.0):
+    """
+    Generates indices for control changes.
+    n_hzn: Total prediction steps (e.g., 60)
+    n_ctrl: Desired number of control moves
+    power: Distribution bias (>1 for more resolution at start)
+    """
+    # Generate non-linear spacing
+    nodes = [round(n_hzn * (i / n_ctrl) ** power) for i in range(n_ctrl + 1)]
+
+    # Remove duplicates and ensure it ends at N_p
+    unique_nodes = sorted(list(set(nodes)))
+
+    # If duplicates reduced count below N_c, fill greedily at start
+    while len(unique_nodes) < n_ctrl + 1:
+        for i in range(1, n_hzn):
+            if i not in unique_nodes:
+                unique_nodes.append(i)
+                break
+    unique_nodes = sorted(unique_nodes)
+
+    assert 0 == unique_nodes[0], f"First node must be 0, got {unique_nodes[0]} instead"
+    assert n_hzn == unique_nodes[-1], (
+        f"Last node must be n_hzn, got {unique_nodes[-1]} instead"
+    )
+    assert len(unique_nodes) == n_ctrl + 1, (
+        f"Expected {n_ctrl + 1} unique nodes, got {len(unique_nodes)} instead"
+    )
+    assert all(np.diff(unique_nodes) > 0), "Nodes must be strictly increasing"
+
+    return unique_nodes
+
+
 @define
 class Controller(cleo.ioproc.LatencyIOProcessor):
     sim: cleo.CLSimulator = None
@@ -49,18 +110,23 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     xpred: np.ndarray = None
     Ppred: np.ndarray = None
 
-    Uopt_opto: cp.Variable = None
+    Uopt_opto: cp.Variable | cp.Expression = None
     """optimized u trajectory over horizon"""
     Uopt_task: cp.Parameter = None
     """task inputs over horizon"""
-    Xopt: cp.Variable = None
-    """x trajectory over horizon including initial state"""
+    _Uopt_inner: cp.Variable | cp.Expression = None
+    """inner optimization variable (per-block) before expansion to per-step"""
+    Xopt: cp.Variable | cp.Expression = None
+    """x trajectory over horizon, may or may not include initial state"""
     Ropt: cp.Parameter = None
     """reference trajectory over horizon"""
     x0opt: cp.Parameter = None
     """initial state parameter for optimization"""
     prob: cp.Problem = None
     """cvxpy optimization problem"""
+    control_block_nodes: list[int] | None = None
+    """Indices (length n_control+1) defining variable blocks over horizon; None => per-step"""
+    _S_blocks: Float[np.ndarray, "{self.n_horizon} {self.n_control}"] = None
 
     i_current_trial: int = 0
     _measuring_latency: bool = False
@@ -84,12 +150,124 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         self._cached_ref_trajectory = None
 
     def init_optimization(self):
-        self.Uopt_opto = cp.Variable((self.n_horizon, self.k_opto))
+        """Public initializer used by controllers; defaults to sparse formulation.
+
+        Uses move blocking if `control_block_nodes` is set. This method simply
+        dispatches to the working sparse initializer, which already supports
+        blocking; the dense initializer is available and validated separately.
+        """
+        # Variable is per-block; expanded to per-step via S
+        self._Uopt_inner = cp.Variable((self.n_control, self.k_opto))
+        self._init_S_blocks()
+        # Derived U_opto (Np x k)
+        self.Uopt_opto = self._S_blocks @ self._Uopt_inner
+        self.x0opt = cp.Parameter(self.n)
+        self.Ropt = cp.Parameter((self.n_horizon, self.n_r))
         if self.k_task > 0:
             self.Uopt_task = cp.Parameter((self.n_horizon, self.k_task))
+
+        if self.control_block_nodes is None:
+            self._init_opt_sparse()
+        else:
+            self._init_opt_dense()
+
+        # Initialize inner variable (per-block) to zeros in z-scored space
+        self._Uopt_inner.value = self.zscore(np.zeros((self.n_control, self.k)), "u")[
+            :, : self.k_opto
+        ]
+
+        assert self.prob.is_dcp(dpp=False), "problem not DCP"
+        assert self.prob.is_dcp(dpp=True), "problem not DPP"
+
+    def _init_S_blocks(self):
+        # Build block selection matrix (constant) if using move blocking
+        if self.control_block_nodes is not None:
+            nodes = self.control_block_nodes
+            assert nodes[0] == 0 and nodes[-1] == self.n_horizon, (
+                f"control_block_nodes must start at 0 and end at n_horizon; "
+                f"got {nodes[0]=}, {nodes[-1]=}, {self.n_horizon=}"
+            )
+            self._S_blocks = np.zeros((self.n_horizon, self.n_control))
+            for b in range(self.n_control):
+                self._S_blocks[nodes[b] : nodes[b + 1], b] = 1.0
+        else:
+            self._S_blocks = np.eye(self.n_horizon)
+
+    def _init_opt_dense(self):
+        # 1. Precompute Power Matrices for X = M*x0 + C*U_full
+        # M maps x0 to the state trajectory: [A^1; A^2; ...; A^Np]
+        # C maps U_full to the state trajectory: [B 0 ...; AB B ...; A^(Np-1)B ... B]
+
+        M = np.zeros((self.n_horizon * self.n, self.n))
+        C = np.zeros((self.n_horizon * self.n, self.n_horizon * self.k_opto))
+
+        # Fill M and C (Offline/Once)
+        A_pow = np.eye(self.n)
+        for i in range(self.n_horizon):
+            A_pow = A_pow @ self.A
+            M[i * self.n : (i + 1) * self.n, :] = A_pow
+
+            for j in range(i + 1):
+                # Impulse response: A^(i-j) @ B
+                # This captures how input at step j affects state at step i+1
+                term = np.linalg.matrix_power(self.A, i - j) @ self.B_opto
+                C[
+                    i * self.n : (i + 1) * self.n,
+                    j * self.k_opto : (j + 1) * self.k_opto,
+                ] = term
+
+        # U_full (Np*k) = (S_blocks ⊗ I_k) @ vec(U_inner)
+        S_expanded = np.kron(self._S_blocks, np.eye(self.k_opto))
+        C_dense = C @ S_expanded  # Shape: (Np*n, Nc*k) if blocking else (Np*n, Np*k)
+        assert C_dense.shape == (
+            self.n_horizon * self.n,
+            self.n_control * self.k_opto,
+        ), (
+            f"{C_dense.shape=} not equal to {(self.n_horizon * self.n, self.n_control * self.k_opto)}"
+        )
+
+        # Derived Xopt (Np x n) - Skip x0 as it's constant
+        # M @ x0 + C_dense @ vec(U_inner)
+        X_flat = M @ self.x0opt + C_dense @ cp.vec(self._Uopt_inner, order="C")
+
+        # Task input handling (Precompute similar to M if U_task is Parameter)
+        if self.k_task > 0:
+            # Precompute C_task similarly to C
+            C_task = np.zeros((self.n_horizon * self.n, self.n_horizon * self.k_task))
+            for i in range(self.n_horizon):
+                for j in range(i + 1):
+                    term = np.linalg.matrix_power(self.A, i - j) @ self.B_task
+                    C_task[
+                        i * self.n : (i + 1) * self.n,
+                        j * self.k_task : (j + 1) * self.k_task,
+                    ] = term
+            X_flat += C_task @ cp.vec(self.Uopt_task, order="C")
+
+        # 4. Reshape X for Cost
+        # not including x0, unlike _init_opt_sparse()
+        self.Xopt = cp.reshape(X_flat, (self.n_horizon, self.n), order="C")
+
+        # 5. Define Cost and Constraints
+        Uopt_opto_unzscored = (
+            cp.multiply(self.Uopt_opto, self.lds.u_std[None, : self.k_opto])
+            + self.lds.u_mean[None, : self.k_opto]
+        )
+        ctrl_var_traj = self.Xopt if self.ref_type == "X" else self.lds.x2z(self.Xopt)
+        cost = (
+            cp.sum_squares(ctrl_var_traj - self.Ropt) * self.Qcost / self.n_r
+            + cp.sum_squares(Uopt_opto_unzscored) * self.Rcost / self.k_opto
+        )
+
+        constraints = [
+            Uopt_opto_unzscored >= 0,
+            Uopt_opto_unzscored <= self.u_max_mWmm2,
+        ]
+
+        self.prob = cp.Problem(cp.Minimize(cost), constraints)
+
+    def _init_opt_sparse(self):
         self.Xopt = cp.Variable((self.n_horizon + 1, self.n))
-        self.Ropt = cp.Parameter((self.n_horizon, self.n_r))
-        self.x0opt = cp.Parameter(self.n)
+        self.Xopt.value = np.zeros((self.n_horizon + 1, self.n))
         Uopt_opto_unzscored = (
             cp.multiply(self.Uopt_opto, self.lds.u_std[None, : self.k_opto])
             + self.lds.u_mean[None, : self.k_opto]
@@ -116,14 +294,6 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             Uopt_opto_unzscored <= self.u_max_mWmm2,
         ]
         self.prob = cp.Problem(cp.Minimize(cost), constraints)
-
-        self.Uopt_opto.value = self.zscore(np.zeros((self.n_horizon, self.k)), "u")[
-            :, : self.k_opto
-        ]
-        self.Xopt.value = np.zeros((self.n_horizon + 1, self.n))
-
-        assert self.prob.is_dcp(dpp=False), "problem not DCP"
-        assert self.prob.is_dcp(dpp=True), "problem not DPP"
 
     def update_opt_problem(self, xhat, t_samp):
         self.x0opt.value = xhat[:]
@@ -175,6 +345,14 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         return int(round(self.ctrl_horizon / self.sample_period))
 
     @property
+    def n_control(self) -> int:
+        return (
+            self.n_horizon
+            if self.control_block_nodes is None
+            else len(self.control_block_nodes) - 1
+        )
+
+    @property
     def n_r(self) -> int:
         return self.lds.m_z if self.ref_type == "Z" else self.n
 
@@ -188,6 +366,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         """returns mean, std of control computation (with Brian unit)"""
         self._measuring_latency = True
         durations = []
+        solve_times = []  # reported by solver, doesn't include overhead
         xpred = np.zeros(self.n)
         Ppred = np.eye(self.n)
         for i in range(100):
@@ -201,11 +380,13 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             xpred, Ppred = self.predict_state(xhat, u, P)
             end = time.perf_counter()
             durations.append(end - start)
+            solve_times.append(self.prob.solver_stats.solve_time)
 
         # take off first 5 to let things warm up
-        log.debug(f"latency measurement durations (s):\n{durations}")
+        # log.debug(f"latency measurement durations (s):\n{durations}")
         durations = np.array(durations[5:])
         log.debug(f"{stats.describe(durations, bias=False)=}")
+        log.debug(f"{stats.describe(solve_times, bias=False)=}")
         self._measuring_latency = False
         # to make robust to outliers from unreliable compute speed on cluster,
         # estimate mean and std using median and MAD

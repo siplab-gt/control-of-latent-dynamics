@@ -21,6 +21,8 @@ dependencies = [
     'brian2cuda',
     'tqdm',
     'tensorflow[and-cuda]',
+    'proxsuite',
+    'piqp'
 ]
 
 [tool.setuptools]

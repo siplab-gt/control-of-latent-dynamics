@@ -12,6 +12,10 @@ argname_map = {
         "max_iter": "max_iters",
         "time_limit": "time_limit_secs",
     },
+    "piqp": {
+        "eps_infeas": "infeasibility_threshold",
+        "time_limit": "REMOVE",
+    },
 }
 """Maps generic solver argument names to solver-specific names when necessary"""
 
@@ -25,7 +29,8 @@ def _generic_to_specific_args(solver_name: str, generic_args: frozenset) -> dict
             for kk in k_mapped:
                 specific_args[kk] = v
         else:
-            specific_args[k_mapped] = v
+            if k_mapped != "REMOVE":
+                specific_args[k_mapped] = v
     return specific_args
 
 
