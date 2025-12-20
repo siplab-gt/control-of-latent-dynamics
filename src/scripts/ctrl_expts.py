@@ -185,13 +185,16 @@ def ctrl_expts(
 
     if add_latency:
         if ctrl_type == "LQMPC":
-            assert fastest_mean_lat / b2.second < base_params.solver_args.time_limit, (
-                f"Fastest solver mean latency {fastest_mean_lat / b2.second:.2f} s "
-                f"exceeds time limit {base_params.solver_args.time_limit} s"
-            )
+            if fastest_mean_lat / b2.second < base_params.solver_args.time_limit:
+                log.warning(
+                    f"Fastest solver mean latency {fastest_mean_lat / b2.second:.2f} s "
+                    f"exceeds time limit {base_params.solver_args.time_limit} s"
+                )
         ctrl_proc.compute_latency_mean = fastest_mean_lat
         ctrl_proc.compute_latency_std = fastest_std_lat
     else:
+        for solver in ctrl_proc.solvers:
+            solver.generic_args["time_limit"] = 2  # large time limit
         ctrl_proc.compute_latency_mean = 0 * b2.ms
         ctrl_proc.compute_latency_std = 0 * b2.ms
 

@@ -11,6 +11,6 @@ dependencies:
   - snakemake
   - conda>=24.7.1
   - pip:
-      - -e . # must run from repo root
+      - -e ../..
       - snakemake-logger-plugin-snkmt
       - snakemake-executor-plugin-slurm

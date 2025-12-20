@@ -176,8 +176,8 @@ cleo_prep:
   array_side_length_mm: 4
   array_n_per_side: 8
   typical_Irr0_mWmm2: 5
-  # needed early for LFe
-  subsample_factor: 5 # ctrl/sample period relative to fsnn dt
+  # needed early for LFP
+  subsample_factor: 10 # ctrl/sample period relative to fsnn dt
 
 model_fit:
   linear_Cz: true
@@ -204,7 +204,7 @@ sys_id_expts:
 ctrl_expts:
   Q_cost: 1
   R_cost: 1e-3
-  ctrl_horizon_ms: 300
+  ctrl_horizon_ms: 200
   n_trials_ctrl: 100
   baseline_latency_ms: 1
   solvers: ["osqp", "clarabel", "scs"]
@@ -224,7 +224,7 @@ ctrl_expts_LQMPC:
   solver_args:
     max_iter: 1e8 # very high since we want to rely on time limit
     eps_infeas: 1e-8 # smaller is less sensitive
-    time_limit: 0.1
+    time_limit: 0.02
     warm_start: true
     enforce_dpp: true
 

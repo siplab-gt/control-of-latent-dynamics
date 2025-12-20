@@ -188,6 +188,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         """returns mean, std of control computation (with Brian unit)"""
         self._measuring_latency = True
         durations = []
+        solve_times = []
         xpred = np.zeros(self.n)
         Ppred = np.eye(self.n)
         for i in range(100):
@@ -201,11 +202,14 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             xpred, Ppred = self.predict_state(xhat, u, P)
             end = time.perf_counter()
             durations.append(end - start)
+            solve_times.append(self.prob.solver_stats.solve_time)
 
         # take off first 5 to let things warm up
-        log.debug(f"latency measurement durations (s):\n{durations}")
+        # log.debug(f"latency measurement durations (s):\n{durations}")
         durations = np.array(durations[5:])
+        solve_times = np.array(solve_times[5:])
         log.debug(f"{stats.describe(durations, bias=False)=}")
+        log.debug(f"{stats.describe(solve_times, bias=False)=}")
         self._measuring_latency = False
         # to make robust to outliers from unreliable compute speed on cluster,
         # estimate mean and std using median and MAD
@@ -418,6 +422,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
                 scale=self.compute_latency_std / b2.ms,
             )
             sampled = max(sampled, 0)
+            sampled = min(sampled, self.solvers[0].generic_args.get("time_limit", 1e6))
             return self.baseline_latency + sampled * ms
         else:
             return 0 * ms
