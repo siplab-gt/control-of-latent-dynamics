@@ -26,6 +26,12 @@ rule all:
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
+        "results/figs/diagnostics.pdf",
+        expand(
+            "results/figs/{setting}_{task}_diagnostics.pdf",
+            task=config["manual_sweep_params"]["task"],
+            setting=config["manual_sweep_params"]["setting"],
+        ),
     localrule: True
 
 
@@ -473,7 +479,7 @@ rule analyze_model_fit:
         f"results/{params_str}/model_fit_analysis.csv",
     localrule: True
     script:
-        "../src/scripts/analyze_model_fit_data.py"
+        "../src/scripts/analyze_model_fit.py"
 
 
 # assume BRAID, GPU, heavier resources when not sufficient stim (known factors)

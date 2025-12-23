@@ -193,8 +193,9 @@ def ctrl_expts(
         ctrl_proc.compute_latency_mean = fastest_mean_lat
         ctrl_proc.compute_latency_std = fastest_std_lat
     else:
-        for solver in ctrl_proc.solvers:
-            solver.generic_args["time_limit"] = 2  # large time limit
+        if ctrl_type != "NULL":
+            for solver in ctrl_proc.solvers:
+                solver.generic_args["time_limit"] = 2  # large time limit
         ctrl_proc.compute_latency_mean = 0 * b2.ms
         ctrl_proc.compute_latency_std = 0 * b2.ms
 

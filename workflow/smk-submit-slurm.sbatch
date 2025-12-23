@@ -9,4 +9,5 @@ cd $SLURM_SUBMIT_DIR                            # Change to working directory
 
 module load mamba                               # Load module dependencies
 mamba activate cold
-snakemake --profile ./profiles/pace --workflow-profile default --configfile config/testconfig.yaml
+snakemake --unlock
+snakemake --local-cores 8 --rerun-incomplete --verbose
