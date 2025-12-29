@@ -58,7 +58,7 @@ def paths_for_params(file: list | str, fill_in_ref=False, **kwargs) -> str:
     for wc in wildcards:
         params_str_masked = params_str_masked.replace(f"{{{wc}}}", f"{{{{{wc}}}}}")
     out = expand(
-        f"results/{params_str_masked}/{{file}}",
+        f"<results>/{params_str_masked}/{{file}}",
         file=file,
         **params,
     )
@@ -135,10 +135,10 @@ rule testq1:
             task="reaching",
             latency=True,
             ctrl_type="LQMPC",
-            k=32,
+            k=64,
             m=NA,
             # m=16,
-            seed=17230616,
+            seed=3,
             signals=NA,
         ),
     output:
@@ -161,7 +161,7 @@ def get_q2_kms():
     return zip(kk.tolist(), mm.tolist())
 
 
-test_k, test_m = list(get_q2_kms())[4]
+test_k, test_m = list(get_q2_kms())[-1]
 
 
 rule testq2:
@@ -176,7 +176,7 @@ rule testq2:
             # k=16,
             m=test_m,
             # m=48,
-            seed=17230616,
+            seed=3,
         ),
     output:
         "results/testq2/{file}",
