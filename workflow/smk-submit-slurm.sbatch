@@ -10,4 +10,4 @@ cd $SLURM_SUBMIT_DIR                            # Change to working directory
 module load mamba                               # Load module dependencies
 mamba activate cold
 snakemake --unlock
-snakemake --local-cores 8 --rerun-incomplete --verbose
+snakemake --local-cores 8 --rerun-incomplete

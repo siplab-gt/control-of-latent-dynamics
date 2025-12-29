@@ -422,7 +422,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
                 scale=self.compute_latency_std / b2.ms,
             )
             sampled = max(sampled, 0)
-            sampled = min(sampled, self.solvers[0].generic_args.get("time_limit", 1e6))
+            time_limit_ms = self.solvers[0].generic_args.get("time_limit", 1e6) * 1000
+            sampled = min(sampled, time_limit_ms)
             return self.baseline_latency + sampled * ms
         else:
             return 0 * ms

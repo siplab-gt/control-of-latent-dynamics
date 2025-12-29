@@ -7,7 +7,6 @@ import brian2.only as b2
 import numpy as np
 from jaxtyping import Float
 from sklearn.linear_model import LinearRegression
-from snakemake.script import snakemake
 
 from src.ctrl import Controller
 from src.ctrl.solvers import get_solvers
@@ -240,6 +239,8 @@ def ctrl_expts(
 
 
 if __name__ == "__main__" and "snakemake" in locals():
+    from snakemake.script import snakemake
+
     fh = setup_logging(snakemake.config, snakemake.log[0])
     setup_debugger(snakemake.config["debug"])
 

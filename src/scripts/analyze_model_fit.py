@@ -14,8 +14,11 @@ def analyze_model_fit(
     sys_id_data: ExptData,
     outfile,
 ):
-    # T = sys_id_data.i_trial_boundaries[int(cond_params.n_trials_sys_id) - 1, -1]
-    T = len(sys_id_data.t_ms)
+    # cut data to the beginning of the n+1th trial
+    try:
+        T = sys_id_data.i_trial_boundaries[int(cond_params.n_trials_sys_id), 0]
+    except IndexError:
+        T = len(sys_id_data.X)
     X = sys_id_data.X[:T]
     Y = sys_id_data.Y[:T]
     Z = sys_id_data.Z[:T]

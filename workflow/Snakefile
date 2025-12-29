@@ -135,10 +135,10 @@ rule testq1:
             task="reaching",
             latency=True,
             ctrl_type="LQMPC",
-            k=16,
+            k=32,
             m=NA,
             # m=16,
-            seed=0,
+            seed=17230616,
             signals=NA,
         ),
     output:
@@ -151,6 +151,19 @@ rule testq1:
         "cp $(dirname {input})/* $(dirname {output})"
 
 
+def get_q2_kms():
+    budget = int(config["q2"]["channel_budget"])
+    kk = np.linspace(
+        1, budget - 1, int(config["q2"]["num_stim_ratio_levels"]), endpoint=True
+    )
+    kk = np.round(kk).astype(int)
+    mm = budget - kk
+    return zip(kk.tolist(), mm.tolist())
+
+
+test_k, test_m = list(get_q2_kms())[4]
+
+
 rule testq2:
     input:
         paths_for_params(
@@ -159,11 +172,11 @@ rule testq2:
             setting="optimal_stim_rec",
             task="reaching",
             ctrl_type="LQMPC",
-            k=48,
+            k=test_k,
             # k=16,
-            m=16,
+            m=test_m,
             # m=48,
-            seed=0,
+            seed=17230616,
         ),
     output:
         "results/testq2/{file}",
@@ -261,16 +274,6 @@ rule sufficient_stim_tabulate:
         print("concatenated sufficient stim DFs")
         df.to_csv(output[0], index=False)
         print(f"wrote sufficient stim results to {output[0]}")
-
-
-def get_q2_kms():
-    budget = int(config["q2"]["channel_budget"])
-    kk = np.linspace(
-        1, budget - 1, int(config["q2"]["num_stim_ratio_levels"]), endpoint=True
-    )
-    kk = np.round(kk).astype(int)
-    mm = budget - kk
-    return zip(kk.tolist(), mm.tolist())
 
 
 rule optimal_stim_rec_tabulate:
