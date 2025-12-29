@@ -16,6 +16,13 @@ metric_groups = [
         "R2",
     ),
     (
+        "fSNN n_factors",
+        [
+            "n_factors",
+        ],
+        "# factors",
+    ),
+    (
         "Model fit",
         [
             "R2_model_fit_X_Xhat_fsnn",
@@ -59,7 +66,7 @@ metric_labels = {
 
 
 def _plot_group(ax, df, cond_param, metrics, title, ylabel, show_title, show_legend):
-    available = [m for m in metrics if m in df.columns]
+    available = [m for m in metrics if m in df.columns and m != cond_param]
     if not available:
         ax.set_visible(False)
         return
@@ -110,6 +117,7 @@ def _plot_group(ax, df, cond_param, metrics, title, ylabel, show_title, show_leg
             markersize=mean_marker_size,
             ax=ax,
             legend=show_legend,
+            zorder=5,
         )
     else:
         multiple_metrics = data["metric"].unique().size > 1
@@ -139,6 +147,7 @@ def _plot_group(ax, df, cond_param, metrics, title, ylabel, show_title, show_leg
             ax=ax,
             markeredgecolor="white",
             markeredgewidth=0.7,
+            zorder=5,
         )
         if not show_legend and ax.get_legend():
             ax.get_legend().remove()
@@ -171,13 +180,14 @@ def main(cfg, results_csvs, outfiles):
         if col.startswith("R2_") or col.startswith("Q_"):
             break
         cond_params.append(col)
+    cond_params.append("n_factors")
 
     n_rows = len(cond_params)
     n_cols = len(metric_groups)
     fig, axs = plt.subplots(
         n_rows,
         n_cols,
-        figsize=(psty.double_col_width, 2.2 * n_rows),
+        figsize=(2.2 * n_cols, 2.2 * n_rows),
         layout="compressed",
         squeeze=False,
     )
@@ -209,3 +219,24 @@ if __name__ == "__main__" and "snakemake" in locals():
     setup_debugger(snakemake.config.get("debug", False))
 
     main(snakemake.config, snakemake.input.csvs, snakemake.output)
+
+
+if __name__ == "__main__" and "snakemake" not in locals():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--results-csvs",
+        nargs="+",
+        required=True,
+        help="CSV files with results to plot",
+    )
+    parser.add_argument(
+        "--outfiles",
+        nargs="+",
+        required=True,
+        help="Output figure files (one or more of png, svg, pdf)",
+    )
+    args = parser.parse_args()
+
+    main({}, args.results_csvs, args.outfiles)

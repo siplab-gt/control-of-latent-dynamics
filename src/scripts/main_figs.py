@@ -27,13 +27,19 @@ def compute_k_suff(subset_df, ep, metric, ref_data, cfg, **kwargs):
 
     For sufficient_stim analysis.
     """
-    # get Q_suff from the Qs averaged over seeds
-    ref_data = ref_data.groupby(["k", "ctrl_latency"])[[metric]].mean().reset_index()
+    # get Q_suff from the Qs per seed
+    ref_data = (
+        ref_data.groupby(["k", "ctrl_latency", "seed"])[[metric]].mean().reset_index()
+    )
     # will probably be no-latency LQMPC, max k
-    Q_suff = cfg["q1"]["sufficient_ctrl"] * ref_data[metric].max()
+    # Q_suff_per_seed = (
+    #     cfg["q1"]["sufficient_ctrl"] * ref_data.groupby("seed")[metric].max()
+    # )
 
     # find first k where Q >= Q_suff
     def find_k_suff(group):
+        Q_suff = group[metric].max() * cfg["q1"]["sufficient_ctrl"]
+
         suff_rows = group[group[metric] >= Q_suff]
         if suff_rows.empty:
             return pd.Series({"k_suff": float("nan")})
@@ -184,8 +190,8 @@ def main(
         # TODO: use 0, 1 for real, but using data range for now to see more variation
         vmin, vmax = df[metric].min(), df[metric].max()
         # TODO: limit vmin, vmax to reasonable range
-        # vmin = max(vmin, -1)
-        # vmax = min(vmax, 1)
+        vmin = max(vmin, -1)
+        vmax = min(vmax, 1)
         heatmap_kwargs = dict(
             mean=dict(
                 vmin=vmin,
@@ -213,6 +219,22 @@ def main(
                 **heatmap_kwargs,
             )
             ax.invert_yaxis()
+            ax.set_title(ep)
+
+            # Add text annotations for extreme values not represented by colormap
+            for i, k_val in enumerate(subset.index):
+                for j, ep_val in enumerate(subset.columns):
+                    val = subset.iloc[i, j]
+                    if val < vmin:
+                        ax.text(
+                            j + 0.5,
+                            i + 0.5,
+                            f"{val:.2f}",
+                            ha="center",
+                            va="center",
+                            color="black",
+                            fontsize=8,
+                        )
 
         for ax in hm_axs[:, 1:].flatten():
             ax.set(ylabel="")
@@ -260,3 +282,38 @@ if __name__ == "__main__" and "snakemake" in locals():
         snakemake.output,
         setting=snakemake.wildcards.setting,
     )
+
+
+if __name__ == "__main__" and "snakemake" not in locals():
+    import argparse
+    import pathlib
+
+    import snakemake
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--results-csv",
+        required=True,
+        help="CSV file with results to plot",
+    )
+    args = parser.parse_args()
+
+    setting_task = pathlib.Path(args.results_csv).stem
+    setting = "_".join(setting_task.split("_")[:-1])
+    print(f"{setting_task=}")
+
+    exts = [".png", ".pdf"]
+
+    add_exts = lambda base: [f"{base}{ext}" for ext in exts]
+
+    outfiles = argparse.Namespace(
+        main=add_exts(f"results/figs/{setting_task}"),
+        lineplots=add_exts(f"results/figs/{setting_task}_lineplots"),
+        heatmaps_mean=add_exts(f"results/figs/{setting_task}_heatmaps_mean"),
+        heatmaps_std=add_exts(f"results/figs/{setting_task}_heatmaps_std"),
+    )
+    print(f"{outfiles=}")
+
+    cfg = snakemake.common.configfile._load_configfile("./config/config.yaml")
+
+    main(cfg, args.results_csv, outfiles, setting=setting)
