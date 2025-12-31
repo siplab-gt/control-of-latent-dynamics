@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
 
@@ -73,12 +74,14 @@ def main(
     outfiles,
     setting,
 ):
+    expl_params = cfg["star_sweep_params"]
     if setting == "sufficient_stim":
         metric = "Q_track_Xref_X_fsnn"
         colorbar_label = r"$Q_\text{track}\left(X_\text{ref}, X\right)$"
         key_metric_name = "k_suff"
         key_metric_func = compute_k_suff
         main_fig_plot_type = "lineplots"
+        plots_per_row = 3
     else:  # optimal_stim_rec
         assert setting == "optimal_stim_rec", f"Unknown setting: {setting}"
         metric = "Q_track_Zref_Z"
@@ -86,6 +89,8 @@ def main(
         key_metric_name = "optimal_p_stim"
         key_metric_func = compute_optimal_p_stim
         main_fig_plot_type = "lineplots"
+        expl_params |= cfg["star_sweep_params_measurement_only"]
+        plots_per_row = 4
 
     psty.style_plots()
     df = pd.read_csv(results_csv)
@@ -96,19 +101,20 @@ def main(
     df["ctrl_latency"] = df["ctrl_latency"].map(
         {"OLFalse": "OL", "LQMPCFalse": "LQMPC no latency", "LQMPCTrue": "LQMPC"}
     )
-    expl_params = cfg["star_sweep_params"]
-    plots_per_row = 3
-    rows = (len(expl_params) + plots_per_row - 1) // plots_per_row
+    rows = int(np.ceil(len(expl_params) / plots_per_row))
 
     def grid_subplots(extra_row=False):
         n_rows = rows + 1 if extra_row else rows
-        return plt.subplots(
+        fig, axs = plt.subplots(
             n_rows,
             plots_per_row,
             figsize=(psty.double_col_width, 2 * n_rows),
             layout="compressed",
             sharey=True,
         )
+        for i in range(len(expl_params), len(axs.flatten())):
+            axs.flatten()[i].axis("off")
+        return fig, axs
 
     main_fig, main_axs = grid_subplots(extra_row=True)
     # First row: single subfigure spanning all columns
@@ -302,7 +308,7 @@ if __name__ == "__main__" and "snakemake" not in locals():
     setting = "_".join(setting_task.split("_")[:-1])
     print(f"{setting_task=}")
 
-    exts = [".png", ".pdf"]
+    exts = [".webp", ".pdf"]
 
     add_exts = lambda base: [f"{base}{ext}" for ext in exts]
 

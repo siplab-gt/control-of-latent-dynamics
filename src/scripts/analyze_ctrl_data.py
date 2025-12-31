@@ -1,11 +1,17 @@
 """Analyze control experiment data and include fSNN and model fit analyses."""
 
+import brian2.only as b2
 import numpy as np
 import pandas as pd
 from sklearn.metrics import r2_score
 from snakemake.script import snakemake
 
-from src.helpers import setup_debugger, setup_logging
+from src.helpers import (
+    load_factors_emg,
+    preprocess_params,
+    setup_debugger,
+    setup_logging,
+)
 from src.scripts.ctrl_expts import CtrlData
 from src.scripts.model_fit import ModelFitPredData
 from src.scripts.sys_id_expts import ExptData
@@ -27,6 +33,7 @@ def is_empty(arr):
 
 def analyze_ctrl_data(
     cond_params,
+    cfg,
     ctrl_data: CtrlData,
     null_ctrl_data: CtrlData,
     fsnn_data_analysis_file,
@@ -73,6 +80,47 @@ def analyze_ctrl_data(
         ctrl_data.Xref_lds, ctrl_data.Xhat_lds, null_ctrl_data.Xhat_lds
     )
 
+    # TODO: should just save conditions from fSNN in ExptData, rather than reverse-engineering them here
+    if cond_params["task"] != "reaching":
+        raise NotImplementedError
+    i_starts = ctrl_data.i_trial_boundaries[:, 0]
+    # i_ends = ctrl_data.i_trial_boundaries[:, 1]
+    # u_task = ctrl_data.Utask[i_starts]
+    # angle = np.arctan2(u_task[:, 1], u_task[:, 0])
+    # ref_conds = angle / (2 * np.pi)
+
+    _, emg_templates = load_factors_emg("src/fsnn/reaching_data.npz")
+    n_conds = 8
+    assert emg_templates.shape[0] == n_conds
+    n_muscles = 2
+    assert emg_templates.shape[2] == n_muscles
+    # invert the first signal, as fSNN does
+    emg_templates[..., 0] *= -1
+    # EMG data is spaced by 10 ms
+    assert 10 * b2.ms == cfg.prep_fsnn.dt * cfg.cleo_prep.subsample_factor
+    # if it weren't we'd need to match timescales here
+    nt = emg_templates.shape[1]
+
+    # predict reaches instead from Zref since Utask has direction input removed
+    Zref = np.array(
+        [ctrl_data.Zref[i_start : i_start + nt, :n_muscles] for i_start in i_starts]
+    )
+    ref_conds = np.linalg.norm(
+        Zref - emg_templates[:, None, :, :], ord=2, axis=(2, 3)
+    ).argmin(axis=0)
+    # start at +1 since we floored the start index
+    # (trials can start any 2 ms step, while Cleo is at 10 ms steps)
+    Ztrials = np.array(
+        [ctrl_data.Z[i_start : i_start + nt, :n_muscles] for i_start in i_starts]
+    )
+    assert Ztrials.shape == (ctrl_data.n_trials, nt, n_muscles)
+    l2_dist = Ztrials[None, :, :, :] - emg_templates[:, None, :, :]
+    assert l2_dist.shape == (n_conds, ctrl_data.n_trials, nt, n_muscles)
+    l2_dist = np.linalg.norm(l2_dist, ord=2, axis=(2, 3))  # conds x trials
+    pred_conds = np.argmin(l2_dist, axis=0)
+    assert pred_conds.shape == (ctrl_data.n_trials,)
+    results["acc_pred_reach"] = np.mean(pred_conds == ref_conds)
+
     results["ctrl_compute_latency_mean_ms"] = ctrl_data.compute_latency_mean_ms
     results["ctrl_compute_latency_std_ms"] = ctrl_data.compute_latency_std_ms
     results["ctrl_total_latency_ms"] = ctrl_data.total_latency_ms
@@ -94,6 +142,7 @@ if __name__ == "__main__" and "snakemake" in locals():
     null_ctrl_data = CtrlData.load(snakemake.input.null_ctrl_data)
     analyze_ctrl_data(
         snakemake.wildcards,
+        preprocess_params(snakemake.config),
         ctrl_data,
         null_ctrl_data,
         snakemake.input.fsnn_data_analysis,

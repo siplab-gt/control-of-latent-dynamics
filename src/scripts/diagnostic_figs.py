@@ -96,7 +96,7 @@ def _plot_group(ax, df, cond_param, metrics, title, ylabel, show_title, show_leg
     mean_marker_size = 5
     point_alpha = 0.1
     point_size = 3
-    if cond_is_numeric and len(order) > 1:
+    if cond_is_numeric and len(order) > 1 and not cond_param.startswith("R2"):
         sns.scatterplot(
             data=data,
             x=cond_param,
@@ -118,6 +118,17 @@ def _plot_group(ax, df, cond_param, metrics, title, ylabel, show_title, show_leg
             ax=ax,
             legend=show_legend,
             zorder=5,
+        )
+    elif cond_is_numeric and cond_param.startswith("R2"):
+        sns.scatterplot(
+            data=data,
+            x=cond_param,
+            y="value",
+            hue="metric",
+            alpha=point_alpha,
+            size=point_size,
+            ax=ax,
+            legend=show_legend,
         )
     else:
         multiple_metrics = data["metric"].unique().size > 1
@@ -181,6 +192,8 @@ def main(cfg, results_csvs, outfiles):
             break
         cond_params.append(col)
     cond_params.append("n_factors")
+    cond_params.append("R2_fsnn_target_factors_mean")
+    cond_params.append("R2_model_fit_X_Xhat_fsnn")
 
     n_rows = len(cond_params)
     n_cols = len(metric_groups)
@@ -193,6 +206,7 @@ def main(cfg, results_csvs, outfiles):
     )
 
     for i, cond_param in enumerate(cond_params):
+        print(f"plotting {cond_param}")
         for j, (group_name, metrics, ylabel) in enumerate(metric_groups):
             ax = axs[i, j]
             show_title = i == 0

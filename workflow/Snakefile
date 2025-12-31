@@ -188,7 +188,7 @@ rule testq2:
         "cp $(dirname {input})/* $(dirname {output})"
 
 
-fig_exts = [".png", ".pdf"]
+fig_exts = [".webp", ".pdf"]
 
 
 rule main_figs:

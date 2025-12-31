@@ -114,6 +114,7 @@ power_per_neuron_uW: 1 # when normalizing power
 ##################################################################
 
 prep_fsnn:
+  # ⚠️ this can't be changed without modifying task-loading code, as in reaching.py fout1
   dt_ms: 1
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
