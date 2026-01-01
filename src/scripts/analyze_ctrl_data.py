@@ -123,6 +123,7 @@ def analyze_ctrl_data(
 
     results["ctrl_compute_latency_mean_ms"] = ctrl_data.compute_latency_mean_ms
     results["ctrl_compute_latency_std_ms"] = ctrl_data.compute_latency_std_ms
+    results["ctrl_compute_latency_nonsolve_ms"] = ctrl_data.compute_latency_nonsolve_ms
     results["ctrl_total_latency_ms"] = ctrl_data.total_latency_ms
 
     results |= pd.read_csv(fsnn_data_analysis_file).iloc[0].to_dict()

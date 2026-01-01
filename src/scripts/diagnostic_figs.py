@@ -44,8 +44,8 @@ metric_groups = [
     (
         "Latency",
         [
-            # "ctrl_total_latency_ms",
             "ctrl_compute_latency_mean_ms",
+            "ctrl_compute_latency_nonsolve_ms",
         ],
         "latency (ms)",
     ),

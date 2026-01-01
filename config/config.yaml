@@ -210,27 +210,31 @@ sys_id_expts:
 ctrl_expts:
   Q_cost: 1
   R_cost: 1e-3
-  ctrl_horizon_ms: 200
+  ctrl_horizon_ms: 300
   n_trials_ctrl: 100
-  baseline_latency_ms: 1
+  baseline_latency_ms: 1 # bare minimum, e.g., for I/O
   solvers: ["osqp", "clarabel", "scs"]
   # solver_args:
   # need to define these below since recursive dict merging isn't
   # implemented when we load params in Snakefile
 
 ctrl_expts_OL:
+  time_limit_ms: 2000 # representative of inter-trial interval for reaching
   solver_args:
     max_iter: 1e8 # very high since we want to rely on time limit
     eps_infeas: 1e-8 # smaller is less sensitive
-    time_limit: 2 # representative of inter-trial interval for reaching
+    # derived from above, subtracting baseline and overhead
+    # time_limit: 2
     verbose: true
     ignore_dpp: true
 
 ctrl_expts_LQMPC:
+  time_limit_ms: 20
   solver_args:
     max_iter: 1e8 # very high since we want to rely on time limit
     eps_infeas: 1e-8 # smaller is less sensitive
-    time_limit: 0.02
+    # derived from above, subtracting baseline and overhead
+    # time_limit: 0.02
     warm_start: true
     enforce_dpp: true
 
