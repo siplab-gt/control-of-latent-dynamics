@@ -17,9 +17,11 @@ grid_sweep_params:
 ###################################################
 star_sweep_params:
   n_trials_sys_id:
+    - 1
+    - 2
+    - 5
     - 10
-    - 40
-    - 70
+    - 50
     - 100
   # offset to number of PCs used to train fSNN, which is also used as ground-truth n_x
   n_latent_dims_offset:
@@ -27,6 +29,8 @@ star_sweep_params:
     - -1
     - 0
     - 1
+    - 5
+    - 10
   density_scale:
     - 1
     - 1.33
@@ -41,6 +45,7 @@ star_sweep_params:
     - 50
     - 100
     - 200
+    - 400
   model_task_inputs:
     - false
     - true
@@ -154,7 +159,7 @@ prep_fsnn_demean:
   n_main_trials: 100 # 250
   n_settle_trials: 20 # basically doing init trials for train here
 prep_fsnn_train:
-  n_main_trials: 100
+  n_main_trials: 250
   n_settle_trials: 20 # basically doing init trials for test here
 prep_fsnn_test:
   n_main_trials: 50
