@@ -190,7 +190,7 @@ rule testq1:
             k=64,
             m=NA,
             # m=16,
-            seed=3,
+            seed=17230616,
             signals=NA,
         ),
     output:
@@ -228,7 +228,7 @@ rule testq2:
             # k=16,
             m=test_m,
             # m=48,
-            seed=3,
+            seed=17230616,
         ),
     output:
         "<results>/testq2/{file}",
