@@ -22,20 +22,68 @@ wildcard_constraints:
 rule all:
     input:
         expand(
-            "results/figs/{setting}_{task}.pdf",
+            "<results>/figs/{setting}_{task}.pdf",
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
-        "results/figs/diagnostics.pdf",
+        "<results>/figs/diagnostics.pdf",
         expand(
-            "results/figs/{setting}_{task}_diagnostics.pdf",
+            "<results>/figs/{setting}_{task}_diagnostics.pdf",
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
     localrule: True
 
 
-cond_params = [
+steps_params = {
+    "prep_fsnn": [
+        "task",
+        "seed",
+        "n_latent_dims_offset",
+        "density_scale",
+        "network_area_scale",
+    ],
+    "cleo_prep": [
+        "setting",
+        "k",
+        "m",
+        "beam_width_um",
+        "signals",
+    ],
+    "sys_id_expts": [],
+    "model_fit": ["n_trials_sys_id", "model_task_inputs"],
+    "ctrl_expts": ["latency", "ctrl_type"],
+}
+
+
+def na_wildcards_through_step(desired_step):
+    """returns a {wc: "NA"} dict for all wildcards that are irrelevant at and before
+    the desired step, i.e., they are introduced later.
+    e.g., for model fit, the WCs introduced by ctrl_expts"""
+    irrelevant_wcs = []
+    for step, step_irrs in [
+        ("ctrl_expts", []),
+        # introduced by ctrl_expts:
+        ("model_fit", steps_params["ctrl_expts"]),
+        # introduced by model_fit:
+        ("sys_id_expts", steps_params["model_fit"]),
+        # introduced by sys_id_expts:
+        ("cleo_prep", steps_params["sys_id_expts"]),
+        # introduced by cleo_prep:
+        ("prep_fsnn", steps_params["cleo_prep"]),
+        # the rest are relevant for any condition, from the start
+    ]:
+        irrelevant_wcs += step_irrs
+        if step == desired_step:
+            break
+    return {wc: NA for wc in irrelevant_wcs}
+
+
+cond_params = []
+for p in steps_params.values():
+    cond_params.extend(p)
+
+_cond_params_in_cfg = [
     param
     for param_type in [
         "manual_sweep_params",
@@ -45,6 +93,10 @@ cond_params = [
     ]
     for param in config[param_type].keys()
 ]
+for p in _cond_params_in_cfg:
+    assert p in cond_params
+for p in cond_params:
+    assert p in _cond_params_in_cfg
 
 params_str = "/".join(f"{par}_{{{par}}}" for par in cond_params)
 
@@ -142,7 +194,7 @@ rule testq1:
             signals=NA,
         ),
     output:
-        "results/testq1/{file}",
+        "<results>/testq1/{file}",
     localrule: True
     shell:
         # NOTE: could have used ln -r (relative) instead of realpath
@@ -179,7 +231,7 @@ rule testq2:
             seed=3,
         ),
     output:
-        "results/testq2/{file}",
+        "<results>/testq2/{file}",
     localrule: True
     shell:
         # "rm -r $(dirname {output}) || true && \\"
@@ -193,13 +245,15 @@ fig_exts = [".webp", ".pdf"]
 
 rule main_figs:
     input:
-        "results/{setting}_{task}.csv",
+        "<results>/{setting}_{task}.csv",
         "src/plot_style.py",
     output:
-        main=multiext("results/figs/{setting}_{task}", *fig_exts),
-        lineplots=multiext("results/figs/{setting}_{task}_lineplots", *fig_exts),
-        heatmaps_mean=multiext("results/figs/{setting}_{task}_heatmaps_mean", *fig_exts),
-        heatmaps_std=multiext("results/figs/{setting}_{task}_heatmaps_std", *fig_exts),
+        main=multiext("<results>/figs/{setting}_{task}", *fig_exts),
+        lineplots=multiext("<results>/figs/{setting}_{task}_lineplots", *fig_exts),
+        heatmaps_mean=multiext(
+            "<results>/figs/{setting}_{task}_heatmaps_mean", *fig_exts
+        ),
+        heatmaps_std=multiext("<results>/figs/{setting}_{task}_heatmaps_std", *fig_exts),
     localrule: True
     script:
         "../src/scripts/main_figs.py"
@@ -208,9 +262,9 @@ rule main_figs:
 rule diagnostic_figs:
     input:
         "src/plot_style.py",
-        csvs=["results/{setting}_{task}.csv"],
+        csvs=["<results>/{setting}_{task}.csv"],
     output:
-        multiext("results/figs/{setting}_{task}_diagnostics", *fig_exts),
+        multiext("<results>/figs/{setting}_{task}_diagnostics", *fig_exts),
     localrule: True
     script:
         "../src/scripts/diagnostic_figs.py"
@@ -220,12 +274,12 @@ rule diagnostic_figs_combined:
     input:
         "src/plot_style.py",
         csvs=expand(
-            "results/{setting}_{task}.csv",
+            "<results>/{setting}_{task}.csv",
             setting=config["manual_sweep_params"]["setting"],
             task=config["manual_sweep_params"]["task"],
         ),
     output:
-        multiext("results/figs/diagnostics", *fig_exts),
+        multiext("<results>/figs/diagnostics", *fig_exts),
     localrule: True
     script:
         "../src/scripts/diagnostic_figs.py"
@@ -266,7 +320,7 @@ rule sufficient_stim_tabulate:
             for ctrl, latency in [("OL", False), ("LQMPC", True)]
         ],
     output:
-        protected("results/sufficient_stim_{task}.csv"),
+        protected("<results>/sufficient_stim_{task}.csv"),
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -314,7 +368,7 @@ rule optimal_stim_rec_tabulate:
             for k, m in get_q2_kms()
         ],
     output:
-        protected("results/optimal_stim_rec_{task}.csv"),
+        protected("<results>/optimal_stim_rec_{task}.csv"),
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -322,30 +376,6 @@ rule optimal_stim_rec_tabulate:
         print("concatenated optimal stim rec DFs")
         df.to_csv(output[0], index=False)
         print(f"wrote optimal stim rec results to {output[0]}")
-
-
-def na_wildcards_through_step(desired_step):
-    """returns a {wc: "NA"} dict for all wildcards that are irrelevant at and before
-    the desired step, i.e., they are introduced later.
-    e.g., for model fit, the WCs introduced by ctrl_expts"""
-    irrelevant_wcs = []
-    for step, step_irrs in [
-        ("ctrl_expts", []),
-        # introduced by ctrl_expts:
-        ("model_fit", ["latency", "ctrl_type"]),
-        # introduced by model_fit:
-        ("sys_id_expts", ["n_trials_sys_id", "model_task_inputs"]),
-        # introduced by sys_id_expts:
-        ("cleo_prep", []),
-        # introduced by cleo_prep:
-        ("prep_fsnn", ["beam_width_um", "signals", "k", "m"]),
-        # these change results from the very beginning, with prep_fsnn:
-        # n_latent_dims_offset, density_scale, network_area_scale, setting, task, seed
-    ]:
-        irrelevant_wcs += step_irrs
-        if step == desired_step:
-            break
-    return {wc: NA for wc in irrelevant_wcs}
 
 
 rule analyze_ctrl_data:
@@ -368,9 +398,9 @@ rule analyze_ctrl_data:
             "model_fit_analysis.csv", **na_wildcards_through_step("model_fit")
         ),
     output:
-        f"results/{params_str}/summary.csv",
+        f"<results>/{params_str}/summary.csv",
     log:
-        f"logs/{params_str}/analyze_ctrl_data.log",
+        f"<logs>/{params_str}/analyze_ctrl_data.log",
     localrule: True
     script:
         "../src/scripts/analyze_ctrl_data.py"
@@ -381,7 +411,7 @@ rule plot_ctrl_data_wide:
         paths_for_params("ctrl_data.pkl.gz"),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/ctrl_data_wide_plot_{{style}}.png",
+        f"<results>/{params_str}/ctrl_data_wide_plot_{{style}}.png",
     localrule: True
     script:
         "../src/scripts/plot_ctrl_data.py"
@@ -389,7 +419,7 @@ rule plot_ctrl_data_wide:
 
 use rule plot_ctrl_data_wide as plot_ctrl_data_wide_default with:
     output:
-        f"results/{params_str}/ctrl_data_wide_plot.png",
+        f"<results>/{params_str}/ctrl_data_wide_plot.png",
 
 
 def fsnn_mem_required(wc):
@@ -429,14 +459,14 @@ rule ctrl_expts:
     params:
         step_params("cleo_prep", "expts", "ctrl_expts"),
     output:
-        data=f"results/{params_str}/ctrl_data.pkl.gz",
+        data=f"<results>/{params_str}/ctrl_data.pkl.gz",
     conda:
         "cold"
     resources:
         mem_mb=lambda wc: fsnn_mem_required(wc) * 2,
         runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=8),
     log:
-        f"logs/{params_str}/ctrl_expts.log",
+        f"<logs>/{params_str}/ctrl_expts.log",
     retries: 1
     script:
         "../src/scripts/ctrl_expts.py"
@@ -455,7 +485,7 @@ rule plot_model_fit_pred:
         ),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/model_fit_pred_plot_{{style}}.png",
+        f"<results>/{params_str}/model_fit_pred_plot_{{style}}.png",
     localrule: True
     script:
         "../src/scripts/plot_model_fit_pred.py"
@@ -464,7 +494,7 @@ rule plot_model_fit_pred:
 use rule plot_model_fit_pred as plot_model_fit_pred_default with:
     localrule: True
     output:
-        f"results/{params_str}/model_fit_pred_plot.png",
+        f"<results>/{params_str}/model_fit_pred_plot.png",
 
 
 rule analyze_model_fit:
@@ -479,7 +509,7 @@ rule analyze_model_fit:
             "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
         ),
     output:
-        f"results/{params_str}/model_fit_analysis.csv",
+        f"<results>/{params_str}/model_fit_analysis.csv",
     localrule: True
     script:
         "../src/scripts/analyze_model_fit.py"
@@ -503,10 +533,10 @@ rule model_fit:
         ),
     params:
         step_params("model_fit"),
-        braid_basename=f"results/{params_str}/model_fit_braid",
+        braid_basename=f"<results>/{params_str}/model_fit_braid",
     output:
-        lds_model=f"results/{params_str}/model_fit_lds.pkl.gz",
-        pred_data=f"results/{params_str}/model_fit_pred_data.pkl.gz",
+        lds_model=f"<results>/{params_str}/model_fit_lds.pkl.gz",
+        pred_data=f"<results>/{params_str}/model_fit_pred_data.pkl.gz",
     threads: lambda wc: max(1, 8 * gpu_for_model_fit(wc))
     resources:
         gpu=gpu_for_model_fit,
@@ -519,7 +549,7 @@ rule model_fit:
     conda:
         "cold"
     log:
-        f"logs/{params_str}/model_fit.log",
+        f"<logs>/{params_str}/model_fit.log",
     script:
         "../src/scripts/model_fit.py"
 
@@ -531,7 +561,7 @@ rule plot_sys_id_data_trials:
         ),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/sys_id_trials_plot.{{ext}}",
+        f"<results>/{params_str}/sys_id_trials_plot.{{ext}}",
     localrule: True
     script:
         "../src/scripts/plot_expt_data_trials.py"
@@ -544,7 +574,7 @@ rule plot_sys_id_data_wide:
         ),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/sys_id_wide_plot_{{style}}.{{ext}}",
+        f"<results>/{params_str}/sys_id_wide_plot_{{style}}.{{ext}}",
     localrule: True
     script:
         "../src/scripts/plot_expt_data_wide.py"
@@ -552,7 +582,7 @@ rule plot_sys_id_data_wide:
 
 use rule plot_sys_id_data_wide as plot_sys_id_data_wide_default with:
     output:
-        f"results/{params_str}/sys_id_wide_plot.{{ext}}",
+        f"<results>/{params_str}/sys_id_wide_plot.{{ext}}",
 
 
 n_trials_sys_id_max = config["star_sweep_params"]["n_trials_sys_id"][-1]
@@ -565,9 +595,9 @@ rule sys_id_expts:
         step_params("cleo_prep", "expts", "sys_id_expts"),
         n_trials_sys_id_max=n_trials_sys_id_max,
     output:
-        f"results/{params_str}/sys_id_data.pkl.gz",
+        f"<results>/{params_str}/sys_id_data.pkl.gz",
     log:
-        f"logs/{params_str}/sys_id_expts.log",
+        f"<logs>/{params_str}/sys_id_expts.log",
     conda:
         "cold"
     resources:
@@ -584,8 +614,8 @@ rule impulse_responses:
     params:
         step_params("expts"),
     output:
-        f"results/{params_str}/impulse_responses_wide_plot.png",
-        f"results/{params_str}/impulse_responses_trials_plot.png",
+        f"<results>/{params_str}/impulse_responses_wide_plot.png",
+        f"<results>/{params_str}/impulse_responses_trials_plot.png",
     localrule: True
     script:
         "../src/scripts/impulse_responses.py"
@@ -620,7 +650,7 @@ rule plot_cleo:
         "src/scripts/cleo_prep.py",
         "src/plot_style.py",
     output:
-        f"results/{params_str}/cleo_plot.{{ext}}",
+        f"<results>/{params_str}/cleo_plot.{{ext}}",
     params:
         fsnn_params,
         step_params("cleo_prep"),
@@ -641,9 +671,9 @@ rule cleo_prep:
     params:
         step_params("prep_fsnn", "cleo_prep"),
     output:
-        f"results/{params_str}/cleo_prep.pkl.gz",
+        f"<results>/{params_str}/cleo_prep.pkl.gz",
     log:
-        f"logs/{params_str}/cleo_prep.log",
+        f"<logs>/{params_str}/cleo_prep.log",
     localrule: True
     script:
         "../src/scripts/cleo_prep.py"
@@ -651,10 +681,10 @@ rule cleo_prep:
 
 rule plot_fsnn:
     input:
-        f"results/{params_str}/fsnn_post_demean.pkl.gz",
+        f"<results>/{params_str}/fsnn_post_demean.pkl.gz",
         "src/plot_style.py",
     output:
-        f"results/{params_str}/fsnn_plot.png",
+        f"<results>/{params_str}/fsnn_plot.png",
     localrule: True
     script:
         "../src/scripts/plot_fsnn.py"
@@ -663,17 +693,17 @@ rule plot_fsnn:
 # for verifying things like L2, spatial, layer penalties are working
 # rule plot_fsnn_weights:
 #     output:
-#         f"results/{params_str}/fsnn_weights_plot.png",
-#         f"results/{params_str}/fsnn_weights_plot.svg",
+#         f"<results>/{params_str}/fsnn_weights_plot.png",
+#         f"<results>/{params_str}/fsnn_weights_plot.svg",
 #     script:
 #         "../src/scripts/plot_fsnn_weights.py"
 
 
 rule analyze_fsnn_data:
     input:
-        f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz",
+        f"<results>/{params_str}/fsnn_{{mode}}_data.pkl.gz",
     output:
-        f"results/{params_str}/fsnn_{{mode}}_data_analysis.csv",
+        f"<results>/{params_str}/fsnn_{{mode}}_data_analysis.csv",
     localrule: True
     script:
         "../src/scripts/analyze_fsnn_data.py"
@@ -686,7 +716,7 @@ rule plot_fsnn_data:
         ),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/fsnn_{{mode}}_data_plot.{{ext}}",
+        f"<results>/{params_str}/fsnn_{{mode}}_data_plot.{{ext}}",
     localrule: True
     script:
         "../src/scripts/plot_fsnn_data.py"
@@ -700,18 +730,18 @@ def fsnn_inputs(wc):
     )
     # if train or test, get fsnn from previous step
     if wc.mode == "train":
-        inputs["fsnn"] = f"results/{params_str}/fsnn_post_demean.pkl.gz"
+        inputs["fsnn"] = f"<results>/{params_str}/fsnn_post_demean.pkl.gz"
     elif wc.mode == "test":
-        inputs["fsnn"] = f"results/{params_str}/fsnn_post_train.pkl.gz"
+        inputs["fsnn"] = f"<results>/{params_str}/fsnn_post_train.pkl.gz"
     return inputs
 
 
 def fsnn_outputs(save_fsnn, save_data):
     outputs = {}
     if save_fsnn:
-        outputs["fsnn"] = f"results/{params_str}/fsnn_post_{{mode}}.pkl.gz"
+        outputs["fsnn"] = f"<results>/{params_str}/fsnn_post_{{mode}}.pkl.gz"
     if save_data:
-        outputs["data"] = f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz"
+        outputs["data"] = f"<results>/{params_str}/fsnn_{{mode}}_data.pkl.gz"
     return outputs
 
 
@@ -739,7 +769,7 @@ rule _prep_fsnn:
     params:
         fsnn_params,
     log:
-        f"logs/{params_str}/prep_fsnn_{{mode}}.log",
+        f"<logs>/{params_str}/prep_fsnn_{{mode}}.log",
     # only use 2 threads; more requires a lot of memory for parallel compilation
     threads: lambda wc: max(1, 4 * gpu_for_fsnn_train(wc))
     resources:
@@ -779,8 +809,8 @@ rule plot_schematic:
         "src/cleo_prep_{setting}.py",
         "src/plot_style.py",
     output:
-        top=multiext(f"results/{params_str}/top_schematic", ".svg", ".png"),
-        side=multiext(f"results/{params_str}/side_schematic", ".svg", ".png"),
+        top=multiext(f"<results>/{params_str}/top_schematic", ".svg", ".png"),
+        side=multiext(f"<results>/{params_str}/side_schematic", ".svg", ".png"),
     params:
         step_params("prep_fsnn", "cleo_prep"),
     localrule: True
