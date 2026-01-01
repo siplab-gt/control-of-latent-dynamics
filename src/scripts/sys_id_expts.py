@@ -43,6 +43,9 @@ class ExptData(BaseDataClass):
     """Time of spike count samples in ms, shape (T_samp,) array"""
     i_trial_boundaries: UInt[np.ndarray, "n_trials 2"]
     """Trial (start, ..., end) indices, shape (n_trials, 2) array"""
+    conditions: list[int]
+    """List of condition indices for each trial"""
+    cleo_prep_file: str | None
 
     @property
     def n_trials(self) -> int:
@@ -74,7 +77,7 @@ class ExptData(BaseDataClass):
 
     @classmethod
     def from_cleo_prep(
-        cls, cleo_prep: CleoPrep, spike_counts, t_samp, subsample_factor
+        cls, cleo_prep: CleoPrep, spike_counts, t_samp, subsample_factor, cleo_prep_file
     ):
         i_trial_bounds = np.array(cleo_prep.fsnn.i_trial_boundaries) / subsample_factor
         i_trial_bounds[:, 0] = i_trial_bounds[:, 0].astype(int)
@@ -100,6 +103,8 @@ class ExptData(BaseDataClass):
             lfp=lfp,
             t_samp_ms=t_samp / b2.ms,
             i_trial_boundaries=i_trial_bounds,
+            conditions=cleo_prep.fsnn.trial_conditions,
+            cleo_prep_file=cleo_prep_file,
         )
         assert np.all(expt_data.t_ms == expt_data.t_samp_ms)
         assert expt_data.X.shape[0] == expt_data.Y.shape[0] == expt_data.Z.shape[0], (
@@ -170,6 +175,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         spike_count_array,
         cleo_prep.sim.io_processor.t_samp,
         base_params.subsample_factor,
+        cleo_prep_file,
     )
     expt_data.save(outfile)
 

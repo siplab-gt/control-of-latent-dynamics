@@ -218,6 +218,7 @@ def ctrl_expts(
         spike_counts,
         cleo_prep.sim.io_processor.t_samp,
         base_params.subsample_factor,
+        cleo_prep_file,
     )
     log.info("extracting Zref and Zhat")
     Zref = ctrl_proc.Zref * lds.z_std + lds.z_mean
