@@ -61,20 +61,12 @@ def na_wildcards_through_step(desired_step):
     the desired step, i.e., they are introduced later.
     e.g., for model fit, the WCs introduced by ctrl_expts"""
     irrelevant_wcs = []
-    for step, step_irrs in [
-        ("ctrl_expts", []),
-        # introduced by ctrl_expts:
-        ("model_fit", steps_params["ctrl_expts"]),
-        # introduced by model_fit:
-        ("sys_id_expts", steps_params["model_fit"]),
-        # introduced by sys_id_expts:
-        ("cleo_prep", steps_params["sys_id_expts"]),
-        # introduced by cleo_prep:
-        ("prep_fsnn", steps_params["cleo_prep"]),
-        # the rest are relevant for any condition, from the start
-    ]:
-        irrelevant_wcs += step_irrs
-        if step == desired_step:
+    for step, params_for_step in reversed(list(steps_params.items())):
+        # this step comes after the desired step so its params are irrelevant
+        if step != desired_step:
+            irrelevant_wcs.extend(params_for_step)
+        else:
+            # the params for this and earlier steps aren't irrelevant, so stop
             break
     return {wc: NA for wc in irrelevant_wcs}
 
@@ -463,7 +455,7 @@ rule ctrl_expts:
     conda:
         "cold"
     resources:
-        mem_mb=lambda wc: fsnn_mem_required(wc) * 2,
+        mem_mb=lambda wc: fsnn_mem_required(wc) * 1.5,
         runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=8),
     log:
         f"<logs>/{params_str}/ctrl_expts.log",
