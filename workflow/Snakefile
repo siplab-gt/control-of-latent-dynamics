@@ -16,7 +16,7 @@ configfile: "config/config.yaml"
 
 wildcard_constraints:
     task="|".join(config["manual_sweep_params"]["task"]),
-    setting="|".join(config["manual_sweep_params"]["setting"]),
+    setting="|".join(config["manual_sweep_params"]["setting"] + ["NA"]),
 
 
 rule all:
@@ -181,7 +181,6 @@ rule testq1:
             ctrl_type="LQMPC",
             k=64,
             m=NA,
-            # m=16,
             seed=17230616,
             signals=NA,
         ),
