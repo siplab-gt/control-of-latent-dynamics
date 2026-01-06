@@ -103,7 +103,7 @@ class ExptData(BaseDataClass):
             lfp=lfp,
             t_samp_ms=t_samp / b2.ms,
             i_trial_boundaries=i_trial_bounds,
-            conditions=cleo_prep.fsnn.trial_conditions,
+            conditions=cleo_prep.fsnn.conditions,
             cleo_prep_file=cleo_prep_file,
         )
         assert np.all(expt_data.t_ms == expt_data.t_samp_ms)
