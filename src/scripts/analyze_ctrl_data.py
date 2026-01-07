@@ -105,9 +105,10 @@ def analyze_ctrl_data(
     Zref = np.array(
         [ctrl_data.Zref[i_start : i_start + nt, :n_muscles] for i_start in i_starts]
     )
-    ref_conds = np.linalg.norm(
-        Zref - emg_templates[:, None, :, :], ord=2, axis=(2, 3)
-    ).argmin(axis=0)
+    # ref_conds = np.linalg.norm(
+    #     Zref - emg_templates[:, None, :, :], ord=2, axis=(2, 3)
+    # ).argmin(axis=0)
+    ref_conds = ctrl_data.conditions
     # start at +1 since we floored the start index
     # (trials can start any 2 ms step, while Cleo is at 10 ms steps)
     Ztrials = np.array(
