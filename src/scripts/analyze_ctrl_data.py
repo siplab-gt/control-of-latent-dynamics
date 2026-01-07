@@ -101,26 +101,47 @@ def analyze_ctrl_data(
     # if it weren't we'd need to match timescales here
     nt = emg_templates.shape[1]
 
+    from sklearn.neighbors import KNeighborsClassifier
+
     # predict reaches instead from Zref since Utask has direction input removed
     Zref = np.array(
         [ctrl_data.Zref[i_start : i_start + nt, :n_muscles] for i_start in i_starts]
     )
-    # ref_conds = np.linalg.norm(
-    #     Zref - emg_templates[:, None, :, :], ord=2, axis=(2, 3)
-    # ).argmin(axis=0)
+    Xref = (
+        np.array(
+            [ctrl_data.Xref_fsnn[i_start : i_start + nt, :] for i_start in i_starts]
+        )
+        if ctrl_data.Xref_fsnn is not None
+        else None
+    )
     ref_conds = ctrl_data.conditions
     # start at +1 since we floored the start index
     # (trials can start any 2 ms step, while Cleo is at 10 ms steps)
     Ztrials = np.array(
         [ctrl_data.Z[i_start : i_start + nt, :n_muscles] for i_start in i_starts]
     )
+    Xtrials = np.array([ctrl_data.X[i_start : i_start + nt, :] for i_start in i_starts])
     assert Ztrials.shape == (ctrl_data.n_trials, nt, n_muscles)
-    l2_dist = Ztrials[None, :, :, :] - emg_templates[:, None, :, :]
-    assert l2_dist.shape == (n_conds, ctrl_data.n_trials, nt, n_muscles)
-    l2_dist = np.linalg.norm(l2_dist, ord=2, axis=(2, 3))  # conds x trials
-    pred_conds = np.argmin(l2_dist, axis=0)
-    assert pred_conds.shape == (ctrl_data.n_trials,)
-    results["acc_pred_reach"] = np.mean(pred_conds == ref_conds)
+
+    def acc_pred_cond(refs, true_conds, outputs, n_neighbors=3):
+        classifier = KNeighborsClassifier(n_neighbors=n_neighbors)
+        assert n_neighbors <= np.min(np.bincount(true_conds)), np.bincount(true_conds)
+        classifier.fit(
+            X=refs.reshape((len(refs), -1)),
+            y=true_conds,
+        )
+        acc = classifier.score(
+            X=outputs.reshape((len(outputs), -1)),
+            y=true_conds,
+        )
+        return acc, classifier.predict(outputs.reshape((len(outputs), -1)))
+
+    if Xref is not None:
+        acc_X, pred_conds_X = acc_pred_cond(Xref, ref_conds, Xtrials)
+        acc_X
+    acc_Z, pred_conds_Z = acc_pred_cond(Zref, ref_conds, Ztrials)
+    results["acc_pred_cond_X"] = acc_X if Xref is not None else np.nan
+    results["acc_pred_cond_Z"] = acc_Z
 
     results["ctrl_compute_latency_mean_ms"] = ctrl_data.compute_latency_mean_ms
     results["ctrl_compute_latency_std_ms"] = ctrl_data.compute_latency_std_ms
