@@ -2,9 +2,10 @@ import brian2.only as b2
 import numpy as np
 
 
-def get_interface_array(depth_mm, array_side_length_mm, total_scale, array_n_per_side):
-    grid_len = array_side_length_mm * np.sqrt(total_scale)
+def get_interface_array(depth_mm, array_side_length_mm, array_n_per_side):
+    grid_len = array_side_length_mm
     # TODO: define grid size by beam spacing?
+    # not while spatial connectivity isn't implemented
     x, y, z = np.meshgrid(
         np.linspace(-grid_len / 2, grid_len / 2, array_n_per_side),
         np.linspace(-grid_len / 2, grid_len / 2, array_n_per_side),

@@ -10,16 +10,23 @@ from brian2 import np
 from src.fsnn import fSNN
 from src.helpers import (
     preprocess_params,
+    seed_everything,
     setup_debugger,
     setup_logging,
-    seed_everything,
 )
 
 log = logging.getLogger(__name__)
 
 
 def main(
-    cond_params, base_params, device, fsnn_infile, fsnn_outfile, data_outfile, mode
+    cond_params,
+    base_params,
+    device,
+    fsnn_infile,
+    fsnn_outfile,
+    data_outfile,
+    mode,
+    debug=False,
 ):
     try:
         outdir = os.path.dirname(fsnn_outfile)
@@ -124,6 +131,8 @@ if __name__ == "__main__" and "snakemake" in locals():
         device = snakemake.config.get("train_device")
     else:
         device = "cython"  # use cython for non-training since it's faster
+    debug = snakemake.config.get("debug", False)
+    setup_debugger(debug)
 
     fsnn = main(
         preprocess_params(snakemake.wildcards),
@@ -133,4 +142,5 @@ if __name__ == "__main__" and "snakemake" in locals():
         snakemake.output.get("fsnn", None),
         snakemake.output.get("data", None),
         mode=snakemake.wildcards.mode,
+        debug=debug,
     )

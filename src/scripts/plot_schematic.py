@@ -26,8 +26,8 @@ def main(cond_params, base_params, outfiles):
     ax.add_patch(net_rect)
 
     grid = get_interface_array(
+        # TODO: depth
         float(base_params["array_side_length_mm"]),
-        float(cond_params["total_scale"]),
         int(base_params["array_n_per_side"]),
     )
     if cond_params["setting"] == "sufficient_stim":

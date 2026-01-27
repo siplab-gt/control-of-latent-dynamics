@@ -1,0 +1,35 @@
+# this is for PACE cluster-specific things
+# workflow-specific things are in profiles/default/config.v9+.yaml
+executor: slurm
+jobs: 495 # just under 500 limit to be safe
+logger: snkmt
+resources:
+  gpu_jobs: 500 # not sure. old PPT said 10, but not on docs.
+  gpu: 32 # on current docs: https://gatech.service-now.com/technology?id=kb_article_view&sysparm_article=KB0041998
+sdm: conda
+conda-prefix: $HOME/.conda/smk-conda
+default-resources:
+  slurm_account: gts-crozell3
+  # since slurm executor sets to 1, which breaks
+  tasks_per_gpu: 0
+# this part might need to be in a separate file, passed with --slurm-partition-config
+# but we probably don't need it since PACE automatically assigns partitions based on resource requests
+# partitions:
+#   cpu-small:
+#     max_mem_mb: 192000
+#     max_threads: 24
+#   cpu-medium:
+#     max_mem_mb: 384000
+#     max_threads: 24
+#   gpu-v100:
+#     max_mem_mb: 192000
+#     max_gpu: 2
+#     max_threads: 24
+#   gpu-rtx6000:
+#     max_mem_mb: 384000
+#     max_gpu: 4
+#     max_threads: 24
+#   gpu-a100:
+#     max_mem_mb: 512000
+#     max_gpu: 2
+#     max_threads: 64

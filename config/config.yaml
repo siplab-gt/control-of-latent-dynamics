@@ -9,76 +9,47 @@ grid_sweep_params:
     - 17230616
     - 18051223
     - 16320829
-    # - 18060520
-    # - 18220427
+    - 18060520
+    - 18220427
 
 # exploratory vars to sweep one at a time in Q1, Q2
 # i.e., explore space in star pattern
 ###################################################
 star_sweep_params:
   n_trials_sys_id:
-    # - 10
-    # - 50
-    # - 100
-    - 2
-    - 5
-  latent_dim: # only possible on integration?
-    - 1
-    # - 2
-    # - 4
-    # - 8
-    - 16
-  total_scale:
-    - 0.1
-    # - 1
     - 10
-  # TODO: don't think I can do this and beam_spacing together. pick one
-  network_area_scale: # proportional to array area
-    - 1.1
+    - 40
+    - 70
+    - 100
+  # offset to number of PCs used to train fSNN, which is also used as ground-truth n_x
+  n_latent_dims_offset:
+    - -2
+    - -1
+    - 0
+    - 1
+  density_scale:
+    - 1
+    - 1.33
+    - 1.67
     - 2
-    # - 3
-    # - 4
+  network_area_scale: # proportional to array area
+    - 1.44 # minimum for 0.4 mm padding around 4x4mm array, which we want for LFP
+    - 2
+    - 3
   beam_width_um:
     - 10
-    # - 50
-    # - 100
+    - 50
+    - 100
     - 200
-  beam_spacing:
-    - 0.5
-    - 1
-    - 2
-    - 5
-    - 10
-  connection_distance_penalty:
-    - 0
-    # - 0.001
-    # - 0.01
-    - 0.1
-  connection_l2_penalty:
-    - 0
-    # - 0.001
-    # - 0.01
-    - 0.1
-  # keep the same L4-L2/3-L5 structure everywhere, but alter weights
-  # single "layeredness" variable that controls both layer connectivity penalty
-  # and density variation by layer
-  layeredness:
-    - 0
-    # - 0.33
-    # - 0.67
-    - 1
-  dales_law:
-    - false
-    - true
-  n_pcs:
-    - 1
-    # - 5
-    - 10
-    # - 15
-    - 20
   model_task_inputs:
     - false
     - true
+
+star_sweep_params_measurement_only:
+  signals:
+    - spikes
+    - lfp
+    - both
 
 # don't automatically sweep these, will be handled manually in Snakefile
 ########################################################################
@@ -102,20 +73,14 @@ manual_sweep_params:
 #################
 reference_params:
   ###############
-  # n_trials_sys_id: 50
-  n_trials_sys_id: 5 # TODO
-  latent_dim: 2
-  total_scale: 1
-  network_area_scale: 1.1
+  n_trials_sys_id: 100
+  n_latent_dims_offset: 0
+  density_scale: 1
+  network_area_scale: 1.44
   beam_width_um: 100
-  beam_spacing: 2
-  connection_distance_penalty: 0.5
-  connection_l2_penalty: 0
-  layeredness: 0
-  dales_law: false
   latency: true
-  n_pcs: 20
   model_task_inputs: true
+  signals: lfp
 
 ##############################
 # question-specific parameters
@@ -127,51 +92,17 @@ q1: # a.k.a. sufficient stim, how many channels are good enough?
   k:
     - 1
     - 2
-    # - 4
+    - 4
     - 8
-    # - 16
-    # - 32
+    - 16
+    - 32
     - 64
   m: NA
 
 q2: # a.k.a. optimal stim/rec balance
   ###################################
   channel_budget: 64
-  # num_stim_ratio_levels: 7
-  num_stim_ratio_levels: 4 # TODO
-
-q3: # how do results change with increasing realism?
-  ##################################################
-  # maybe don't need to hardcode this in? could interpolate
-  # realism_levels:
-  #   0: reference
-  #   1:
-  #     latent_dim: 4
-  #     network_size_um: 2000
-  #     connection_distance_penalty: 1
-  #     connection_layer_penalty: 1
-  #     num_tasks: 1
-  #     # dale's law
-  #   2:
-  #     total_scale: 1
-  #     network_size_um: 1000
-  #     beam_width_um: 100
-  #     beam_spacing: 2
-  #     connection_distance_penalty: 0
-  #     connection_l2_penalty: 0
-  #     stim_channels: 0.5
-
-  # interpolate from least to most realistic setting for each feature
-  # from the one-at-a-time sweeps
-  num_realism_levels: 10
-  realism_features:
-    - latent_dim
-    - network_size_um # or total_scale?
-    - connection_distance_penalty
-    - connection_layer_penalty
-    # TODO: num_tasks
-    # - num_tasks
-    - dales_law
+  num_stim_ratio_levels: 7
 
 #########################################
 # base parameters, used across conditions
@@ -186,7 +117,7 @@ prep_fsnn:
   dt_ms: 1
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
-  base_neuron_density: 175 # neurons per mm^3. 65k is realistic
+  base_neuron_density: 125 # neurons per mm^3. 65k is realistic
   layer_density_ratios:
     - 1.231 # L2/3, =80/65
     - 1.539 # L4, =100/65
@@ -218,14 +149,14 @@ prep_fsnn:
 
 # mode-specific
 prep_fsnn_demean:
-  n_init_trials: 2 # 50
-  n_main_trials: 5 # 250
+  n_init_trials: 20 # 50
+  n_main_trials: 100 # 250
+  n_settle_trials: 20 # basically doing init trials for train here
 prep_fsnn_train:
-  n_init_trials: 1
-  n_main_trials: 15
-  n_settle_trials: 1 # basically doing init trials for test here
+  n_main_trials: 100
+  n_settle_trials: 20 # basically doing init trials for test here
 prep_fsnn_test:
-  n_main_trials: 10
+  n_main_trials: 50
 
 # task-specific
 prep_fsnn_cycling:
@@ -237,14 +168,16 @@ prep_fsnn_reaching:
   iti_min_s: .4
   iti_lambda_s: 2
   t_event_s: [0.35, 0.15, 0.31]
-  n_rate_neurons: 100 # 800
-  n_trials_pca: 10 # for rate network  TODO: 50
+  n_rate_neurons: 800 # 800
+  n_trials_pca: 100 # for rate network
   g: 3 # feedback gain. more like input gain?
 
 cleo_prep:
   array_side_length_mm: 4
   array_n_per_side: 8
   typical_Irr0_mWmm2: 5
+  # needed early for LFP
+  subsample_factor: 10 # ctrl/sample period relative to fsnn dt
 
 model_fit:
   linear_Cz: true
@@ -258,10 +191,12 @@ model_fit_sufficient_stim:
 
 model_fit_optimal_stim_rec:
   epochs: 2500 # only needed here for braid
+  # as explained in BRAID tutorial, this makes U observable when forecasting and programs steps_ahead=[1, 10]
+  # steps_ahead_model_code: "ObsUKfw_ObsUCfw_sta1;9;10"
+  steps_ahead_model_code: ""
 
 expts: # common to sys ID and ctrl expts
   u_max_mWmm2: 75
-  subsample_factor: 5 # ctrl/sample period relative to fsnn dt
 
 sys_id_expts:
   foo: bar
@@ -269,10 +204,29 @@ sys_id_expts:
 ctrl_expts:
   Q_cost: 1
   R_cost: 1e-3
-  ctrl_horizon_ms: 300
-  # n_trials_ctrl: 100
-  n_trials_ctrl: 10
+  ctrl_horizon_ms: 200
+  n_trials_ctrl: 100
   baseline_latency_ms: 1
+  solvers: ["osqp", "clarabel", "scs"]
+  # solver_args:
+  # need to define these below since recursive dict merging isn't
+  # implemented when we load params in Snakefile
+
+ctrl_expts_OL:
+  solver_args:
+    max_iter: 1e8 # very high since we want to rely on time limit
+    eps_infeas: 1e-8 # smaller is less sensitive
+    time_limit: 2 # representative of inter-trial interval for reaching
+    verbose: true
+    ignore_dpp: true
+
+ctrl_expts_LQMPC:
+  solver_args:
+    max_iter: 1e8 # very high since we want to rely on time limit
+    eps_infeas: 1e-8 # smaller is less sensitive
+    time_limit: 0.02
+    warm_start: true
+    enforce_dpp: true
 
 ctrl_expts_sufficient_stim:
   ref_type: X # controlling ground-truth factors
@@ -280,11 +234,12 @@ ctrl_expts_sufficient_stim:
 ctrl_expts_optimal_stim_rec:
   ref_type: Z # controlling output
 
-# non-essential stuff, don't need to pass in as params to trigger re-runs
-#########################################################################
+# non-essential stuff, don't need to pass in as params to trigger re-runs when changed
+######################################################################################
 report_period_s: 60 # for brian report printing frequency
 train_device: cuda # cuda or cython
 model_fit_device: gpu # cpu or gpu
 log_level: DEBUG # DEBUG, INFO, WARNING, ERROR, CRITICAL
 auto_plot: true # automatically plot data from individual experiments
-debug: true # save/plot extra data (e.g., from fSNN training)
+# wait for debugger attach. also save/plot extra data (e.g., from fSNN training)
+debug: false

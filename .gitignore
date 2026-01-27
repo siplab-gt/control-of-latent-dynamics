@@ -1,4 +1,5 @@
 results/**
+results_archive/**
 resources/**
 logs/**
 .snakemake
@@ -12,3 +13,4 @@ report*.html
 build/**
 *.nbi
 *.nbc
+*.log

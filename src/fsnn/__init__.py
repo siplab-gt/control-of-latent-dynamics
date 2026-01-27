@@ -1,9 +1,12 @@
 import importlib
 import logging
+import os
+import shutil
 from dataclasses import dataclass, field
 
 import brian2.only as b2
 from brian2 import np
+from brian2.codegen.runtime.cython_rt.extension_manager import get_cython_cache_dir
 from jaxtyping import Float, UInt
 from tqdm import tqdm
 
@@ -23,7 +26,6 @@ class fSNN(BaseDataClass):
     """target outputs (i.e., EMG)"""
     fin_ta: b2.TimedArray
     """inputs"""
-    n_pcs: int
     i_trial_boundaries: UInt[np.ndarray, "n_trials n_events"] = field(
         default_factory=list
     )
@@ -40,6 +42,7 @@ class fSNN(BaseDataClass):
             syn_y2s=["wLeft", "wRight"],
             syn_z2yPlus=["W"],
             ng_y=["y"],
+            ng_z=["z"],
         )
     )
     _cache: dict = field(repr=False, default_factory=dict)
@@ -58,6 +61,19 @@ class fSNN(BaseDataClass):
         if name in self.net:
             return self.net[name]
         return super().__getattribute__(name)
+
+    def __del__(self):
+        # delete cython cache files upon garbage collection
+        # (since we don't reuse them, multiprocess_safe=False)
+        cache_dir = get_cython_cache_dir()
+        assert not cache_dir.endswith("brian_extensions"), (
+            "shouldn't have the default here"
+        )
+        assert (
+            cache_dir == f"resources/cython_cache/{os.uname().nodename}-{os.getpid()}"
+        )
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir, ignore_errors=True)
 
     @property
     def k_task(self) -> int:
@@ -94,10 +110,10 @@ class fSNN(BaseDataClass):
 
     @mode.setter
     def mode(self, new_mode):
+        log.debug(f"setting fSNN mode to {new_mode}")
         # settle is an alias for init, for running after main mode
         if new_mode == "settle":
             new_mode = "init"
-        log.debug(f"setting fSNN mode to {new_mode}")
 
         # only update vJsbar during demean
         self.vJsbar_update.active = new_mode == "demean"
@@ -178,6 +194,10 @@ class fSNN(BaseDataClass):
         """weights from inputs to neurons"""
         return np.hstack([task.u_in for task in self.tasks])
 
+    @property
+    def W(self) -> Float[np.ndarray, "{self.n_out} {self.n_factors + 1}"]:
+        return self.syn_z2yPlus.W[:].reshape((self.ng_z.N, self.ng_yPlus.N))
+
     def generate_trial(
         self, rng, ctrl=False
     ) -> tuple[
@@ -186,42 +206,45 @@ class fSNN(BaseDataClass):
         """returns ytilde,fout,fin,nsteps_trial,cond,i_trial_start_end,nsteps_iti"""
         task = rng.choice(self.tasks)
         gen_trial_state = self._cache.get("gen_trial_state", {})
-        trial_params = task.generate_trial(rng, ctrl=ctrl, **gen_trial_state)
+        # only get output weights W when needed for control trials
+        W = self.W if ctrl else None
+        trial_params = task.generate_trial(rng, ctrl=ctrl, W=W, **gen_trial_state)
         # e.g., x for rate network state
         self._cache["gen_trial_state"] = trial_params[-1]
         return trial_params[:-1]
 
-    def run_trial(self, rng, trial_params=None):
-        """run a single trial of the current mode"""
-        # relies on object state to keep track of task state, time, nsteps
-        if trial_params is None:
-            (ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti) = (
-                self.generate_trial(rng)
-            )
-        else:
-            (ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti) = (
-                trial_params
-            )
+    # def run_trial(self, rng, trial_params=None):
+    #     BROKEN SINCE REFACTOR TO RUN EVERYTHING WITH run_trials()
+    #     """run a single trial of the current mode"""
+    #     # relies on object state to keep track of task state, time, nsteps
+    #     if trial_params is None:
+    #         (ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti) = (
+    #             self.generate_trial(rng)
+    #         )
+    #     else:
+    #         (ytilde, fout, fin, nsteps_trial, condition, i_trial_bounds, nsteps_iti) = (
+    #             trial_params
+    #         )
 
-        T_trial = nsteps_trial * self.dt
-        self.fin_ta = b2.TimedArray(fin, dt=self.dt)
-        self.fout_ta = b2.TimedArray(fout, dt=self.dt)
-        self.ytilde_ta = b2.TimedArray(ytilde, dt=self.dt)
-        self.net.run(
-            T_trial,
-            report="stdout",
-            report_period=self._base_params.report_period,
-            # need this so TimedArrays can work with respect to trial start
-            namespace=self._get_namespace(t_ta_start=self._t_prev),
-        )
-        self._t_prev += T_trial
+    #     T_trial = nsteps_trial * self.dt
+    #     self.fin_ta = b2.TimedArray(fin, dt=self.dt)
+    #     self.fout_ta = b2.TimedArray(fout, dt=self.dt)
+    #     self.ytilde_ta = b2.TimedArray(ytilde, dt=self.dt)
+    #     self.net.run(
+    #         T_trial,
+    #         report="stdout",
+    #         report_period=self._base_params.report_period,
+    #         # need this so TimedArrays can work with respect to trial start
+    #         namespace=self._get_namespace(t_ta_start=self._t_prev),
+    #     )
+    #     self._t_prev += T_trial
 
-        if self.record:
-            self.conditions.append(condition)
-            self.i_trial_boundaries.append(
-                tuple(i + self._i_record_prev for i in i_trial_bounds)
-            )
-            self._i_record_prev += nsteps_trial
+    #     if self.record:
+    #         self.conditions.append(condition)
+    #         self.i_trial_boundaries.append(
+    #             tuple(i + self._i_record_prev for i in i_trial_bounds)
+    #         )
+    #         self._i_record_prev += nsteps_trial
 
     def run_trials(
         self,
@@ -231,9 +254,11 @@ class fSNN(BaseDataClass):
         record=False,
         n_init_trials=50,
         n_settle_trials=0,
+        ctrl=False,
     ):
         """needed for CUDA standalone training: mainly to prep TimedArrays
-        with all trials in advance"""
+        with all trials in advance.
+        Actually, wanted everywhere since with run_trial() cython compiles every time"""
 
         self.mode = "init"
 
@@ -246,7 +271,7 @@ class fSNN(BaseDataClass):
         phases = [
             ("init", n_init_trials, False),
             (mode, n_main_trials, record),
-            ("init", n_settle_trials, False),
+            ("settle", n_settle_trials, False),
         ]
         # must be single giant timed arrays for multiple run calls
         for _mode, n_trials, _record in phases:
@@ -264,7 +289,7 @@ class fSNN(BaseDataClass):
                     condition,
                     i_trial_bounds,
                     nsteps_iti,
-                ) = self.generate_trial(rng)
+                ) = self.generate_trial(rng, ctrl=ctrl)
                 T_trial = nsteps_trial * self.dt
                 fin_all = np.vstack([fin_all, fin])
                 fout_all = np.vstack([fout_all, fout])
@@ -298,7 +323,6 @@ class fSNN(BaseDataClass):
                 namespace=self._get_namespace(t_ta_start=0 * b2.ms),
                 profile=(_mode == mode),
             )
-        # setup_debugger()
 
     def __reduce__(self):
         net_state = {}
@@ -326,6 +350,11 @@ class fSNN(BaseDataClass):
         dt = base_params.dt
         b2.defaultclock.dt = dt
         b2.prefs.core.default_float_dtype = getattr(np, base_params.default_float_dtype)
+        # this will result in subsequent steps being unable to use the cache.
+        # an unfortunate necessity to be able to deactivate the slow multiprocess_safe file-locking
+        cache_dir = f"resources/cython_cache/{os.uname().nodename}-{os.getpid()}"
+        b2.prefs.codegen.runtime.cython.cache_dir = cache_dir
+        b2.prefs.codegen.runtime.cython.multiprocess_safe = False
 
         seed = seed_everything(cond_params["seed"], "train_fsnn")
         rng = np.random.default_rng(seed)
@@ -338,7 +367,8 @@ class fSNN(BaseDataClass):
             base_params.array_side_length * np.sqrt(cond_params.network_area_scale)
         ) / b2.um
         vol = (side_length_um * b2.um) ** 2 * thickness
-        n_ng = vol * (base_params["base_neuron_density"] * b2.mm**-3)
+        density = base_params.base_neuron_density * cond_params.density_scale
+        n_ng = vol * (density * b2.mm**-3)
         n_ng = int(round(n_ng))
         print(f"side_length_um: {side_length_um}, volume: {vol}, n_ng: {n_ng}")
         hor_lim = (-side_length_um / 2, side_length_um / 2)
@@ -364,6 +394,7 @@ class fSNN(BaseDataClass):
                     base_params[cond_params.task],
                     n_ng,
                     weight_params.g,
+                    cond_params.n_latent_dims_offset,
                 )
                 for task in task_names
             ]
@@ -747,7 +778,6 @@ class fSNN(BaseDataClass):
             ytilde_ta,
             fout_ta,
             fin_ta,
-            cond_params["n_pcs"],
             _cond_params=cond_params,
             _base_params=base_params,
             tasks=tasks,

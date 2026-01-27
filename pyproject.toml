@@ -12,7 +12,7 @@ dependencies = [
     'numba',
     'pandas',
     'matplotlib',
-    'cleosim @ git+https://github.com/siplab-gt/cleo.git@v0.18.3',
+    'cleosim @ git+https://github.com/siplab-gt/cleo.git@c2689aaaed814529bdea25eb8cdd98b3b79bf28b',
     'dill',
     'seaborn',
     'scikit-learn',
@@ -20,6 +20,7 @@ dependencies = [
     'cvxpy',
     'brian2cuda',
     'tqdm',
+    'tensorflow[and-cuda]',
 ]
 
 [tool.setuptools]

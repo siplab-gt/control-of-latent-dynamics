@@ -88,7 +88,7 @@ def analyze_ctrl_data(
 
 if __name__ == "__main__" and "snakemake" in locals():
     fh = setup_logging(snakemake.config, snakemake.log[0])
-    # setup_debugger()
+    setup_debugger(snakemake.config["debug"])
 
     ctrl_data = CtrlData.load(snakemake.input.ctrl_data)
     null_ctrl_data = CtrlData.load(snakemake.input.null_ctrl_data)

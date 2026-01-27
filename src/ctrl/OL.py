@@ -15,23 +15,19 @@ class OLController(Controller):
 
     @property
     def n_horizon(self) -> int:
-        return int(
-            round((self.t_ctrl_bounds[1] - self.t_ctrl_bounds[0]) / self.sample_period)
-        )
+        return self.t_to_i_ctrl(self.t_ctrl_bounds[1] - self.t_ctrl_bounds[0])
 
     def compute_control(self, xhat):
-        if self.t_now < self.t_ctrl_bounds[0] or self.t_now >= self.t_ctrl_bounds[1]:
+        if self.i_hzn < 0 or self.i_hzn >= self.n_horizon:
             return self.zscore(np.zeros(self.k), "u")[: self.k_opto]
         if self.i_hzn == 0:
             self.init_optimization()
             self.update_opt_problem(xhat, self.t_now)
-            self.prob.solve(
-                solver="osqp", max_iter=int(1e6), ignore_dpp=True, verbose=True
-            )
-            assert self.prob.status not in ["infeasible", "unbounded"]
+            self.solve_optimization()
             self.t_prev_soln = self.t_now
+        assert self.i_hzn < self.n_horizon, f"{self.i_hzn=} >= {self.n_horizon=}"
         return self.Uopt_opto.value[self.i_hzn]
 
     @property
     def i_hzn(self) -> int:
-        return int(round((self.t_now - self.t_ctrl_bounds[0]) / self.sample_period))
+        return self.t_to_i_ctrl(self.t_now - self.t_ctrl_bounds[0])

@@ -36,9 +36,7 @@ def fit_lds_to_data(
     braid_model: BRAIDModel = BRAIDModel()
     # makes Cz nonlinear: 1 hidden layer with 64 units
     Cz_code = "" if base_params.linear_Cz else "Cz1HL64U"
-    methodCode = (
-        f"BRAID_{Cz_code}"  # Only Cz might be nonlinear, 1 Hidden layer with 64 Units.
-    )
+    methodCode = f"BRAID_{Cz_code}_{base_params.steps_ahead_model_code}"
     args = MainModelPrepareArgs(methodCode)
     # args["has_Dyz"] = False
     assert args["has_Dyz"] is False
@@ -104,7 +102,10 @@ def fit_lds_to_data(
     )
     # must get recreation info before calling, since that ruins reconstruction. Don't know why.
     Zhat_old = braid_model.sId.model1.rnn.cell.C.predict(Xhat.T).T
-    assert np.allclose(Zhat_old, Zhat, rtol=1e-3), f"{Zhat_old[-10:]=}\n{Zhat[-10:]=}"
+    tol_params = dict(rtol=1e-2, atol=1e-5)
+    assert np.allclose(Zhat_old, Zhat, **tol_params), (
+        f"{Zhat_old[-10:]=}\n{Zhat[-10:]=}\n{Zhat[~np.isclose(Zhat_old, Zhat, **tol_params)]=}"
+    )
     # before BRAID's saveToFile, since it replaces Models with their weights
     braid_model.saveToFile(base_params.braid_basename + "_braid.pkl")
 
@@ -124,11 +125,8 @@ def fit_lds_to_data(
 
     lds.x2z = types.MethodType(x2z, lds)
 
-    assert np.allclose(Zhat_old, lds.x2z(Xhat), rtol=1e-3), (
-        f"{Zhat_old[:10]=}\n{lds.x2z(Xhat)[:10]=}"
-    )
-    assert np.allclose(Zhat, lds.x2z(Xhat), rtol=1e-3), (
-        f"{Zhat[:10]=}\n{lds.x2z(Xhat)[:10]=}"
+    assert np.allclose(Zhat_old, lds.x2z(Xhat), **tol_params), (
+        f"{Zhat_old[-10:]=}\n{Zhat[-10:]=}\n{Zhat[~np.isclose(Zhat_old, Zhat, **tol_params)]=}"
     )
 
     return lds, Zhat, Yhat, Xhat

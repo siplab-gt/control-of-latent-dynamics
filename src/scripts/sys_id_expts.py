@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 import brian2.only as b2
@@ -7,9 +8,15 @@ from jaxtyping import Float, UInt
 from matplotlib import pyplot as plt
 
 from src.data_classes import BaseDataClass
-from src.helpers import preprocess_params, seed_everything, setup_debugger
-from src.log_redirector import redirect_output_to_file
+from src.helpers import (
+    preprocess_params,
+    seed_everything,
+    setup_debugger,
+    setup_logging,
+)
 from src.scripts.cleo_prep import CleoPrep
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -28,8 +35,10 @@ class ExptData(BaseDataClass):
     """Behavioral measurements, shape (T, n_behavior) array"""
     t_ms: Float[np.ndarray, "T"]
     """Time of y_mon (recording X, Z) in ms, shape (T,) array"""
-    spikes: UInt[np.ndarray, "T m"]
-    """Spike counts across channels, shape (T, m) array"""
+    spikes: UInt[np.ndarray, "T m"] | None
+    """Spike counts across channels, shape (T, m) array. None if not recorded."""
+    lfp: Float[np.ndarray, "T m"] | None
+    """LFP signal across channels, shape (T, m) array, or None if not recorded"""
     t_samp_ms: Float[np.ndarray, "T_samp"]
     """Time of spike count samples in ms, shape (T_samp,) array"""
     i_trial_boundaries: UInt[np.ndarray, "n_trials 2"]
@@ -51,6 +60,18 @@ class ExptData(BaseDataClass):
         start_end_opto = slice(*np.searchsorted(self.t_opto_ms, (t_start, t_end)))
         return self.Uopto[start_end_opto], self.X[start:end], self.t_ms[start:end]
 
+    @property
+    def Y(self) -> Float[np.ndarray, "T 2*m"]:
+        if self.spikes is not None and self.lfp is not None:
+            Y = np.hstack([self.spikes, self.lfp])
+        elif self.spikes is not None:
+            Y = self.spikes
+        elif self.lfp is not None:
+            Y = self.lfp
+        else:
+            Y = np.empty((self.X.shape[0], 0))
+        return Y
+
     @classmethod
     def from_cleo_prep(
         cls, cleo_prep: CleoPrep, spike_counts, t_samp, subsample_factor
@@ -59,6 +80,13 @@ class ExptData(BaseDataClass):
         i_trial_bounds[:, 0] = i_trial_bounds[:, 0].astype(int)
         i_trial_bounds[:, 1] = np.ceil(i_trial_bounds[:, 1]).astype(int)
         i_trial_bounds = i_trial_bounds.astype(np.uint32)
+
+        if cleo_prep.lfp is not None:
+            lfp = cleo_prep.lfp.lfp
+            if isinstance(cleo_prep.lfp, cleo.ephys.TKLFPSignal):
+                lfp /= b2.uvolt
+        else:
+            lfp = None
 
         expt_data = cls(
             Uopto=cleo_prep.light.irradiance_[1:],
@@ -69,20 +97,21 @@ class ExptData(BaseDataClass):
             Z=cleo_prep.fsnn.z_mon.z[:, ::subsample_factor].T,
             t_ms=cleo_prep.fsnn.y_mon.t[::subsample_factor] / b2.ms,
             spikes=spike_counts,
+            lfp=lfp,
             t_samp_ms=t_samp / b2.ms,
             i_trial_boundaries=i_trial_bounds,
         )
         assert np.all(expt_data.t_ms == expt_data.t_samp_ms)
+        assert expt_data.X.shape[0] == expt_data.Y.shape[0] == expt_data.Z.shape[0], (
+            f"{expt_data.X.shape}, {expt_data.Y.shape}, {expt_data.Z.shape}"
+        )
+
         return expt_data
 
 
 def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
-    print(f"{base_params=}")
-    print(base_params.keys())
-
     # careful to load before setting seed, since loading sets seed as side effect
     cleo_prep = CleoPrep.load(cleo_prep_file)
-    cleo_prep.reset()
     print("loaded cleo_prep before sys_id_expts", cleo_prep)
     assert cleo_prep.sim.network == cleo_prep.fsnn.net
 
@@ -97,7 +126,10 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 
     class SysIDProcessor(cleo.LatencyIOProcessor):
         def process(self, state_dict, t_samp):
-            if cleo_prep.probe is not None:
+            if cleo_prep.probe is not None and cond_params.signals in [
+                "spikes",
+                "both",
+            ]:
                 t, i, counts = state_dict["Probe"]["mua"]
                 spike_counts.append(counts)
             u_logmean = np.log(base_params.typical_Irr0_mWmm2)
@@ -110,24 +142,25 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     cleo_prep.sim.set_io_processor(
         SysIDProcessor(sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor)
     )
-    cleo_prep.fsnn.record = True
-    cleo_prep.fsnn.mode = "test"
-    for i_trial in range(n_trials):
-        print(f"running sys ID trial {i_trial}")
-        cleo_prep.fsnn.run_trial(rng)
-
+    log.info(f"running {n_trials} sys ID trials")
+    cleo_prep.fsnn.run_trials(
+        n_trials,
+        mode="test",
+        rng=rng,
+        record=True,
+        n_init_trials=0,
+        n_settle_trials=0,
+    )
     print("successfully ran")
 
-    if cleo_prep.probe is not None:
+    if cleo_prep.probe is not None and cond_params.signals in ["spikes", "both"]:
         spike_count_array = np.array(spike_counts)
         assert spike_count_array.shape == (
             len(cleo_prep.sim.io_processor.t_samp),
             cleo_prep.probe.signals[0].n,
         )
     else:
-        spike_count_array = np.zeros(
-            (len(cleo_prep.sim.io_processor.t_samp), 0), dtype=np.uint32
-        )
+        spike_count_array = None
     # skip first sample from Cleo devices since there's a repeat after reset
     assert np.all(
         cleo_prep.light.t[1:] == cleo_prep.fsnn.y_mon.t[:: base_params.subsample_factor]
@@ -144,10 +177,12 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    with redirect_output_to_file(snakemake.log[0]):
-        run_sys_id_expts(
-            preprocess_params(snakemake.wildcards),
-            preprocess_params(snakemake.params),
-            snakemake.input[0],
-            snakemake.output[0],
-        )
+    log_fh = setup_logging(snakemake.config, snakemake.log[0])
+    setup_debugger(snakemake.config["debug"])
+
+    run_sys_id_expts(
+        preprocess_params(snakemake.wildcards),
+        preprocess_params(snakemake.params),
+        snakemake.input[0],
+        snakemake.output[0],
+    )

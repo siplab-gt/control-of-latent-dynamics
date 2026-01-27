@@ -1,4 +1,5 @@
 from copy import deepcopy
+from math import ceil
 import numpy as np
 import pandas as pd
 import itertools
@@ -21,15 +22,27 @@ wildcard_constraints:
 rule all:
     input:
         expand(
-            "results/figs/{setting}__{task}.pdf",
+            "results/figs/{setting}_{task}.pdf",
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
+        "results/figs/diagnostics.pdf",
+        expand(
+            "results/figs/{setting}_{task}_diagnostics.pdf",
+            task=config["manual_sweep_params"]["task"],
+            setting=config["manual_sweep_params"]["setting"],
+        ),
+    localrule: True
 
 
 cond_params = [
     param
-    for param_type in ["manual_sweep_params", "grid_sweep_params", "star_sweep_params"]
+    for param_type in [
+        "manual_sweep_params",
+        "grid_sweep_params",
+        "star_sweep_params",
+        "star_sweep_params_measurement_only",
+    ]
     for param in config[param_type].keys()
 ]
 
@@ -95,7 +108,7 @@ def params_from_cfg_with_wildcards(
 
 
 def step_params(*steps: str) -> callable:
-    subcfg_vars = ["task", "mode", "setting"]
+    subcfg_vars = ["task", "mode", "setting", "ctrl_type"]
 
     def wc_fn(wildcards):
         params = {}
@@ -122,18 +135,33 @@ rule testq1:
             task="reaching",
             latency=True,
             ctrl_type="LQMPC",
-            k=16,
+            k=32,
             m=NA,
             # m=16,
-            seed=0,
+            seed=17230616,
+            signals=NA,
         ),
     output:
         "results/testq1/{file}",
+    localrule: True
     shell:
         # NOTE: could have used ln -r (relative) instead of realpath
         # "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
         # "ln -sfr $(dirname {input})/* $(dirname {output})"
         "cp $(dirname {input})/* $(dirname {output})"
+
+
+def get_q2_kms():
+    budget = int(config["q2"]["channel_budget"])
+    kk = np.linspace(
+        1, budget - 1, int(config["q2"]["num_stim_ratio_levels"]), endpoint=True
+    )
+    kk = np.round(kk).astype(int)
+    mm = budget - kk
+    return zip(kk.tolist(), mm.tolist())
+
+
+test_k, test_m = list(get_q2_kms())[4]
 
 
 rule testq2:
@@ -144,14 +172,15 @@ rule testq2:
             setting="optimal_stim_rec",
             task="reaching",
             ctrl_type="LQMPC",
-            k=48,
+            k=test_k,
             # k=16,
-            m=16,
+            m=test_m,
             # m=48,
-            seed=0,
+            seed=17230616,
         ),
     output:
         "results/testq2/{file}",
+    localrule: True
     shell:
         # "rm -r $(dirname {output}) || true && \\"
         # "ln -sf $(realpath $(dirname {input})) $(dirname {output})"
@@ -171,8 +200,35 @@ rule main_figs:
         lineplots=multiext("results/figs/{setting}_{task}_lineplots", *fig_exts),
         heatmaps_mean=multiext("results/figs/{setting}_{task}_heatmaps_mean", *fig_exts),
         heatmaps_std=multiext("results/figs/{setting}_{task}_heatmaps_std", *fig_exts),
+    localrule: True
     script:
-        "../src/scripts/{wildcards.setting}_fig.py"
+        "../src/scripts/main_figs.py"
+
+
+rule diagnostic_figs:
+    input:
+        "src/plot_style.py",
+        csvs=["results/{setting}_{task}.csv"],
+    output:
+        multiext("results/figs/{setting}_{task}_diagnostics", *fig_exts),
+    localrule: True
+    script:
+        "../src/scripts/diagnostic_figs.py"
+
+
+rule diagnostic_figs_combined:
+    input:
+        "src/plot_style.py",
+        csvs=expand(
+            "results/{setting}_{task}.csv",
+            setting=config["manual_sweep_params"]["setting"],
+            task=config["manual_sweep_params"]["task"],
+        ),
+    output:
+        multiext("results/figs/diagnostics", *fig_exts),
+    localrule: True
+    script:
+        "../src/scripts/diagnostic_figs.py"
 
 
 rule sufficient_stim_tabulate:
@@ -187,6 +243,7 @@ rule sufficient_stim_tabulate:
                 m=NA,
                 k=config["q1"]["k"],
                 seed=config["grid_sweep_params"]["seed"],
+                signals=NA,
                 fill_in_ref=True,
             )
             for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
@@ -199,8 +256,9 @@ rule sufficient_stim_tabulate:
                 latency=latency,
                 ctrl_type=ctrl,
                 k=config["q1"]["k"],
-                m=0,
+                m=NA,
                 seed=config["grid_sweep_params"]["seed"],
+                signals=NA,
                 **{var: config["star_sweep_params"][var]},
                 fill_in_ref=True,
             )
@@ -216,16 +274,6 @@ rule sufficient_stim_tabulate:
         print("concatenated sufficient stim DFs")
         df.to_csv(output[0], index=False)
         print(f"wrote sufficient stim results to {output[0]}")
-
-
-def get_q2_kms():
-    budget = int(config["q2"]["channel_budget"])
-    kk = np.linspace(
-        1, budget - 1, int(config["q2"]["num_stim_ratio_levels"]), endpoint=True
-    )
-    kk = np.round(kk).astype(int)
-    mm = budget - kk
-    return zip(kk.tolist(), mm.tolist())
 
 
 rule optimal_stim_rec_tabulate:
@@ -255,10 +303,13 @@ rule optimal_stim_rec_tabulate:
                 k=k,
                 m=m,
                 seed=config["grid_sweep_params"]["seed"],
-                **{var: config["star_sweep_params"][var]},
+                **{var: values},
                 fill_in_ref=True,
             )
-            for var in config["star_sweep_params"]
+            for var, values in (
+                config["star_sweep_params"]
+                | config["star_sweep_params_measurement_only"]
+            ).items()
             for ctrl, latency in [("OL", False), ("LQMPC", True)]
             for k, m in get_q2_kms()
         ],
@@ -287,7 +338,9 @@ def na_wildcards_through_step(desired_step):
         # introduced by sys_id_expts:
         ("cleo_prep", []),
         # introduced by cleo_prep:
-        ("prep_fsnn", ["beam_width_um", "beam_spacing", "k", "m"]),
+        ("prep_fsnn", ["beam_width_um", "signals", "k", "m"]),
+        # these change results from the very beginning, with prep_fsnn:
+        # n_latent_dims_offset, density_scale, network_area_scale, setting, task, seed
     ]:
         irrelevant_wcs += step_irrs
         if step == desired_step:
@@ -318,6 +371,7 @@ rule analyze_ctrl_data:
         f"results/{params_str}/summary.csv",
     log:
         f"logs/{params_str}/analyze_ctrl_data.log",
+    localrule: True
     script:
         "../src/scripts/analyze_ctrl_data.py"
 
@@ -338,6 +392,30 @@ use rule plot_ctrl_data_wide as plot_ctrl_data_wide_default with:
         f"results/{params_str}/ctrl_data_wide_plot.png",
 
 
+def fsnn_mem_required(wc):
+    return 4000 * (1 + float(wc["density_scale"]) * float(wc["network_area_scale"]) / 6)
+
+
+def runtime_min(n_trials, n_train_trials=0, multiplier=1):
+    def f(wc):
+        scale = float(wc["density_scale"]) * float(wc["network_area_scale"])
+        # observed per-trial runtimes for small networks
+        # got 5.4 seconds per trial for demean on big network (*6)
+        # get ~1s/trial on Myelin, but ~7 for PACE.
+        # actually, around 16 on average for control on PACE.
+        # scales less than quadratically
+        trial_runtime_min = 16 / 60 * scale**1.2 * multiplier
+        # scales quadratically (with synapses)
+        train_trial_runtime_min = 60 / 60 * scale**2 * multiplier
+
+        runtime = 2  # overhead
+        runtime += n_trials * trial_runtime_min
+        runtime += n_train_trials * train_trial_runtime_min
+        return ceil(runtime)
+
+    return f
+
+
 rule ctrl_expts:
     input:
         "src/ctrl/__init__.py",
@@ -349,11 +427,17 @@ rule ctrl_expts:
             "model_fit_lds.pkl.gz", **na_wildcards_through_step("model_fit")
         ),
     params:
-        step_params("expts", "ctrl_expts"),
+        step_params("cleo_prep", "expts", "ctrl_expts"),
     output:
         data=f"results/{params_str}/ctrl_data.pkl.gz",
+    conda:
+        "cold"
+    resources:
+        mem_mb=lambda wc: fsnn_mem_required(wc) * 2,
+        runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=8),
     log:
         f"logs/{params_str}/ctrl_expts.log",
+    retries: 1
     script:
         "../src/scripts/ctrl_expts.py"
 
@@ -371,16 +455,23 @@ rule plot_model_fit_pred:
         ),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/model_fit_pred_plot.png",
+        f"results/{params_str}/model_fit_pred_plot_{{style}}.png",
     localrule: True
-    group:
-        "model_fit"
     script:
         "../src/scripts/plot_model_fit_pred.py"
 
 
-rule analyze_model_fit_data:
+use rule plot_model_fit_pred as plot_model_fit_pred_default with:
+    localrule: True
+    output:
+        f"results/{params_str}/model_fit_pred_plot.png",
+
+
+rule analyze_model_fit:
     input:
+        paths_for_params(
+            "model_fit_lds.pkl.gz", **na_wildcards_through_step("model_fit")
+        ),
         paths_for_params(
             "model_fit_pred_data.pkl.gz", **na_wildcards_through_step("model_fit")
         ),
@@ -389,10 +480,14 @@ rule analyze_model_fit_data:
         ),
     output:
         f"results/{params_str}/model_fit_analysis.csv",
-    group:
-        "model_fit"
+    localrule: True
     script:
-        "../src/scripts/analyze_model_fit_data.py"
+        "../src/scripts/analyze_model_fit.py"
+
+
+# assume BRAID, GPU, heavier resources when not sufficient stim (known factors)
+def gpu_for_model_fit(wc):
+    return int(wc.setting != "sufficient_stim" and config["model_fit_device"] == "gpu")
 
 
 rule model_fit:
@@ -412,8 +507,17 @@ rule model_fit:
     output:
         lds_model=f"results/{params_str}/model_fit_lds.pkl.gz",
         pred_data=f"results/{params_str}/model_fit_pred_data.pkl.gz",
-    group:
-        "model_fit"
+    threads: lambda wc: max(1, 8 * gpu_for_model_fit(wc))
+    resources:
+        gpu=gpu_for_model_fit,
+        gpu_jobs=gpu_for_model_fit,
+        mem_mb=lambda wc: 32000 if wc.setting != "sufficient_stim" else 4000,
+        # since slurm executor sets to 1, which breaks
+        tasks_per_gpu=0,
+        runtime=lambda wc: 120 if wc.setting != "sufficient_stim" else 10,
+    retries: 1
+    conda:
+        "cold"
     log:
         f"logs/{params_str}/model_fit.log",
     script:
@@ -429,8 +533,6 @@ rule plot_sys_id_data_trials:
     output:
         f"results/{params_str}/sys_id_trials_plot.{{ext}}",
     localrule: True
-    group:
-        "sys_id"
     script:
         "../src/scripts/plot_expt_data_trials.py"
 
@@ -444,8 +546,6 @@ rule plot_sys_id_data_wide:
     output:
         f"results/{params_str}/sys_id_wide_plot_{{style}}.{{ext}}",
     localrule: True
-    group:
-        "sys_id"
     script:
         "../src/scripts/plot_expt_data_wide.py"
 
@@ -455,18 +555,25 @@ use rule plot_sys_id_data_wide as plot_sys_id_data_wide_default with:
         f"results/{params_str}/sys_id_wide_plot.{{ext}}",
 
 
+n_trials_sys_id_max = config["star_sweep_params"]["n_trials_sys_id"][-1]
+
+
 rule sys_id_expts:
     input:
         paths_for_params("cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")),
     params:
         step_params("cleo_prep", "expts", "sys_id_expts"),
-        n_trials_sys_id_max=config["star_sweep_params"]["n_trials_sys_id"][-1],
+        n_trials_sys_id_max=n_trials_sys_id_max,
     output:
         f"results/{params_str}/sys_id_data.pkl.gz",
-    group:
-        "sys_id"
     log:
         f"logs/{params_str}/sys_id_expts.log",
+    conda:
+        "cold"
+    resources:
+        mem_mb=fsnn_mem_required,
+        runtime=runtime_min(n_trials_sys_id_max, multiplier=1.5),
+    retries: 1  # since there can be conflicts hitting the cython cache
     script:
         "../src/scripts/sys_id_expts.py"
 
@@ -479,6 +586,7 @@ rule impulse_responses:
     output:
         f"results/{params_str}/impulse_responses_wide_plot.png",
         f"results/{params_str}/impulse_responses_trials_plot.png",
+    localrule: True
     script:
         "../src/scripts/impulse_responses.py"
 
@@ -502,7 +610,6 @@ def fsnn_params(wc):
     # include array side length since network size depends on it
     params["array_side_length_mm"] = config["cleo_prep"]["array_side_length_mm"]
     params["report_period_s"] = config["report_period_s"]
-    params["debug"] = str2bool(config.get("debug", "false"))
     return params
 
 
@@ -518,8 +625,6 @@ rule plot_cleo:
         fsnn_params,
         step_params("cleo_prep"),
     localrule: True
-    group:
-        "prep_fsnn"
     script:
         "../src/scripts/plot_cleo.py"
 
@@ -539,8 +644,7 @@ rule cleo_prep:
         f"results/{params_str}/cleo_prep.pkl.gz",
     log:
         f"logs/{params_str}/cleo_prep.log",
-    group:
-        "prep_fsnn"
+    localrule: True
     script:
         "../src/scripts/cleo_prep.py"
 
@@ -552,8 +656,6 @@ rule plot_fsnn:
     output:
         f"results/{params_str}/fsnn_plot.png",
     localrule: True
-    group:
-        "prep_fsnn"
     script:
         "../src/scripts/plot_fsnn.py"
 
@@ -572,8 +674,7 @@ rule analyze_fsnn_data:
         f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz",
     output:
         f"results/{params_str}/fsnn_{{mode}}_data_analysis.csv",
-    group:
-        "prep_fsnn"
+    localrule: True
     script:
         "../src/scripts/analyze_fsnn_data.py"
 
@@ -587,8 +688,6 @@ rule plot_fsnn_data:
     output:
         f"results/{params_str}/fsnn_{{mode}}_data_plot.{{ext}}",
     localrule: True
-    group:
-        "prep_fsnn"
     script:
         "../src/scripts/plot_fsnn_data.py"
 
@@ -616,6 +715,23 @@ def fsnn_outputs(save_fsnn, save_data):
     return outputs
 
 
+def gpu_for_fsnn_train(wc):
+    return int(wc["mode"] == "train" and config["train_device"] == "cuda")
+
+
+def fsnn_runtime(wc):
+    params = fsnn_params(wc)
+    n_train_trials = 0
+    n_trials = params["n_init_trials"]
+    if wc.get("mode", None) == "train":
+        n_train_trials += params["n_main_trials"]
+    else:
+        n_trials += params["n_main_trials"]
+    n_trials += params["n_settle_trials"]
+
+    return runtime_min(n_trials, n_train_trials)
+
+
 # 3 fsnn rules, flexibly save fSNN and/or data
 rule _prep_fsnn:
     input:
@@ -624,8 +740,16 @@ rule _prep_fsnn:
         fsnn_params,
     log:
         f"logs/{params_str}/prep_fsnn_{{mode}}.log",
-    group:
-        "prep_fsnn"
+    # only use 2 threads; more requires a lot of memory for parallel compilation
+    threads: lambda wc: max(1, 4 * gpu_for_fsnn_train(wc))
+    resources:
+        gpu=gpu_for_fsnn_train,
+        gpu_jobs=gpu_for_fsnn_train,
+        runtime=fsnn_runtime,
+        mem_mb=lambda wc: fsnn_mem_required(wc) if wc["mode"] != "train" else 64000,
+    retries: 1
+    conda:
+        "cold"
     script:
         "../src/scripts/prep_fsnn.py"
 
@@ -659,5 +783,6 @@ rule plot_schematic:
         side=multiext(f"results/{params_str}/side_schematic", ".svg", ".png"),
     params:
         step_params("prep_fsnn", "cleo_prep"),
+    localrule: True
     script:
         "../src/scripts/plot_schematic.py"

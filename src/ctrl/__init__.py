@@ -1,6 +1,7 @@
+import logging
 import time
 from abc import abstractmethod
-from collections.abc import Callable
+from math import ceil, floor
 
 import brian2.only as b2
 import cleo
@@ -9,10 +10,14 @@ import numpy as np
 from attrs import define, field
 from brian2 import Quantity, mm2, ms, mwatt, second
 from jaxtyping import Float
+from scipy import stats
 
+from src.ctrl.solvers import Solver
 from src.helpers import array_vals_by_t
 from src.model_fit import LDS
 from src.scripts.cleo_prep import CleoPrep
+
+log = logging.getLogger(__name__)
 
 
 @define
@@ -26,8 +31,6 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     latency_rng: np.random.Generator = None
     lds: LDS = None
     ref_type: str = None
-    reference_zscored: Callable[[Quantity], Quantity] = None
-    u_task: Callable[[Quantity], np.ndarray] = field(default=lambda t: np.zeros(0))
     """callable with signature t -> task inputs (shape ([T], k_task) array)"""
     ctrl_horizon: Quantity = None
     """control horizon (with time unit). In OL case, this is pre-trial control time."""
@@ -35,8 +38,12 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     Rcost: float = None
     cleo_prep: CleoPrep = None
     state_estimation: str = None
+    signals: str = None
+    """spikes, LFP, or both"""
+    solvers: list[Solver] = None
+    """list of solvers ordered from fastest to slowest"""
 
-    spike_counts: list = field(factory=list)
+    spike_counts: list | None = None
     _Xhat: list = field(factory=list)
     _R: list = field(factory=list)
     xpred: np.ndarray = None
@@ -55,16 +62,13 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     prob: cp.Problem = None
     """cvxpy optimization problem"""
 
-    t_trial_bounds: tuple[Quantity, Quantity] = field(
-        factory=lambda: (0 * ms, 1000 * ms)
-    )
-    """t of start and end of trial (not ITI) where we want to minimize cost"""
-    t_ctrl_bounds: list = field(factory=lambda: [0 * ms, 1 * ms])
-    """t of start and end of control period (including pre-trial control).
-    Rounded to sample period to fully include trial."""
+    i_current_trial: int = 0
+    _measuring_latency: bool = False
+    _cached_ref_trajectory: np.ndarray = None
+    """to avoid having to zscore repeatedly (which made memory explode).
+    should be once for all trials, since all trials are run as a block."""
 
     def __attrs_post_init__(self):
-        self.reference_zscored = lambda t: np.zeros((*np.shape(t), self.n_r))
         self.reset()
 
     # don't know why I need to make this a field to avoid attrs error
@@ -74,9 +78,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         super().reset()
         self.xpred = np.zeros(self.n)
         self.Ppred = np.eye(self.n)  # initial covariance
-        self.spike_counts = []
+        self.spike_counts = [] if self.signals in ["spikes", "both"] else None
         self._Xhat = []
         self._R = []
+        self._cached_ref_trajectory = None
 
     def init_optimization(self):
         self.Uopt_opto = cp.Variable((self.n_horizon, self.k_opto))
@@ -162,7 +167,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     @property
     def t_now(self) -> Quantity:
-        return self.sim.network.t
+        """rounded to nearest sample period to avoid floating point issues"""
+        return round(self.sim.network.t / self.sample_period) * self.sample_period
 
     @property
     def n_horizon(self) -> int:
@@ -180,10 +186,11 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     def measure_latency(self) -> tuple[b2.Quantity, b2.Quantity]:
         """returns mean, std of control computation (with Brian unit)"""
+        self._measuring_latency = True
         durations = []
+        solve_times = []
         xpred = np.zeros(self.n)
         Ppred = np.eye(self.n)
-        u = self.latency_rng.normal(self.lds.u_mean, self.lds.u_std, self.k)
         for i in range(100):
             avg_rate = 20 / second
             y = self.latency_rng.poisson(lam=avg_rate * self.sample_period)
@@ -195,10 +202,20 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             xpred, Ppred = self.predict_state(xhat, u, P)
             end = time.perf_counter()
             durations.append(end - start)
+            solve_times.append(self.prob.solver_stats.solve_time)
 
         # take off first 5 to let things warm up
+        # log.debug(f"latency measurement durations (s):\n{durations}")
         durations = np.array(durations[5:])
-        return durations.mean() * b2.second, durations.std() * b2.second
+        solve_times = np.array(solve_times[5:])
+        log.debug(f"{stats.describe(durations, bias=False)=}")
+        log.debug(f"{stats.describe(solve_times, bias=False)=}")
+        self._measuring_latency = False
+        # to make robust to outliers from unreliable compute speed on cluster,
+        # estimate mean and std using median and MAD
+        median = np.median(durations)
+        mad = np.median(np.abs(durations - median))
+        return median * b2.second, mad / 0.6745 * b2.second
 
     def zscore(self, var: np.ndarray, varname: str):
         mean = getattr(self.lds, f"{varname}_mean")
@@ -215,10 +232,28 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         assert np.linalg.norm(Ppred) < 1e100, "Ppred exploded"
         y = self.zscore(y, "y")
         yerr = y - self.C @ xpred  # innovation
+
         # use pinv instead of inv in case of singular matrix (where C has an all-0 zero)
-        K = Ppred @ self.C.T @ np.linalg.pinv(self.C @ Ppred @ self.C.T + self.R)
+        # K = Ppred @ self.C.T @ np.linalg.pinv(self.C @ Ppred @ self.C.T + self.R)
+
+        # More Robust: Use solve
+        S = self.C @ Ppred @ self.C.T + self.R
+        P_CT = Ppred @ self.C.T
+        # Solve the linear system S * X = P_CT for X
+        # np.linalg.solve expects A and B such that AX = B
+        # Since S is symmetric, solving S * X = P_CT is safe.
+        K = np.linalg.solve(S, P_CT.T).T
+
         xhat = xpred + K @ yerr
-        P = (np.eye(self.n) - K @ self.C) @ Ppred
+
+        # standard P update is not very stable
+        # P = (np.eye(self.n) - K @ self.C) @ Ppred
+        # Joseph Form Update for P (Stability)
+        IKC = np.eye(self.n) - K @ self.C
+        P = IKC @ Ppred @ IKC.T + K @ self.R @ K.T
+        # Force Symmetry
+        P = (P + P.T) / 2
+
         return xhat, P
 
     def predict_state(self, xhat, u, P):
@@ -229,19 +264,130 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
         return xpred, Ppred
 
+    def solve_optimization(self) -> None:
+        """Solve the optimization problem with fallback through ordered solvers.
+
+        Raises:
+            RuntimeError: If all solvers fail
+        """
+        for i, solver in enumerate(self.solvers):
+            try:
+                self.prob.solve(**solver.specific_args)
+
+                if self.prob.status in [
+                    "optimal",
+                    "optimal_inaccurate",
+                    "user_limit",
+                ]:
+                    if self.prob.status == "user_limit":
+                        log.warning(
+                            f"Solver {solver.name} reached user limit but found a feasible solution."
+                        )
+                    if i > 0:
+                        log.warning(
+                            f"Solver {solver.name} succeeded after {i} failed attempts"
+                        )
+                    return
+                else:
+                    log.warning(
+                        f"Solver {solver.name} returned status: {self.prob.status}\n"
+                        f"solver_stats = {self.prob.solver_stats}"
+                    )
+            except Exception as e:
+                log.warning(
+                    f"Solver {solver.name} failed with error: {e}\n"
+                    f"solver_stats = {self.prob.solver_stats}"
+                )
+                if i == len(self.solvers) - 1:
+                    raise
+
+        raise RuntimeError(f"All solvers failed. Last status: {self.prob.status}")
+
     @abstractmethod
     def compute_control(self, xhat):
         pass
 
+    def reference_zscored(self, t: Quantity) -> Quantity:
+        if self._measuring_latency:
+            return np.zeros((*np.shape(t), self.n_r))
+
+        # Cache reference trajectory once for all trials
+        if self._cached_ref_trajectory is None:
+            fsnn = self.cleo_prep.fsnn
+            if self.ref_type == "Z":
+                ref = self.zscore(fsnn.fout_ta.values, "z")
+            elif self.ref_type == "X":
+                ref = self.zscore(fsnn.ytilde_ta.values, "x")
+            self._cached_ref_trajectory = ref
+
+        return array_vals_by_t(self._cached_ref_trajectory, t, self.base_dt)
+
+    def u_task(self, t: Quantity) -> np.ndarray:
+        fsnn = self.cleo_prep.fsnn
+        return array_vals_by_t(fsnn.fin_ta.values, t, self.base_dt)
+
+    @property
+    def t_ctrl_bounds(self) -> tuple[b2.Quantity, b2.Quantity]:
+        """t of start and end of control period (including pre-trial control).
+        Rounded to sample period to fully include trial.
+        Just for the current trial."""
+        if self._measuring_latency:
+            return (0 * ms, 1 * ms)
+        i_trial_bounds = self.cleo_prep.fsnn.i_trial_boundaries[self.i_current_trial]
+        t_trial_bounds = [i * self.base_dt for i in i_trial_bounds]
+        # control during trial and a little before
+        t_ctrl_bounds = [
+            t_trial_bounds[0] - self.ctrl_horizon,
+            t_trial_bounds[1],
+        ]
+        # round to nearest ms so modulo will work as expected (not get 4.999999 for example)
+        t_ctrl_bounds = [round(t / ms) * ms for t in t_ctrl_bounds]
+        # round down/up to nearest sample period to fully include trial
+        t_ctrl_bounds[0] = (
+            floor(t_ctrl_bounds[0] / self.sample_period)
+        ) * self.sample_period
+        t_ctrl_bounds[1] = (
+            ceil(t_ctrl_bounds[1] / self.sample_period)
+        ) * self.sample_period
+        T_ctrl = t_ctrl_bounds[1] - t_ctrl_bounds[0]
+        assert np.isclose(
+            round(T_ctrl / self.sample_period), T_ctrl / self.sample_period
+        ), f"{T_ctrl=} not multiple of {self.sample_period=}"
+        return tuple(t_ctrl_bounds)
+
     def process(self, state_dict, t_samp):
+        # update trial bounds if previous one is over
+        # round t_samp to avoid floating point issues
+        t_samp = round(t_samp / ms) * ms
+        n_trials = len(self.cleo_prep.fsnn.i_trial_boundaries)
+        if t_samp >= self.t_ctrl_bounds[1]:
+            if self.i_current_trial < n_trials - 1:
+                log.info(f"finished control trial {self.i_current_trial}")
+                self.i_current_trial += 1
+                assert t_samp < self.t_ctrl_bounds[1], (
+                    f"{t_samp=} not less than {self.t_ctrl_bounds[1]=} after incrementing trial"
+                )
+            else:
+                assert self.i_current_trial == n_trials - 1, (
+                    f"{self.i_current_trial=} not last trial {n_trials - 1=}. {self.t_ctrl_bounds=}"
+                )
+
         if self.cleo_prep.probe is not None:
-            t, i, counts = state_dict["Probe"]["mua"]
-        else:
-            counts = np.zeros(0, dtype=np.uint32)
-        self.spike_counts.append(counts)
+            if self.signals in ["spikes", "both"]:
+                t, i, counts = state_dict["Probe"]["mua"]
+                self.spike_counts.append(counts)
+            else:
+                counts = np.zeros(0)
+
+            if self.signals in ["lfp", "both"]:
+                lfp = state_dict["Probe"]["lfp"]
+            else:
+                lfp = np.zeros(0)
+            y = np.concatenate([counts, lfp])
+            assert y.shape == (self.m,), f"{y.shape=} not equal to {(self.m,)=}"
 
         if self.state_estimation == "kalman":
-            xhat, P = self.update_state(self.xpred, counts, self.Ppred)
+            xhat, P = self.update_state(self.xpred, y, self.Ppred)
         elif self.state_estimation == "ground truth":
             # need to be careful to create an entirely new array; strange crash even for array(y_mon.y)
             # xhat = np.zeros(self.n)
@@ -276,6 +422,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
                 scale=self.compute_latency_std / b2.ms,
             )
             sampled = max(sampled, 0)
+            time_limit_ms = self.solvers[0].generic_args.get("time_limit", 1e6) * 1000
+            sampled = min(sampled, time_limit_ms)
             return self.baseline_latency + sampled * ms
         else:
             return 0 * ms
@@ -294,40 +442,55 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         """Returns base simulation timestep"""
         return self.cleo_prep.fsnn.ng_main.clock.dt
 
-    def update_with_trial_info(
-        self, Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti
-    ):
-        """call at start of each trial to update reference and task inputs"""
-        if self.ref_type == "Z":
-            ref = self.zscore(Zref, "z")
-        elif self.ref_type == "X":
-            ref = self.zscore(Xref, "x")
-        t_start = self.t_now
-        self.reference_zscored = lambda t: array_vals_by_t(
-            ref, t - t_start, self.base_dt
-        )
-        self.u_task = lambda t: array_vals_by_t(Utask, t - t_start, self.base_dt)
-        self.t_trial_bounds = tuple(t_start + i * self.base_dt for i in i_trial_bounds)
+    def t_to_i_ctrl(self, t: b2.Quantity) -> int:
+        return int(round(t / self.sample_period))
 
-        # control during trial and a little before
-        self.t_ctrl_bounds = [
-            self.t_trial_bounds[0] - self.ctrl_horizon,
-            self.t_trial_bounds[1],
-        ]
-        # round down/up to nearest sample period to fully include trial
-        self.t_ctrl_bounds[0] -= self.t_ctrl_bounds[0] % self.sample_period
-        self.t_ctrl_bounds[1] += (
-            self.sample_period - (self.t_ctrl_bounds[1] % self.sample_period)
-        ) % self.sample_period
-        T_ctrl = self.t_ctrl_bounds[1] - self.t_ctrl_bounds[0]
-        assert np.isclose(
-            round(T_ctrl / self.sample_period), T_ctrl / self.sample_period
-        ), f"{T_ctrl=} not multiple of {self.sample_period=}"
+    def t_to_i_sim(self, t: b2.Quantity) -> int:
+        return int(round(t / self.base_dt))
+
+    @property
+    def R(self) -> Float[np.ndarray, "m m"]:
+        """measurement noise covariance"""
+        return np.reshape(self.lds.R, (self.m, self.m))
+
+    # def update_with_trial_info(
+    #     self, Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti
+    # ):
+    #     """call at start of each trial to update reference and task inputs.
+
+    #     WARNING: only needed when running per trial, not with run_trials()!"""
+    # if self.ref_type == "Z":
+    #     ref = self.zscore(Zref, "z")
+    # elif self.ref_type == "X":
+    #     ref = self.zscore(Xref, "x")
+    # t_start = self.t_now
+    # self.reference_zscored = lambda t: array_vals_by_t(
+    #     ref, t - t_start, self.base_dt
+    # )
+    # self.u_task = lambda t: array_vals_by_t(Utask, t - t_start, self.base_dt)
+    # self.t_trial_bounds = tuple(t_start + i * self.base_dt for i in i_trial_bounds)
+
+    # control during trial and a little before
+    # self.t_ctrl_bounds = [
+    #     self.t_trial_bounds[0] - self.ctrl_horizon,
+    #     self.t_trial_bounds[1],
+    # ]
+    # # round to nearest ms so modulo will work as expected (not get 4.999999 for example)
+    # self.t_ctrl_bounds = [round(t / ms) * ms for t in self.t_ctrl_bounds]
+    # # round down/up to nearest sample period to fully include trial
+    # self.t_ctrl_bounds[0] -= self.t_ctrl_bounds[0] % self.sample_period
+    # self.t_ctrl_bounds[1] += (
+    #     self.sample_period - (self.t_ctrl_bounds[1] % self.sample_period)
+    # ) % self.sample_period
+    # T_ctrl = self.t_ctrl_bounds[1] - self.t_ctrl_bounds[0]
+    # assert np.isclose(
+    #     round(T_ctrl / self.sample_period), T_ctrl / self.sample_period
+    # ), f"{T_ctrl=} not multiple of {self.sample_period=}"
 
 
 for attrib in [
     "C",
-    "R",
+    # "R",  # defined above to reshape
     "A",
     "B",
     "Q",

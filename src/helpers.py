@@ -84,7 +84,9 @@ def setup_logging(cfg, logfile):
         return log_fh
 
 
-def setup_debugger(port=5678):
+def setup_debugger(debug=True, port=5678):
+    if not str2bool(debug):
+        return
     import debugpy
 
     debugpy.listen(port)
@@ -115,7 +117,16 @@ class AttrDict(dict):
         if not isinstance(other, dict):
             return NotImplemented
         result = AttrDict(self)
-        result.update(other)
+        # recursively update chidren dicts as well
+        for key, value in other.items():
+            if (
+                key in result
+                and isinstance(result[key], dict)
+                and isinstance(value, dict)
+            ):
+                result[key] = result[key] | value
+            else:
+                result[key] = value
         return result
 
 
@@ -123,6 +134,10 @@ def preprocess_params(params_dict) -> AttrDict:
     """Recursively convert all values in a params or wildcards dict to int or float if possible,
     and wrap dicts so keys are accessible as attributes.
     Also adds Brian units for params with unit suffixes"""
+
+    # skip if already done
+    if isinstance(params_dict, AttrDict):
+        return params_dict
 
     # for a snakemake Namedlist, combine dictionaries as well as named params into just one dict
     if isinstance(params_dict, snakemake.io.Namedlist):

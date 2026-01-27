@@ -36,7 +36,7 @@ syn2 = b2.Synapses(
     "w_tot_post = w_neuron_pre : 1 (summed)",
 )
 syn2.connect("j==0")
-mon = b2.StateMonitor(group, ["v", "w_neuron", 'w_tot_copy'], record=True)
+mon = b2.StateMonitor(group, ["v", "w_neuron", "w_tot_copy"], record=True)
 
 net = b2.Network(group, ng2, syn, syn2, mon)
 net.run(100 * b2.ms, profile=True)
@@ -63,4 +63,13 @@ plt.gcf()
 # b2.scheduling_summary()
 
 # %%
-mon.w_tot_copy.shape
+import brian2.only as b2
+from brian2 import np
+
+ng = b2.NeuronGroup(10, "x_sum : 1", threshold="rand() < 0.1", reset="")
+syn = b2.Synapses(ng, ng, "", on_pre="x_sum_post = rand() (summed)")
+syn.connect()
+mon = b2.StateMonitor(ng, "x_sum", record=True)
+net = b2.Network(ng, syn, mon)
+net.run(10 * b2.ms)
+mon.x_sum

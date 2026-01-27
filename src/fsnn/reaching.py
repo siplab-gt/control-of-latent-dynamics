@@ -167,7 +167,7 @@ class ReachingTask(fSNNTask):
         )
 
     def generate_trial(
-        self, rng, ctrl=False, **kwargs
+        self, rng, ctrl=False, x=None, W=None, **kwargs
     ) -> tuple[
         np.ndarray, np.ndarray, np.ndarray, int, int, tuple[int, int], int, dict
     ]:
@@ -176,14 +176,21 @@ class ReachingTask(fSNNTask):
         fin, fout, nsteps_trial, cond, i_trial_start_end, nsteps_iti = (
             self._trial_reaching(rng)
         )
-        xprimes, x = self._rate_model(
-            fin, fout, nsteps_trial, kwargs.get("x", None), rng=rng
-        )
+        xprimes, x = self._rate_model(fin, fout, nsteps_trial, x, rng=rng)
         ytilde = xprimes @ self.V
 
         # for control experiments, remove direction-specifying input
+        # and make fout (Zref) what is actually attainable from factors
         if ctrl:
+            if W is None or not isinstance(W, np.ndarray):
+                raise ValueError(
+                    "When ctrl=True, W must be provided as a numpy.ndarray of shape (n_out, n_factors + 1)."
+                )
+            assert W.shape == (self.n_out, self.n_factors + 1), W.shape
             fin[:, 1:] = 0
+            yplus = np.concatenate((ytilde, np.ones((len(ytilde), 1))), axis=1)
+            fout = yplus @ W.T
+            assert fout.shape == (len(ytilde), self.n_out)
 
         return (
             ytilde,
@@ -197,7 +204,7 @@ class ReachingTask(fSNNTask):
         )
 
 
-def init_task(seed, base_params, task_params, n_ng, g):
+def init_task(seed, base_params, task_params, n_ng, g, n_latent_dims_offset):
     rng = np.random.default_rng(seed + 19320812)
     clss = ReachingTask
     DATA_FILE = __file__.replace(".py", "_data.npz")
@@ -252,7 +259,7 @@ def init_task(seed, base_params, task_params, n_ng, g):
     d = np.flipud(d)
 
     fracPCA = 0.99
-    P = np.argmax(np.cumsum(d) / np.sum(d) > fracPCA) + 1
+    P = np.argmax(np.cumsum(d) / np.sum(d) > fracPCA) + 1 + n_latent_dims_offset
 
     V = V[:, :P]
     reaching_task.V = V
