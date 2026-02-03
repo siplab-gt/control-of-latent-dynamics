@@ -17,8 +17,9 @@ c = {
 }
 c["mpc"] = c["main"]
 c["ol"] = c["a1"]
-c["y"] = c["a2"]
-c["z"] = c["a3"]
+c["x"] = c["a2"]
+c["y"] = c["a3"]
+c["z"] = c["a4"]
 
 ctrl_palette = {
     "OL": c["ol"],

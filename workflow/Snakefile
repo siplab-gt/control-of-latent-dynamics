@@ -421,7 +421,7 @@ rule plot_ctrl_data_wide:
         wildcard_path("ctrl_data.pkl.gz"),
         "src/plot_style.py",
     output:
-        wildcard_path("ctrl_data_wide_plot_{style}.png"),
+        wildcard_path("ctrl_data_wide_plot_{style}.{ext}"),
     localrule: True
     script:
         "../src/scripts/plot_ctrl_data.py"
@@ -507,6 +507,30 @@ rule analyze_model_fit:
     localrule: True
     script:
         "../src/scripts/analyze_model_fit.py"
+
+
+rule analyze_model_fit_rollout:
+    input:
+        lds=wildcard_path("model_fit_lds.pkl.gz"),
+        sys_id=wildcard_path("sys_id_data.pkl.gz"),
+    output:
+        wildcard_path("model_fit_rollout_r2.csv"),
+    log:
+        wildcard_path("analyze_model_fit_rollout.log"),
+    localrule: True
+    script:
+        "../src/scripts/analyze_model_fit_rollout.py"
+
+
+rule plot_model_fit_rollout_r2:
+    input:
+        "src/plot_style.py",
+        r2_data=wildcard_path("model_fit_rollout_r2.csv"),
+    output:
+        wildcard_path("model_fit_rollout_r2_plot.{ext}"),
+    localrule: True
+    script:
+        "../src/scripts/plot_model_fit_rollout_r2.py"
 
 
 # assume BRAID, GPU, heavier resources when not sufficient stim (known factors)
