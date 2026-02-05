@@ -142,7 +142,7 @@ def wildcard_path(file: str, fill_in_ref=False, **kwargs) -> str:
     return out
 
 
-NA = "NA"  # when a parameter is not applicable (e.g. latency for open-loop control)
+NA = "NA"  # when a parameter is not applicable (e.g. ctrl_type for cleo_prep)
 
 
 def params_from_cfg(*params: str, keep_parent_keys=False, keep_target_key=True) -> dict:
@@ -660,6 +660,7 @@ rule plot_cleo:
         "src/fsnn/__init__.py",
         "src/fsnn/{task}.py",
         "src/scripts/cleo_prep.py",
+        "src/cleo_prep_{setting}.py",
         "src/plot_style.py",
     output:
         wildcard_path("cleo_plot.{ext}"),
