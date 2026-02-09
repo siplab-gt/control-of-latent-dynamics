@@ -83,7 +83,7 @@ reference_params:
   density_scale: 1
   network_area_scale: 1.44
   beam_width_um: 100
-  latency: true
+  latency: false
   model_task_inputs: true
   signals: lfp
 
