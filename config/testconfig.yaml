@@ -75,7 +75,7 @@ q1: # a.k.a. sufficient stim, how many channels are good enough?
 
 q2: # a.k.a. optimal stim/rec balance
   ###################################
-  channel_budget: 64
+  # channel_budget: 100
   num_stim_ratio_levels: 4 # instead of 7
 # #########################################
 # # base parameters, used across conditions
@@ -108,7 +108,7 @@ prep_fsnn_test:
 #   muf: -0.5 # recurrent inhibtion
 prep_fsnn_reaching:
   n_rate_neurons: 200 # 800
-  n_trials_pca: 20 # for rate network
+  n_trials_pca: 1 # for rate network
 
 model_fit_optimal_stim_rec:
   epochs: 10 # only needed here for braid
@@ -120,3 +120,7 @@ ctrl_expts:
   #   # n_trials_ctrl: 100
   n_trials_ctrl: 5
 #   baseline_latency_ms: 1
+
+pathvars:
+  results: results/test
+  logs: logs/test
