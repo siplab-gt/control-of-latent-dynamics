@@ -95,24 +95,25 @@ def ctrl_expts(
     u_max = base_params.u_max_mWmm2
     n_trials = base_params.n_trials_ctrl
 
-    lds = LDS.load(lds_model_file)
+    lds = LDS.load(lds_model_file) if lds_model_file else None
 
     # Check stability and scale down A and B if unstable
-    eigenvalues = np.linalg.eigvals(lds.A)
-    max_eigenvalue = np.max(np.abs(eigenvalues))
-    if max_eigenvalue >= 1.0:
-        scale_factor = 0.99 / max_eigenvalue
-        lds.A *= scale_factor
-        lds.B *= scale_factor
-        log.warning(
-            f"LDS unstable (max eigenvalue: {max_eigenvalue:.4f}). Scaled A and B by {scale_factor:.4f}"
-        )
+    if lds is not None:
+        eigenvalues = np.linalg.eigvals(lds.A)
+        max_eigenvalue = np.max(np.abs(eigenvalues))
+        if max_eigenvalue >= 1.0:
+            scale_factor = 0.99 / max_eigenvalue
+            lds.A *= scale_factor
+            lds.B *= scale_factor
+            log.warning(
+                f"LDS unstable (max eigenvalue: {max_eigenvalue:.4f}). Scaled A and B by {scale_factor:.4f}"
+            )
 
-    if str2bool(cond_params.model_task_inputs):
-        k_task = cleo_prep.fsnn.k_task
-    else:
-        k_task = 0
-    assert k_opto + k_task == lds.k, f"{lds.k=} {k_opto=} {k_task=}"
+        if str2bool(cond_params.model_task_inputs):
+            k_task = cleo_prep.fsnn.k_task
+        else:
+            k_task = 0
+        assert k_opto + k_task == lds.k, f"{lds.k=} {k_opto=} {k_task=}"
 
     # separate files so one can change without causing the other to be rerun
     ctrl_type = cond_params["ctrl_type"]
@@ -257,11 +258,15 @@ if __name__ == "__main__" and "snakemake" in locals():
     fh = setup_logging(snakemake.config, snakemake.log[0])
     setup_debugger(snakemake.config["debug"])
 
+    lds_model_file = (
+        snakemake.input.lds_model if "lds_model" in snakemake.input.keys() else None
+    )
+
     ctrl_expts(
         preprocess_params(snakemake.wildcards),
         preprocess_params(snakemake.params),
         snakemake.input.cleo_prep,
-        snakemake.input.lds_model,
+        lds_model_file,
         snakemake.output.data,  # outfile
         preprocess_params(snakemake.config),  # for non-essential params
     )

@@ -106,8 +106,8 @@ def cond_params_for_step(step: str) -> list[str]:
     return params
 
 
-def wildcard_path(file: str, fill_in_ref=False, **kwargs) -> str:
-    step = step_from_filename(file)
+def wildcard_path(file: str, fill_in_ref=False, step=None, **kwargs) -> str:
+    step = step_from_filename(file) if step is None else step
     params = config["reference_params"].copy() if fill_in_ref else {}
     params |= kwargs
     wildcards = set(all_cond_params) - params.keys()
@@ -398,10 +398,24 @@ rule optimal_stim_rec_tabulate:
 rule analyze_ctrl_data:
     input:
         ctrl_data=wildcard_path("ctrl_data.pkl.gz"),
-        null_ctrl_data=wildcard_path(
-            "ctrl_data.pkl.gz",
-            ctrl_type="NULL",
-            latency=False,
+        null_ctrl_data=branch(
+            lambda wc: wc.setting != "sufficient_stim",
+            # use results specific to model fit params by default
+            # since even in null control, model fit is needed for filtering
+            then=wildcard_path(
+                "ctrl_data.pkl.gz",
+                ctrl_type="NULL",
+                latency=False,
+            ),
+            # for q1, we only even need one result for different k values
+            # so just request k=1
+            # and step cleo_prep since model fit and control params won't change anything
+            otherwise=wildcard_path(
+                "ctrl_data_NULL.pkl.gz",
+                latency=False,
+                step="cleo_prep",
+                # k=1,  # subtle dependency on k here because of normalization
+            ),
         ),
         fsnn_data_analysis=wildcard_path("fsnn_test_data_analysis.csv"),
         model_fit_analysis=wildcard_path("model_fit_analysis.csv"),
@@ -474,6 +488,21 @@ rule ctrl_expts:
     retries: 1
     script:
         "../src/scripts/ctrl_expts.py"
+
+
+use rule ctrl_expts as ctrl_expts_null_q1 with:
+    input:
+        "src/ctrl/__init__.py",
+        "src/ctrl/{ctrl_type}.py",
+        cleo_prep=wildcard_path("cleo_prep.pkl.gz"),
+        # # don't need model for q1
+    output:
+        data=wildcard_path(
+            "ctrl_data_{ctrl_type}.pkl.gz",
+            step="cleo_prep",  # since model fit and control params don't matter
+        ),
+    log:
+        wildcard_path("ctrl_expts_{ctrl_type}.log", step="cleo_prep"),
 
 
 rule plot_model_fit_pred:

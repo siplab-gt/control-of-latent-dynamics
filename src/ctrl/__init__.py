@@ -457,39 +457,21 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         """measurement noise covariance"""
         return np.reshape(self.lds.R, (self.m, self.m))
 
-    # def update_with_trial_info(
-    #     self, Xref, Zref, Utask, nsteps_trial, condition, i_trial_bounds, nsteps_iti
-    # ):
-    #     """call at start of each trial to update reference and task inputs.
+    @property
+    def n(self) -> int:
+        """state dimension. get from fsnn so model not needed (for null ctrl)"""
+        n = self.cleo_prep.fsnn.n_factors
+        if self.lds is not None:
+            assert self.lds.n == n, f"{self.lds.n=} not equal to {n=}"
+        return n
 
-    #     WARNING: only needed when running per trial, not with run_trials()!"""
-    # if self.ref_type == "Z":
-    #     ref = self.zscore(Zref, "z")
-    # elif self.ref_type == "X":
-    #     ref = self.zscore(Xref, "x")
-    # t_start = self.t_now
-    # self.reference_zscored = lambda t: array_vals_by_t(
-    #     ref, t - t_start, self.base_dt
-    # )
-    # self.u_task = lambda t: array_vals_by_t(Utask, t - t_start, self.base_dt)
-    # self.t_trial_bounds = tuple(t_start + i * self.base_dt for i in i_trial_bounds)
-
-    # control during trial and a little before
-    # self.t_ctrl_bounds = [
-    #     self.t_trial_bounds[0] - self.ctrl_horizon,
-    #     self.t_trial_bounds[1],
-    # ]
-    # # round to nearest ms so modulo will work as expected (not get 4.999999 for example)
-    # self.t_ctrl_bounds = [round(t / ms) * ms for t in self.t_ctrl_bounds]
-    # # round down/up to nearest sample period to fully include trial
-    # self.t_ctrl_bounds[0] -= self.t_ctrl_bounds[0] % self.sample_period
-    # self.t_ctrl_bounds[1] += (
-    #     self.sample_period - (self.t_ctrl_bounds[1] % self.sample_period)
-    # ) % self.sample_period
-    # T_ctrl = self.t_ctrl_bounds[1] - self.t_ctrl_bounds[0]
-    # assert np.isclose(
-    #     round(T_ctrl / self.sample_period), T_ctrl / self.sample_period
-    # ), f"{T_ctrl=} not multiple of {self.sample_period=}"
+    @property
+    def m(self) -> int:
+        """observation dimension. get from fsnn so model not needed (for null ctrl)"""
+        m = self.cleo_prep.probe.n
+        if self.lds is not None:
+            assert self.lds.m == m, f"{self.lds.m=} not equal to {m=}"
+        return m
 
 
 for attrib in [
@@ -498,8 +480,8 @@ for attrib in [
     "A",
     "B",
     "Q",
-    "n",
-    "m",
+    # "n",  # defined above to come from fsnn
+    # "m",  # defined above to come from probe
     "m_z",
     "k",
     "k_task",
