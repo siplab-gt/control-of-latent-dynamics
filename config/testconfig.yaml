@@ -67,10 +67,10 @@ q1: # a.k.a. sufficient stim, how many channels are good enough?
     - 1
     # - 2
     # - 4
-    - 8
+    - 33
     # - 16
-    - 32
-    - 64
+    - 67
+    - 100
   m: NA
 
 q2: # a.k.a. optimal stim/rec balance
@@ -108,7 +108,7 @@ prep_fsnn_test:
 #   muf: -0.5 # recurrent inhibtion
 prep_fsnn_reaching:
   n_rate_neurons: 200 # 800
-  n_trials_pca: 1 # for rate network
+  n_trials_pca: 20 # for rate network
 
 model_fit_optimal_stim_rec:
   epochs: 10 # only needed here for braid

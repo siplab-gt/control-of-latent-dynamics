@@ -341,7 +341,7 @@ rule sufficient_stim_tabulate:
         protected("<results>/sufficient_stim_{task}.csv"),
     localrule: True
     run:
-        dfs = [pd.read_csv(infile) for infile in input]
+        dfs = [pd.read_csv(infile) for infile in set(input)]
         df = pd.concat(dfs, ignore_index=True)
         print("concatenated sufficient stim DFs")
         df.to_csv(output[0], index=False)
@@ -388,7 +388,7 @@ rule optimal_stim_rec_tabulate:
         protected("<results>/optimal_stim_rec_{task}.csv"),
     localrule: True
     run:
-        dfs = [pd.read_csv(infile) for infile in input]
+        dfs = [pd.read_csv(infile) for infile in set(input)]
         df = pd.concat(dfs, ignore_index=True)
         print("concatenated optimal stim rec DFs")
         df.to_csv(output[0], index=False)

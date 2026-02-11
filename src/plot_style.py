@@ -23,8 +23,8 @@ c["z"] = c["a4"]
 
 ctrl_palette = {
     "OL": c["ol"],
-    "LQMPC": c["mpc"],
-    "LQMPC no latency": "black",
+    "MPC": c["mpc"],
+    "MPC with latency": "black",
 }
 
 cmap = sns.light_palette(c["dark"], as_cmap=True)

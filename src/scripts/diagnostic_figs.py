@@ -180,8 +180,8 @@ def main(cfg, results_csvs, outfiles):
     psty.style_plots()
 
     df = pd.concat([pd.read_csv(f) for f in results_csvs], ignore_index=True)
-    if "p_stim" not in df.columns and {"k", "m"}.issubset(df.columns):
-        df["p_stim"] = df["k"] / (df["m"] + df["k"])
+    if "alpha_stim" not in df.columns and {"k", "m"}.issubset(df.columns):
+        df["alpha_stim"] = df["k"] / (df["m"] + df["k"])
     df["m"] = df["m"].fillna(0)
     df["signals"] = df["signals"].fillna("N/A")
     df["seed"] = df["seed"].astype("category")
