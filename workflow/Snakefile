@@ -28,6 +28,11 @@ rule all:
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
+        expand(
+            "<results>/{setting}_{task}_key_metrics.csv",
+            task=config["manual_sweep_params"]["task"],
+            setting=config["manual_sweep_params"]["setting"],
+        ),
         "<results>/figs/diagnostics.pdf",
         expand(
             "<results>/figs/{setting}_{task}_diagnostics.pdf",
@@ -265,6 +270,7 @@ fig_exts = [".webp", ".pdf"]
 rule main_figs:
     input:
         "<results>/{setting}_{task}.csv",
+        "<results>/{setting}_{task}_key_metrics.csv",
         "src/plot_style.py",
     output:
         main=multiext("<results>/figs/{setting}_{task}", *fig_exts),
@@ -393,6 +399,16 @@ rule optimal_stim_rec_tabulate:
         print("concatenated optimal stim rec DFs")
         df.to_csv(output[0], index=False)
         print(f"wrote optimal stim rec results to {output[0]}")
+
+
+rule key_metrics_table:
+    input:
+        "<results>/{setting}_{task}.csv",
+    output:
+        "<results>/{setting}_{task}_key_metrics.csv",
+    localrule: True
+    script:
+        "../src/scripts/key_metrics_table.py"
 
 
 rule analyze_ctrl_data:

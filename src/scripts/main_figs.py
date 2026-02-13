@@ -15,80 +15,19 @@ def cubic_spline_interp(x, y):
     return cs
 
 
-def interp_argmax(x, y):
-    cs = cubic_spline_interp(x, y)
-    deriv = cs.derivative()
-    extrema_candidates = deriv.roots()
-    if len(extrema_candidates) == 0:
-        return x[np.argmax(y)]  # No extrema found, return argmax of original data
-    y_values = cs(extrema_candidates)
-    x_max = extrema_candidates[y_values.argmax()]
+seed_line_kwargs = dict(
+    lw=0.4,
+    estimator=None,
+    units="seed",
+)
 
-    return x_max
-
-
-def interp_argwhere(x, y, target_y):
-    shifted_cs = cubic_spline_interp(x, y - target_y)
-    roots = shifted_cs.roots()
-    if len(roots) == 0:
-        return np.nan  # No solution found
-    return sorted(roots)[0]  # Return the smallest root
-
-
-def compute_optimal_alpha_stim(subset_df, ep, metric, **kwargs):
-    """
-    Compute optimal alpha_stim for optimal_stim_rec analysis.
-
-    Selects the alpha_stim values corresponding to maximum control quality (argmax),
-    then computes alpha_stim = k / (m + k) for those selected rows.
-    """
-    total_channel_budget = subset_df.m + subset_df.k
-    assert np.all(np.diff(total_channel_budget) == 0), (
-        "Expected constant total channel budget across rows"
-    )
-    total_channel_budget = total_channel_budget.iloc[0]
-
-    # Get alpha_stim values corresponding to max Q (argmax)
-    def get_optimal_alpha_stim(group):
-        x = group["k"].values
-        y = group[metric].values
-        k_opt = interp_argmax(x, y)
-        return pd.Series({"optimal_alpha_stim": k_opt / total_channel_budget})
-
-    return (
-        subset_df.groupby([ep, "ctrl_latency", "seed"])
-        .apply(get_optimal_alpha_stim, include_groups=False)
-        .reset_index()
-    )
-
-
-def compute_k_suff(subset_df, ep, metric, ref_data, cfg, **kwargs):
-    """
-    Compute k_suff: k value where control quality is 90% of no-latency LQMPC max.
-
-    For sufficient_stim analysis.
-    """
-
-    # find first k where Q >= Q_suff
-    def find_k_suff(group):
-        k_suff = interp_argwhere(
-            group["k"].values,
-            group[metric].values,
-            target_y=0.9 * group[metric].values.max(),
-        )
-
-        return pd.Series({"k_suff": k_suff})
-
-    return (
-        subset_df.groupby([ep, "ctrl_latency", "seed"])
-        .apply(find_k_suff, include_groups=False)
-        .reset_index()
-    )
+mean_line_lw = 2
 
 
 def main(
     cfg,
     results_csv,
+    key_metrics_csv,
     outfiles,
     setting,
 ):
@@ -97,22 +36,21 @@ def main(
         metric = "Q_track_Xref_X_fsnn"
         colorbar_label = r"$Q_\text{track}\left(X_\text{ref}, X\right)$"
         key_metric_name = "k_suff"
-        key_metric_func = compute_k_suff
         main_fig_plot_type = "lineplots"
-        plots_per_row = 3
+        plots_per_row = 6
     else:  # optimal_stim_rec
         assert setting == "optimal_stim_rec", f"Unknown setting: {setting}"
         metric = "Q_track_Zref_Z"
         colorbar_label = r"$Q_\text{track}\left(Z_\text{ref}, Z\right)$"
         key_metric_name = "optimal_alpha_stim"
-        key_metric_func = compute_optimal_alpha_stim
         main_fig_plot_type = "lineplots"
         expl_params |= cfg["star_sweep_params_measurement_only"]
-        plots_per_row = 4
+        plots_per_row = 7
 
     psty.style_plots()
     df = pd.read_csv(results_csv)
     df["alpha_stim"] = df.k / (df.m + df.k)
+    key_metrics_df = pd.read_csv(key_metrics_csv)
 
     # Create a combined key for hue
     df["ctrl_latency"] = df["ctrl_type"] + df["latency"].astype(str)
@@ -128,20 +66,41 @@ def main(
             plots_per_row,
             figsize=(psty.double_col_width, 2 * n_rows),
             layout="compressed",
-            sharey=True,
+            sharex="col",
+            sharey="row",
         )
         btm_axs = axs[1:, :] if extra_row else axs
         for i in range(len(expl_params), len(btm_axs.flatten())):
             btm_axs.flatten()[i].axis("off")
         return fig, axs
 
-    main_fig, main_axs = grid_subplots(extra_row=True)
-    # First row: single subfigure spanning all columns
-    ax_top = plt.subplot2grid((1 + rows, plots_per_row), (0, 0), colspan=plots_per_row)
-    # Remove axes in first row (since we use ax_top)
-    for ax in main_axs[0]:
-        ax.remove()
-    axs_grid = main_axs[1:]
+    def grid_subplots_main():
+        n_rows = 1 + 2 * rows
+        height_ratios = [2.0] + [1.3] * (n_rows - 1)
+        fig, axs = plt.subplots(
+            n_rows,
+            plots_per_row,
+            figsize=(psty.double_col_width, sum(height_ratios)),
+            layout="compressed",
+            sharex="col",
+            sharey="row",
+            gridspec_kw={"height_ratios": height_ratios},
+        )
+        gs = axs[0, 0].get_gridspec()
+        ax_top = fig.add_subplot(gs[0, :])
+        for ax in axs[0, :]:
+            ax.remove()
+
+        axs_key = axs[1 : 1 + rows, :]
+        axs_ctrl = axs[1 + rows : 1 + 2 * rows, :]
+
+        for axs in [axs_key, axs_ctrl]:
+            for i in range(len(expl_params), len(axs.flatten())):
+                axs.flatten()[i].axis("off")
+
+        return fig, ax_top, axs_key, axs_ctrl
+
+    main_fig, ax_top, axs_key, axs_ctrl = grid_subplots_main()
 
     ref_condition = cfg["reference_params"]
 
@@ -180,6 +139,7 @@ def main(
         lw=0.4,
         legend=False,
         palette=psty.ctrl_palette,
+        # style="ctrl_latency",
     )
     # thin lines show interpolated per-seed data
     sns.lineplot(
@@ -190,11 +150,11 @@ def main(
         ax=ax_top,
         marker=None,
         errorbar=None,
-        units="seed",
-        estimator=None,
-        lw=0.4,
+        **seed_line_kwargs,
         legend=False,
         palette=psty.ctrl_palette,
+        style="ctrl_latency",
+        dashes=psty.ctrl_styles,
     )
     # thick lines show average of interpolated data
     sns.lineplot(
@@ -204,13 +164,51 @@ def main(
         hue="ctrl_latency",
         ax=ax_top,
         errorbar=None,
-        lw=2,
+        lw=mean_line_lw,
         palette=psty.ctrl_palette,
+        style="ctrl_latency",
+        dashes=psty.ctrl_styles,
     )
 
-    def plot_lineplots(lp_axs):
+    def plot_lineplots(lp_axs, key_metric_name):
         """Plot lineplots showing key metric vs exploration parameter."""
-        for ep, ax in zip(expl_params, lp_axs.flatten()):
+        for ep, ax in zip(expl_params, lp_axs.flat):
+            subset = key_metrics_df.query(
+                "ep == @ep and key_metric_name == @key_metric_name"
+            )
+            if subset.empty:
+                ax.set_visible(False)
+                continue
+            # per-seed lines
+            sns.lineplot(
+                data=subset,
+                x="ep_value",
+                y="key_metric_value",
+                hue="ctrl_latency",
+                ax=ax,
+                legend=False,
+                palette=psty.key_palette,
+                **seed_line_kwargs,
+            )
+            # average
+            sns.lineplot(
+                data=subset,
+                x="ep_value",
+                y="key_metric_value",
+                hue="ctrl_latency",
+                ax=ax,
+                legend=False,
+                palette=psty.key_palette,
+                errorbar=None,
+                lw=mean_line_lw,
+            )
+            # ax.set(ylim=(0, 1))
+        for ax in lp_axs[..., 1:].flat:
+            ax.set(ylabel="")
+
+    def plot_control_performance(cp_axs):
+        """Plot control performance metric vs exploration parameter per seed and k."""
+        for ep, ax in zip(expl_params, cp_axs.flat):
             conds2keep = ref_condition.copy()
             del conds2keep[ep], conds2keep["latency"]
             query_str = " and ".join(
@@ -218,24 +216,38 @@ def main(
             )
             query_str += ' and (ctrl_latency == "MPC")'
             subset = df.query(query_str)
-            assert len(subset[ep].unique()) > 1, (
-                f"No variation in {ep} in subset. Values: {subset[ep].unique()}"
-            )
-            # Apply key metric computation function
-            subset = key_metric_func(subset, ep, metric, ref_data=ref_data, cfg=cfg)
+            if subset.empty:
+                ax.set_visible(False)
+                continue
+
+            k_values = np.sort(subset["k"].unique())
+            k_palette = sns.color_palette("viridis", n_colors=len(k_values))
+            k_palette = dict(zip(k_values, k_palette))
+
             sns.lineplot(
                 data=subset,
                 x=ep,
-                y=key_metric_name,
-                hue="ctrl_latency",
-                ax=ax,
+                y=metric,
+                hue="k",
+                **seed_line_kwargs,
                 legend=False,
-                palette=psty.ctrl_palette,
-                **psty.sns_errorbar_kwargs,
-                marker="D",
+                palette=psty.cmap,
+                ax=ax,
             )
-            # ax.set(ylim=(0, 1))
-        for ax in lp_axs[:, 1:].flatten():
+            sns.lineplot(
+                data=subset,
+                x=ep,
+                y=metric,
+                hue="k",
+                errorbar=None,
+                lw=mean_line_lw,
+                legend=(ax == cp_axs.flat[-1]),
+                palette=psty.cmap,
+                ax=ax,
+            )
+
+        sns.move_legend(ax, "upper left", bbox_to_anchor=(1, 1))
+        for ax in cp_axs[..., 1:].flat:
             ax.set(ylabel="")
 
     def plot_heatmaps(hm_fig, hm_axs, mean_or_std):
@@ -251,7 +263,7 @@ def main(
             ),
             std=dict(cmap=psty.cmap),
         )[mean_or_std]
-        for ep, ax in zip(expl_params, hm_axs.flatten()):
+        for ep, ax in zip(expl_params, hm_axs.flat):
             conds2keep = ref_condition.copy()
             del conds2keep[ep]
             query_str = " and ".join(
@@ -286,23 +298,35 @@ def main(
                             fontsize=8,
                         )
 
-        for ax in hm_axs[:, 1:].flatten():
+        for ax in hm_axs[..., 1:].flat:
             ax.set(ylabel="")
 
         hm_fig.colorbar(
-            hm_axs[0, 0].collections[0],
+            hm_axs.flat[0].collections[0],
             ax=hm_axs,
             label=mean_or_std + " " + colorbar_label,
         )
 
-    # main fig: choose between lineplots and heatmaps for the grid
+    # main fig: top row (Q over k), key metric row, control performance row
     if main_fig_plot_type == "lineplots":
-        plot_lineplots(axs_grid)
+        plot_lineplots(axs_key, key_metric_name)
     else:  # heatmaps
-        plot_heatmaps(main_fig, axs_grid, "mean")
+        plot_heatmaps(main_fig, axs_key, "mean")
+
+    plot_control_performance(axs_ctrl)
+
+    for ax in axs_key.flat:
+        ax.spines["bottom"].set_visible(False)
+        ax.tick_params(axis="x", which="both", length=0)
+    for axs in [axs_key, axs_ctrl]:
+        for ax in axs.flat:
+            ax.grid(True, color="0.9", linewidth=0.6)
+        for ax in axs[:, 1:].flat:
+            ax.spines["left"].set_visible(False)
+            ax.tick_params(axis="y", which="both", length=0)
 
     fig_lp, axs_lp = grid_subplots()
-    plot_lineplots(axs_lp)
+    plot_lineplots(axs_lp, key_metric_name)
 
     fig_hm_mean, axs_hm_mean = grid_subplots()
     plot_heatmaps(fig_hm_mean, axs_hm_mean, "mean")
@@ -329,6 +353,7 @@ if __name__ == "__main__" and "snakemake" in locals():
     main(
         snakemake.config,
         snakemake.input[0],
+        snakemake.input[1],
         snakemake.output,
         setting=snakemake.wildcards.setting,
     )
@@ -345,6 +370,11 @@ if __name__ == "__main__" and "snakemake" not in locals():
         "--results-csv",
         required=True,
         help="CSV file with results to plot",
+    )
+    parser.add_argument(
+        "--key-metrics-csv",
+        required=True,
+        help="CSV file with precomputed key metrics",
     )
     args = parser.parse_args()
 
@@ -366,4 +396,4 @@ if __name__ == "__main__" and "snakemake" not in locals():
 
     cfg = snakemake.common.configfile._load_configfile("./config/config.yaml")
 
-    main(cfg, args.results_csv, outfiles, setting=setting)
+    main(cfg, args.results_csv, args.key_metrics_csv, outfiles, setting=setting)

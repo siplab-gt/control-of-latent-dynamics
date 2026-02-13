@@ -1,8 +1,8 @@
 import warnings
 
 import matplotlib.pyplot as plt
-from matplotlib.rcsetup import cycler
 import seaborn as sns
+from matplotlib.rcsetup import cycler
 
 c = {
     "dark": "#004d3d",
@@ -15,19 +15,26 @@ c = {
     "opto1": "#72b5f2",
     "opto2": "#FF6145",
 }
-c["mpc"] = c["main"]
-c["ol"] = c["a1"]
+c["ctrl"] = c["main"]
+c["key"] = c["a1"]
 c["x"] = c["a2"]
 c["y"] = c["a3"]
 c["z"] = c["a4"]
 
 ctrl_palette = {
-    "OL": c["ol"],
-    "MPC": c["mpc"],
-    "MPC with latency": "black",
+    "OL": "0.4",
+    "MPC": c["ctrl"],
+    "MPC with latency": c["light"],
+}
+key_palette = ctrl_palette | {"MPC": c["key"]}
+
+ctrl_styles = {
+    "OL": "",
+    "MPC": "",
+    "MPC with latency": (2, 1),
 }
 
-cmap = sns.light_palette(c["dark"], as_cmap=True)
+cmap = sns.dark_palette(c["light"], reverse=True, as_cmap=True)
 div_cmap = sns.color_palette("icefire_r", as_cmap=True)
 
 double_col_width = 17 / 2.54
