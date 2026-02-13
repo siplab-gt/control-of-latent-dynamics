@@ -38,6 +38,8 @@ metric_groups = [
         [
             "Q_track_Zref_Z",
             "Q_track_Xref_X_fsnn",
+            "acc_pred_cond_X",
+            "acc_pred_cond_Z",
         ],
         "Q",
     ),
