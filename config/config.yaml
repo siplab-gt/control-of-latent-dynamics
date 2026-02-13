@@ -17,9 +17,11 @@ grid_sweep_params:
 ###################################################
 star_sweep_params:
   n_trials_sys_id:
+    - 1
+    - 2
+    - 5
     - 10
-    - 40
-    - 70
+    - 50
     - 100
   # offset to number of PCs used to train fSNN, which is also used as ground-truth n_x
   n_latent_dims_offset:
@@ -27,6 +29,8 @@ star_sweep_params:
     - -1
     - 0
     - 1
+    - 5
+    - 10
   density_scale:
     - 1
     - 1.33
@@ -41,6 +45,7 @@ star_sweep_params:
     - 50
     - 100
     - 200
+    - 400
   model_task_inputs:
     - false
     - true
@@ -78,7 +83,7 @@ reference_params:
   density_scale: 1
   network_area_scale: 1.44
   beam_width_um: 100
-  latency: true
+  latency: false
   model_task_inputs: true
   signals: lfp
 
@@ -92,17 +97,23 @@ q1: # a.k.a. sufficient stim, how many channels are good enough?
   k:
     - 1
     - 2
-    - 4
-    - 8
-    - 16
-    - 32
-    - 64
+    - 5
+    - 10
+    - 20
+    - 30
+    - 40
+    - 50
+    - 60
+    - 70
+    - 80
+    - 90
+    - 100
   m: NA
 
 q2: # a.k.a. optimal stim/rec balance
   ###################################
-  channel_budget: 64
-  num_stim_ratio_levels: 7
+  channel_budget: 100
+  num_stim_ratio_levels: 11
 
 #########################################
 # base parameters, used across conditions
@@ -114,6 +125,7 @@ power_per_neuron_uW: 1 # when normalizing power
 ##################################################################
 
 prep_fsnn:
+  # ⚠️ this can't be changed without modifying task-loading code, as in reaching.py fout1
   dt_ms: 1
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
@@ -153,7 +165,7 @@ prep_fsnn_demean:
   n_main_trials: 100 # 250
   n_settle_trials: 20 # basically doing init trials for train here
 prep_fsnn_train:
-  n_main_trials: 100
+  n_main_trials: 250
   n_settle_trials: 20 # basically doing init trials for test here
 prep_fsnn_test:
   n_main_trials: 50
@@ -174,7 +186,7 @@ prep_fsnn_reaching:
 
 cleo_prep:
   array_side_length_mm: 4
-  array_n_per_side: 8
+  array_n_per_side: 10
   typical_Irr0_mWmm2: 5
   # needed early for LFP
   subsample_factor: 10 # ctrl/sample period relative to fsnn dt
@@ -204,27 +216,31 @@ sys_id_expts:
 ctrl_expts:
   Q_cost: 1
   R_cost: 1e-3
-  ctrl_horizon_ms: 200
+  ctrl_horizon_ms: 300
   n_trials_ctrl: 100
-  baseline_latency_ms: 1
+  baseline_latency_ms: 1 # bare minimum, e.g., for I/O
   solvers: ["osqp", "clarabel", "scs"]
   # solver_args:
   # need to define these below since recursive dict merging isn't
   # implemented when we load params in Snakefile
 
 ctrl_expts_OL:
+  time_limit_ms: 2000 # representative of inter-trial interval for reaching
   solver_args:
     max_iter: 1e8 # very high since we want to rely on time limit
     eps_infeas: 1e-8 # smaller is less sensitive
-    time_limit: 2 # representative of inter-trial interval for reaching
+    # derived from above, subtracting baseline and overhead
+    # time_limit: 2
     verbose: true
     ignore_dpp: true
 
 ctrl_expts_LQMPC:
+  time_limit_ms: 20
   solver_args:
     max_iter: 1e8 # very high since we want to rely on time limit
     eps_infeas: 1e-8 # smaller is less sensitive
-    time_limit: 0.02
+    # derived from above, subtracting baseline and overhead
+    # time_limit: 0.02
     warm_start: true
     enforce_dpp: true
 

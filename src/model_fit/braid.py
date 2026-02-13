@@ -89,8 +89,10 @@ def fit_lds_to_data(
     )
 
     # .sId is the `MainModel`
-    braid_model.sId.plot_logs(saveFile=base_params.braid_basename + "_logs_plot.png")
-    comp_graph_plot_basename = base_params.braid_basename + "_comp_graph"
+    outdir = os.path.dirname(outfiles.lds_model)
+    braid_basename = outdir + "/model_fit_braid"
+    braid_model.sId.plot_logs(saveFile=braid_basename + "_logs_plot.png")
+    comp_graph_plot_basename = braid_basename + "_comp_graph"
     braid_model.sId.plot_comp_graph(savepath=comp_graph_plot_basename)
     braid_model.sId.print_summary()
 
@@ -107,7 +109,7 @@ def fit_lds_to_data(
         f"{Zhat_old[-10:]=}\n{Zhat[-10:]=}\n{Zhat[~np.isclose(Zhat_old, Zhat, **tol_params)]=}"
     )
     # before BRAID's saveToFile, since it replaces Models with their weights
-    braid_model.saveToFile(base_params.braid_basename + "_braid.pkl")
+    braid_model.saveToFile(braid_basename + "_braid.pkl")
 
     if base_params.linear_Cz:
         lds.Cz = lssm.Cz

@@ -7,6 +7,7 @@
 #SBATCH --mail-type=BEGIN,END,FAIL              # Mail preferences
 cd $SLURM_SUBMIT_DIR                            # Change to working directory
 
+module purge
 module load mamba                               # Load module dependencies
 mamba activate cold
 snakemake --unlock

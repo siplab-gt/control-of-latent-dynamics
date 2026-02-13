@@ -1,9 +1,11 @@
 from copy import deepcopy
+from functools import cache
 from math import ceil
 import numpy as np
 import pandas as pd
 import itertools
 from src.helpers import str2bool
+import warnings
 
 # Main entrypoint of the workflow.
 # Please follow the best practices:
@@ -16,26 +18,52 @@ configfile: "config/config.yaml"
 
 wildcard_constraints:
     task="|".join(config["manual_sweep_params"]["task"]),
-    setting="|".join(config["manual_sweep_params"]["setting"]),
+    setting="|".join(config["manual_sweep_params"]["setting"] + ["NA"]),
 
 
 rule all:
     input:
         expand(
-            "results/figs/{setting}_{task}.pdf",
+            "<results>/figs/{setting}_{task}.pdf",
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
-        "results/figs/diagnostics.pdf",
+        "<results>/figs/diagnostics.pdf",
         expand(
-            "results/figs/{setting}_{task}_diagnostics.pdf",
+            "<results>/figs/{setting}_{task}_diagnostics.pdf",
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
     localrule: True
 
 
-cond_params = [
+steps_params = {
+    "prep_fsnn": [
+        "task",
+        "seed",
+        "n_latent_dims_offset",
+        "density_scale",
+        "network_area_scale",
+    ],
+    "cleo_prep": [
+        "setting",
+        "k",
+        "m",
+        "beam_width_um",
+        "signals",
+    ],
+    "sys_id_expts": [],
+    "model_fit": ["n_trials_sys_id", "model_task_inputs"],
+    "ctrl_expts": ["latency", "ctrl_type"],
+    "analysis": [],
+}
+
+
+all_cond_params = []
+for p in steps_params.values():
+    all_cond_params.extend(p)
+
+_cond_params_in_cfg = [
     param
     for param_type in [
         "manual_sweep_params",
@@ -45,20 +73,67 @@ cond_params = [
     ]
     for param in config[param_type].keys()
 ]
+for p in _cond_params_in_cfg:
+    assert p in all_cond_params
+for p in all_cond_params:
+    assert p in _cond_params_in_cfg
 
-params_str = "/".join(f"{par}_{{{par}}}" for par in cond_params)
+
+def step_from_filename(filename: str) -> str:
+    if "fsnn" in filename:
+        return "prep_fsnn"
+    elif "cleo" in filename:
+        return "cleo_prep"
+    elif "sys_id" in filename:
+        return "sys_id_expts"
+    elif "model_fit" in filename:
+        return "model_fit"
+    elif "ctrl" in filename:
+        return "ctrl_expts"
+    else:
+        return "analysis"
 
 
-def paths_for_params(file: list | str, fill_in_ref=False, **kwargs) -> str:
+@cache
+def cond_params_for_step(step: str) -> list[str]:
+    """get the list of exploratory parameters relevant for a given step"""
+    params = []
+    for s, p in steps_params.items():
+        params.extend(p)
+        # cut the path short since only irrelevant params after this step
+        if s == step:
+            break
+    return params
+
+
+def wildcard_path(file: str, fill_in_ref=False, **kwargs) -> str:
+    step = step_from_filename(file)
     params = config["reference_params"].copy() if fill_in_ref else {}
     params |= kwargs
-    wildcards = set(cond_params) - params.keys()
+    wildcards = set(all_cond_params) - params.keys()
+
+    cond_params = cond_params_for_step(step)
+
+    for kw in kwargs:
+        if kw in cond_params:
+            warnings.warn(f"requested keyword {kw} is irrelevant at step {step}")
+    for p in list(params):
+        if p not in cond_params:
+            del params[p]
+
+    params_str = "/".join(f"{par}_{{{par}}}" for par in cond_params)
+
+    if file.endswith(".log"):
+        parent_dir = "<logs>"
+    else:
+        parent_dir = "<results>"
+
     # need to mask wildcards we want to keep with double braces
     params_str_masked = params_str
     for wc in wildcards:
         params_str_masked = params_str_masked.replace(f"{{{wc}}}", f"{{{{{wc}}}}}")
     out = expand(
-        f"results/{params_str_masked}/{{file}}",
+        f"{parent_dir}/{params_str_masked}/{{file}}",
         file=file,
         **params,
     )
@@ -67,7 +142,7 @@ def paths_for_params(file: list | str, fill_in_ref=False, **kwargs) -> str:
     return out
 
 
-NA = "NA"  # when a parameter is not applicable (e.g. latency for open-loop control)
+NA = "NA"  # when a parameter is not applicable (e.g. ctrl_type for cleo_prep)
 
 
 def params_from_cfg(*params: str, keep_parent_keys=False, keep_target_key=True) -> dict:
@@ -107,7 +182,7 @@ def params_from_cfg_with_wildcards(
     return replace_wildcards
 
 
-def step_params(*steps: str) -> callable:
+def step_cfg(*steps: str) -> callable:
     subcfg_vars = ["task", "mode", "setting", "ctrl_type"]
 
     def wc_fn(wildcards):
@@ -128,27 +203,24 @@ rule testq1:
     # for easily running one reference condition
     # (doesn't require a super long path with all wildcards)
     input:
-        paths_for_params(
+        lambda wc: wildcard_path(
             fill_in_ref=True,
-            file="{file}",
+            file=wc.file,
             setting="sufficient_stim",
             task="reaching",
-            latency=True,
+            latency=False,
             ctrl_type="LQMPC",
-            k=32,
+            k=100,
             m=NA,
-            # m=16,
             seed=17230616,
             signals=NA,
         ),
     output:
-        "results/testq1/{file}",
+        "<results>/testq1/{file}",
     localrule: True
     shell:
-        # NOTE: could have used ln -r (relative) instead of realpath
-        # "ln -sf $(realpath $(dirname {input}))/* $(dirname {output})"
-        # "ln -sfr $(dirname {input})/* $(dirname {output})"
-        "cp $(dirname {input})/* $(dirname {output})"
+        # copy only files (not directories)
+        "find $(dirname {input}) -maxdepth 1 -type f -print0 | xargs -0 cp -t $(dirname {output})"
 
 
 def get_q2_kms():
@@ -161,17 +233,18 @@ def get_q2_kms():
     return zip(kk.tolist(), mm.tolist())
 
 
-test_k, test_m = list(get_q2_kms())[4]
+test_k, test_m = list(get_q2_kms())[-1]
 
 
 rule testq2:
     input:
-        paths_for_params(
+        lambda wc: wildcard_path(
             fill_in_ref=True,
-            file="{file}",
+            file=wc.file,
             setting="optimal_stim_rec",
             task="reaching",
             ctrl_type="LQMPC",
+            latency=False,
             k=test_k,
             # k=16,
             m=test_m,
@@ -179,27 +252,27 @@ rule testq2:
             seed=17230616,
         ),
     output:
-        "results/testq2/{file}",
+        "<results>/testq2/{file}",
     localrule: True
     shell:
-        # "rm -r $(dirname {output}) || true && \\"
-        # "ln -sf $(realpath $(dirname {input})) $(dirname {output})"
-        # "ln -sfr $(dirname {input})/* $(dirname {output})"
-        "cp $(dirname {input})/* $(dirname {output})"
+        # copy only files (not directories)
+        "find $(dirname {input}) -maxdepth 1 -type f -print0 | xargs -0 cp -t $(dirname {output})"
 
 
-fig_exts = [".png", ".pdf"]
+fig_exts = [".webp", ".pdf"]
 
 
 rule main_figs:
     input:
-        "results/{setting}_{task}.csv",
+        "<results>/{setting}_{task}.csv",
         "src/plot_style.py",
     output:
-        main=multiext("results/figs/{setting}_{task}", *fig_exts),
-        lineplots=multiext("results/figs/{setting}_{task}_lineplots", *fig_exts),
-        heatmaps_mean=multiext("results/figs/{setting}_{task}_heatmaps_mean", *fig_exts),
-        heatmaps_std=multiext("results/figs/{setting}_{task}_heatmaps_std", *fig_exts),
+        main=multiext("<results>/figs/{setting}_{task}", *fig_exts),
+        lineplots=multiext("<results>/figs/{setting}_{task}_lineplots", *fig_exts),
+        heatmaps_mean=multiext(
+            "<results>/figs/{setting}_{task}_heatmaps_mean", *fig_exts
+        ),
+        heatmaps_std=multiext("<results>/figs/{setting}_{task}_heatmaps_std", *fig_exts),
     localrule: True
     script:
         "../src/scripts/main_figs.py"
@@ -208,9 +281,9 @@ rule main_figs:
 rule diagnostic_figs:
     input:
         "src/plot_style.py",
-        csvs=["results/{setting}_{task}.csv"],
+        csvs=["<results>/{setting}_{task}.csv"],
     output:
-        multiext("results/figs/{setting}_{task}_diagnostics", *fig_exts),
+        multiext("<results>/figs/{setting}_{task}_diagnostics", *fig_exts),
     localrule: True
     script:
         "../src/scripts/diagnostic_figs.py"
@@ -220,12 +293,12 @@ rule diagnostic_figs_combined:
     input:
         "src/plot_style.py",
         csvs=expand(
-            "results/{setting}_{task}.csv",
+            "<results>/{setting}_{task}.csv",
             setting=config["manual_sweep_params"]["setting"],
             task=config["manual_sweep_params"]["task"],
         ),
     output:
-        multiext("results/figs/diagnostics", *fig_exts),
+        multiext("<results>/figs/diagnostics", *fig_exts),
     localrule: True
     script:
         "../src/scripts/diagnostic_figs.py"
@@ -235,7 +308,7 @@ rule sufficient_stim_tabulate:
     input:
         # to get main fig
         [
-            paths_for_params(
+            wildcard_path(
                 file="summary.csv",
                 setting="sufficient_stim",
                 latency=latency,
@@ -250,11 +323,11 @@ rule sufficient_stim_tabulate:
         ],
         # exploratory variables
         [
-            paths_for_params(
+            wildcard_path(
                 file="summary.csv",
                 setting="sufficient_stim",
-                latency=latency,
-                ctrl_type=ctrl,
+                latency=False,
+                ctrl_type="LQMPC",
                 k=config["q1"]["k"],
                 m=NA,
                 seed=config["grid_sweep_params"]["seed"],
@@ -263,13 +336,12 @@ rule sufficient_stim_tabulate:
                 fill_in_ref=True,
             )
             for var in config["star_sweep_params"]
-            for ctrl, latency in [("OL", False), ("LQMPC", True)]
         ],
     output:
-        protected("results/sufficient_stim_{task}.csv"),
+        protected("<results>/sufficient_stim_{task}.csv"),
     localrule: True
     run:
-        dfs = [pd.read_csv(infile) for infile in input]
+        dfs = [pd.read_csv(infile) for infile in set(input)]
         df = pd.concat(dfs, ignore_index=True)
         print("concatenated sufficient stim DFs")
         df.to_csv(output[0], index=False)
@@ -280,7 +352,7 @@ rule optimal_stim_rec_tabulate:
     input:
         # to get main fig
         [
-            paths_for_params(
+            wildcard_path(
                 file="summary.csv",
                 setting="optimal_stim_rec",
                 latency=latency,
@@ -295,11 +367,11 @@ rule optimal_stim_rec_tabulate:
         ],
         # exploratory variables
         [
-            paths_for_params(
+            wildcard_path(
                 file="summary.csv",
                 setting="optimal_stim_rec",
-                latency=latency,
-                ctrl_type=ctrl,
+                latency=False,
+                ctrl_type="LQMPC",
                 k=k,
                 m=m,
                 seed=config["grid_sweep_params"]["seed"],
@@ -310,67 +382,33 @@ rule optimal_stim_rec_tabulate:
                 config["star_sweep_params"]
                 | config["star_sweep_params_measurement_only"]
             ).items()
-            for ctrl, latency in [("OL", False), ("LQMPC", True)]
             for k, m in get_q2_kms()
         ],
     output:
-        protected("results/optimal_stim_rec_{task}.csv"),
+        protected("<results>/optimal_stim_rec_{task}.csv"),
     localrule: True
     run:
-        dfs = [pd.read_csv(infile) for infile in input]
+        dfs = [pd.read_csv(infile) for infile in set(input)]
         df = pd.concat(dfs, ignore_index=True)
         print("concatenated optimal stim rec DFs")
         df.to_csv(output[0], index=False)
         print(f"wrote optimal stim rec results to {output[0]}")
 
 
-def na_wildcards_through_step(desired_step):
-    """returns a {wc: "NA"} dict for all wildcards that are irrelevant at and before
-    the desired step, i.e., they are introduced later.
-    e.g., for model fit, the WCs introduced by ctrl_expts"""
-    irrelevant_wcs = []
-    for step, step_irrs in [
-        ("ctrl_expts", []),
-        # introduced by ctrl_expts:
-        ("model_fit", ["latency", "ctrl_type"]),
-        # introduced by model_fit:
-        ("sys_id_expts", ["n_trials_sys_id", "model_task_inputs"]),
-        # introduced by sys_id_expts:
-        ("cleo_prep", []),
-        # introduced by cleo_prep:
-        ("prep_fsnn", ["beam_width_um", "signals", "k", "m"]),
-        # these change results from the very beginning, with prep_fsnn:
-        # n_latent_dims_offset, density_scale, network_area_scale, setting, task, seed
-    ]:
-        irrelevant_wcs += step_irrs
-        if step == desired_step:
-            break
-    return {wc: NA for wc in irrelevant_wcs}
-
-
 rule analyze_ctrl_data:
     input:
-        ctrl_data=paths_for_params(
+        ctrl_data=wildcard_path("ctrl_data.pkl.gz"),
+        null_ctrl_data=wildcard_path(
             "ctrl_data.pkl.gz",
-            **na_wildcards_through_step("ctrl_expts"),
-        ),
-        null_ctrl_data=paths_for_params(
-            "ctrl_data.pkl.gz",
-            **na_wildcards_through_step("ctrl_expts"),
             ctrl_type="NULL",
             latency=False,
         ),
-        fsnn_data_analysis=paths_for_params(
-            "fsnn_test_data_analysis.csv",
-            **na_wildcards_through_step("prep_fsnn"),
-        ),
-        model_fit_analysis=paths_for_params(
-            "model_fit_analysis.csv", **na_wildcards_through_step("model_fit")
-        ),
+        fsnn_data_analysis=wildcard_path("fsnn_test_data_analysis.csv"),
+        model_fit_analysis=wildcard_path("model_fit_analysis.csv"),
     output:
-        f"results/{params_str}/summary.csv",
+        wildcard_path("summary.csv"),
     log:
-        f"logs/{params_str}/analyze_ctrl_data.log",
+        wildcard_path("analyze_ctrl_data.log"),
     localrule: True
     script:
         "../src/scripts/analyze_ctrl_data.py"
@@ -378,10 +416,10 @@ rule analyze_ctrl_data:
 
 rule plot_ctrl_data_wide:
     input:
-        paths_for_params("ctrl_data.pkl.gz"),
+        wildcard_path("ctrl_data.pkl.gz"),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/ctrl_data_wide_plot_{{style}}.png",
+        wildcard_path("ctrl_data_wide_plot_{style}.{ext}"),
     localrule: True
     script:
         "../src/scripts/plot_ctrl_data.py"
@@ -389,7 +427,7 @@ rule plot_ctrl_data_wide:
 
 use rule plot_ctrl_data_wide as plot_ctrl_data_wide_default with:
     output:
-        f"results/{params_str}/ctrl_data_wide_plot.png",
+        wildcard_path("ctrl_data_wide_plot.png"),
 
 
 def fsnn_mem_required(wc):
@@ -420,23 +458,19 @@ rule ctrl_expts:
     input:
         "src/ctrl/__init__.py",
         "src/ctrl/{ctrl_type}.py",
-        cleo_prep=paths_for_params(
-            "cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")
-        ),
-        lds_model=paths_for_params(
-            "model_fit_lds.pkl.gz", **na_wildcards_through_step("model_fit")
-        ),
+        cleo_prep=wildcard_path("cleo_prep.pkl.gz"),
+        lds_model=wildcard_path("model_fit_lds.pkl.gz"),
     params:
-        step_params("cleo_prep", "expts", "ctrl_expts"),
+        step_cfg("cleo_prep", "expts", "ctrl_expts"),
     output:
-        data=f"results/{params_str}/ctrl_data.pkl.gz",
+        data=wildcard_path("ctrl_data.pkl.gz"),
     conda:
         "cold"
     resources:
-        mem_mb=lambda wc: fsnn_mem_required(wc) * 2,
+        mem_mb=lambda wc: fsnn_mem_required(wc) * 1.5,
         runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=8),
     log:
-        f"logs/{params_str}/ctrl_expts.log",
+        wildcard_path("ctrl_expts.log"),
     retries: 1
     script:
         "../src/scripts/ctrl_expts.py"
@@ -444,18 +478,12 @@ rule ctrl_expts:
 
 rule plot_model_fit_pred:
     input:
-        paths_for_params(
-            "model_fit_pred_data.pkl.gz", **na_wildcards_through_step("model_fit")
-        ),
-        paths_for_params(
-            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
-        ),
-        paths_for_params(
-            "model_fit_lds.pkl.gz", **na_wildcards_through_step("model_fit")
-        ),
+        wildcard_path("model_fit_pred_data.pkl.gz"),
+        wildcard_path("sys_id_data.pkl.gz"),
+        wildcard_path("model_fit_lds.pkl.gz"),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/model_fit_pred_plot_{{style}}.png",
+        wildcard_path("model_fit_pred_plot_{style}.png"),
     localrule: True
     script:
         "../src/scripts/plot_model_fit_pred.py"
@@ -464,25 +492,43 @@ rule plot_model_fit_pred:
 use rule plot_model_fit_pred as plot_model_fit_pred_default with:
     localrule: True
     output:
-        f"results/{params_str}/model_fit_pred_plot.png",
+        wildcard_path("model_fit_pred_plot.png"),
 
 
 rule analyze_model_fit:
     input:
-        paths_for_params(
-            "model_fit_lds.pkl.gz", **na_wildcards_through_step("model_fit")
-        ),
-        paths_for_params(
-            "model_fit_pred_data.pkl.gz", **na_wildcards_through_step("model_fit")
-        ),
-        paths_for_params(
-            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
-        ),
+        wildcard_path("model_fit_lds.pkl.gz"),
+        wildcard_path("model_fit_pred_data.pkl.gz"),
+        wildcard_path("sys_id_data.pkl.gz"),
     output:
-        f"results/{params_str}/model_fit_analysis.csv",
+        wildcard_path("model_fit_analysis.csv"),
     localrule: True
     script:
         "../src/scripts/analyze_model_fit.py"
+
+
+rule analyze_model_fit_rollout:
+    input:
+        lds=wildcard_path("model_fit_lds.pkl.gz"),
+        sys_id=wildcard_path("sys_id_data.pkl.gz"),
+    output:
+        wildcard_path("model_fit_rollout_r2.csv"),
+    log:
+        wildcard_path("analyze_model_fit_rollout.log"),
+    localrule: True
+    script:
+        "../src/scripts/analyze_model_fit_rollout.py"
+
+
+rule plot_model_fit_rollout_r2:
+    input:
+        "src/plot_style.py",
+        r2_data=wildcard_path("model_fit_rollout_r2.csv"),
+    output:
+        wildcard_path("model_fit_rollout_r2_plot.{ext}"),
+    localrule: True
+    script:
+        "../src/scripts/plot_model_fit_rollout_r2.py"
 
 
 # assume BRAID, GPU, heavier resources when not sufficient stim (known factors)
@@ -498,15 +544,13 @@ rule model_fit:
             then="src/model_fit/known_factors.py",
             otherwise="src/model_fit/braid.py",
         ),
-        sys_id_data=paths_for_params(
-            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
-        ),
+        sys_id_data=wildcard_path("sys_id_data.pkl.gz"),
     params:
-        step_params("model_fit"),
-        braid_basename=f"results/{params_str}/model_fit_braid",
+        step_cfg("model_fit"),
+        braid_basename=wildcard_path("model_fit_braid"),
     output:
-        lds_model=f"results/{params_str}/model_fit_lds.pkl.gz",
-        pred_data=f"results/{params_str}/model_fit_pred_data.pkl.gz",
+        lds_model=wildcard_path("model_fit_lds.pkl.gz"),
+        pred_data=wildcard_path("model_fit_pred_data.pkl.gz"),
     threads: lambda wc: max(1, 8 * gpu_for_model_fit(wc))
     resources:
         gpu=gpu_for_model_fit,
@@ -519,19 +563,17 @@ rule model_fit:
     conda:
         "cold"
     log:
-        f"logs/{params_str}/model_fit.log",
+        wildcard_path("model_fit.log"),
     script:
         "../src/scripts/model_fit.py"
 
 
 rule plot_sys_id_data_trials:
     input:
-        paths_for_params(
-            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
-        ),
+        wildcard_path("sys_id_data.pkl.gz"),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/sys_id_trials_plot.{{ext}}",
+        wildcard_path("sys_id_trials_plot.{ext}"),
     localrule: True
     script:
         "../src/scripts/plot_expt_data_trials.py"
@@ -539,12 +581,10 @@ rule plot_sys_id_data_trials:
 
 rule plot_sys_id_data_wide:
     input:
-        paths_for_params(
-            "sys_id_data.pkl.gz", **na_wildcards_through_step("sys_id_expts")
-        ),
+        wildcard_path("sys_id_data.pkl.gz"),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/sys_id_wide_plot_{{style}}.{{ext}}",
+        wildcard_path("sys_id_wide_plot_{style}.{ext}"),
     localrule: True
     script:
         "../src/scripts/plot_expt_data_wide.py"
@@ -552,7 +592,7 @@ rule plot_sys_id_data_wide:
 
 use rule plot_sys_id_data_wide as plot_sys_id_data_wide_default with:
     output:
-        f"results/{params_str}/sys_id_wide_plot.{{ext}}",
+        wildcard_path("sys_id_wide_plot.{ext}"),
 
 
 n_trials_sys_id_max = config["star_sweep_params"]["n_trials_sys_id"][-1]
@@ -560,14 +600,14 @@ n_trials_sys_id_max = config["star_sweep_params"]["n_trials_sys_id"][-1]
 
 rule sys_id_expts:
     input:
-        paths_for_params("cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")),
+        wildcard_path("cleo_prep.pkl.gz"),
     params:
-        step_params("cleo_prep", "expts", "sys_id_expts"),
+        step_cfg("cleo_prep", "expts", "sys_id_expts"),
         n_trials_sys_id_max=n_trials_sys_id_max,
     output:
-        f"results/{params_str}/sys_id_data.pkl.gz",
+        wildcard_path("sys_id_data.pkl.gz"),
     log:
-        f"logs/{params_str}/sys_id_expts.log",
+        wildcard_path("sys_id_expts.log"),
     conda:
         "cold"
     resources:
@@ -580,12 +620,12 @@ rule sys_id_expts:
 
 rule impulse_responses:
     input:
-        paths_for_params("cleo_prep.pkl.gz", **na_wildcards_through_step("cleo_prep")),
+        wildcard_path("cleo_prep.pkl.gz"),
     params:
-        step_params("expts"),
+        step_cfg("expts"),
     output:
-        f"results/{params_str}/impulse_responses_wide_plot.png",
-        f"results/{params_str}/impulse_responses_trials_plot.png",
+        wildcard_path("impulse_responses_wide_plot.png"),
+        wildcard_path("impulse_responses_trials_plot.png"),
     localrule: True
     script:
         "../src/scripts/impulse_responses.py"
@@ -618,12 +658,13 @@ rule plot_cleo:
         "src/fsnn/__init__.py",
         "src/fsnn/{task}.py",
         "src/scripts/cleo_prep.py",
+        "src/cleo_prep_{setting}.py",
         "src/plot_style.py",
     output:
-        f"results/{params_str}/cleo_plot.{{ext}}",
+        wildcard_path("cleo_plot.{ext}"),
     params:
         fsnn_params,
-        step_params("cleo_prep"),
+        step_cfg("cleo_prep"),
     localrule: True
     script:
         "../src/scripts/plot_cleo.py"
@@ -632,18 +673,16 @@ rule plot_cleo:
 rule cleo_prep:
     input:
         # use NA for wildcards that were irrelevant before this step
-        paths_for_params(
-            "fsnn_post_train.pkl.gz", **na_wildcards_through_step("prep_fsnn")
-        ),
+        wildcard_path("fsnn_post_train.pkl.gz"),
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
         "src/interface_array.py",
     params:
-        step_params("prep_fsnn", "cleo_prep"),
+        step_cfg("prep_fsnn", "cleo_prep"),
     output:
-        f"results/{params_str}/cleo_prep.pkl.gz",
+        wildcard_path("cleo_prep.pkl.gz"),
     log:
-        f"logs/{params_str}/cleo_prep.log",
+        wildcard_path("cleo_prep.log"),
     localrule: True
     script:
         "../src/scripts/cleo_prep.py"
@@ -651,29 +690,20 @@ rule cleo_prep:
 
 rule plot_fsnn:
     input:
-        f"results/{params_str}/fsnn_post_demean.pkl.gz",
+        wildcard_path("fsnn_post_demean.pkl.gz"),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/fsnn_plot.png",
+        wildcard_path("fsnn_plot.png"),
     localrule: True
     script:
         "../src/scripts/plot_fsnn.py"
 
 
-# for verifying things like L2, spatial, layer penalties are working
-# rule plot_fsnn_weights:
-#     output:
-#         f"results/{params_str}/fsnn_weights_plot.png",
-#         f"results/{params_str}/fsnn_weights_plot.svg",
-#     script:
-#         "../src/scripts/plot_fsnn_weights.py"
-
-
 rule analyze_fsnn_data:
     input:
-        f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz",
+        wildcard_path("fsnn_{mode}_data.pkl.gz"),
     output:
-        f"results/{params_str}/fsnn_{{mode}}_data_analysis.csv",
+        wildcard_path("fsnn_{mode}_data_analysis.csv"),
     localrule: True
     script:
         "../src/scripts/analyze_fsnn_data.py"
@@ -681,12 +711,10 @@ rule analyze_fsnn_data:
 
 rule plot_fsnn_data:
     input:
-        paths_for_params(
-            "fsnn_{mode}_data.pkl.gz", **na_wildcards_through_step("prep_fsnn")
-        ),
+        wildcard_path("fsnn_{mode}_data.pkl.gz"),
         "src/plot_style.py",
     output:
-        f"results/{params_str}/fsnn_{{mode}}_data_plot.{{ext}}",
+        wildcard_path("fsnn_{mode}_data_plot.{ext}"),
     localrule: True
     script:
         "../src/scripts/plot_fsnn_data.py"
@@ -700,18 +728,18 @@ def fsnn_inputs(wc):
     )
     # if train or test, get fsnn from previous step
     if wc.mode == "train":
-        inputs["fsnn"] = f"results/{params_str}/fsnn_post_demean.pkl.gz"
+        inputs["fsnn"] = wildcard_path("fsnn_post_demean.pkl.gz")
     elif wc.mode == "test":
-        inputs["fsnn"] = f"results/{params_str}/fsnn_post_train.pkl.gz"
+        inputs["fsnn"] = wildcard_path("fsnn_post_train.pkl.gz")
     return inputs
 
 
 def fsnn_outputs(save_fsnn, save_data):
     outputs = {}
     if save_fsnn:
-        outputs["fsnn"] = f"results/{params_str}/fsnn_post_{{mode}}.pkl.gz"
+        outputs["fsnn"] = wildcard_path("fsnn_post_{mode}.pkl.gz")
     if save_data:
-        outputs["data"] = f"results/{params_str}/fsnn_{{mode}}_data.pkl.gz"
+        outputs["data"] = wildcard_path("fsnn_{mode}_data.pkl.gz")
     return outputs
 
 
@@ -739,7 +767,7 @@ rule _prep_fsnn:
     params:
         fsnn_params,
     log:
-        f"logs/{params_str}/prep_fsnn_{{mode}}.log",
+        wildcard_path("prep_fsnn_{mode}.log"),
     # only use 2 threads; more requires a lot of memory for parallel compilation
     threads: lambda wc: max(1, 4 * gpu_for_fsnn_train(wc))
     resources:
@@ -779,10 +807,10 @@ rule plot_schematic:
         "src/cleo_prep_{setting}.py",
         "src/plot_style.py",
     output:
-        top=multiext(f"results/{params_str}/top_schematic", ".svg", ".png"),
-        side=multiext(f"results/{params_str}/side_schematic", ".svg", ".png"),
+        top=wildcard_path("cleo_prep_top_schematic.{ext}"),
+        side=wildcard_path("cleo_prep_side_schematic.{ext}"),
     params:
-        step_params("prep_fsnn", "cleo_prep"),
+        step_cfg("prep_fsnn", "cleo_prep"),
     localrule: True
     script:
         "../src/scripts/plot_schematic.py"

@@ -2,12 +2,15 @@
 # others are defined in pyproject.toml and are included in the pip install
 name: cold
 channels:
+  - nvidia
   - bioconda
   - conda-forge
 dependencies:
   - python=3.12.7
   - pip
-  # - cuda-11.6 # for brian2cuda
+  - cuda-nvcc=12.9 # Explicitly pins the compiler (ptxas) to 12.9
+  - cuda-toolkit=12.9
+  - cudnn # Let conda-forge find a compatible version
   - snakemake
   - conda>=24.7.1
   - pip:

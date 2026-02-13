@@ -21,6 +21,7 @@ dependencies = [
     'brian2cuda',
     'tqdm',
     'tensorflow[and-cuda]',
+    'marimo',
 ]
 
 [tool.setuptools]

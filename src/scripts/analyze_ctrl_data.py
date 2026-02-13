@@ -1,11 +1,17 @@
 """Analyze control experiment data and include fSNN and model fit analyses."""
 
+import brian2.only as b2
 import numpy as np
 import pandas as pd
 from sklearn.metrics import r2_score
 from snakemake.script import snakemake
 
-from src.helpers import setup_debugger, setup_logging
+from src.helpers import (
+    load_factors_emg,
+    preprocess_params,
+    setup_debugger,
+    setup_logging,
+)
 from src.scripts.ctrl_expts import CtrlData
 from src.scripts.model_fit import ModelFitPredData
 from src.scripts.sys_id_expts import ExptData
@@ -27,6 +33,7 @@ def is_empty(arr):
 
 def analyze_ctrl_data(
     cond_params,
+    cfg,
     ctrl_data: CtrlData,
     null_ctrl_data: CtrlData,
     fsnn_data_analysis_file,
@@ -73,8 +80,72 @@ def analyze_ctrl_data(
         ctrl_data.Xref_lds, ctrl_data.Xhat_lds, null_ctrl_data.Xhat_lds
     )
 
+    # TODO: should just save conditions from fSNN in ExptData, rather than reverse-engineering them here
+    if cond_params["task"] != "reaching":
+        raise NotImplementedError
+    i_starts = ctrl_data.i_trial_boundaries[:, 0]
+    # i_ends = ctrl_data.i_trial_boundaries[:, 1]
+    # u_task = ctrl_data.Utask[i_starts]
+    # angle = np.arctan2(u_task[:, 1], u_task[:, 0])
+    # ref_conds = angle / (2 * np.pi)
+
+    _, emg_templates = load_factors_emg("src/fsnn/reaching_data.npz")
+    n_conds = 8
+    assert emg_templates.shape[0] == n_conds
+    n_muscles = 2
+    assert emg_templates.shape[2] == n_muscles
+    # invert the first signal, as fSNN does
+    emg_templates[..., 0] *= -1
+    # EMG data is spaced by 10 ms
+    assert 10 * b2.ms == cfg.prep_fsnn.dt * cfg.cleo_prep.subsample_factor
+    # if it weren't we'd need to match timescales here
+    nt = emg_templates.shape[1]
+
+    from sklearn.neighbors import KNeighborsClassifier
+
+    # predict reaches instead from Zref since Utask has direction input removed
+    Zref = np.array(
+        [ctrl_data.Zref[i_start : i_start + nt, :n_muscles] for i_start in i_starts]
+    )
+    Xref = (
+        np.array(
+            [ctrl_data.Xref_fsnn[i_start : i_start + nt, :] for i_start in i_starts]
+        )
+        if ctrl_data.Xref_fsnn is not None
+        else None
+    )
+    ref_conds = ctrl_data.conditions
+    # start at +1 since we floored the start index
+    # (trials can start any 2 ms step, while Cleo is at 10 ms steps)
+    Ztrials = np.array(
+        [ctrl_data.Z[i_start : i_start + nt, :n_muscles] for i_start in i_starts]
+    )
+    Xtrials = np.array([ctrl_data.X[i_start : i_start + nt, :] for i_start in i_starts])
+    assert Ztrials.shape == (ctrl_data.n_trials, nt, n_muscles)
+
+    def acc_pred_cond(refs, true_conds, outputs, n_neighbors=3):
+        classifier = KNeighborsClassifier(n_neighbors=n_neighbors)
+        assert n_neighbors <= np.min(np.bincount(true_conds)), np.bincount(true_conds)
+        classifier.fit(
+            X=refs.reshape((len(refs), -1)),
+            y=true_conds,
+        )
+        acc = classifier.score(
+            X=outputs.reshape((len(outputs), -1)),
+            y=true_conds,
+        )
+        return acc, classifier.predict(outputs.reshape((len(outputs), -1)))
+
+    if Xref is not None:
+        acc_X, pred_conds_X = acc_pred_cond(Xref, ref_conds, Xtrials)
+        acc_X
+    acc_Z, pred_conds_Z = acc_pred_cond(Zref, ref_conds, Ztrials)
+    results["acc_pred_cond_X"] = acc_X if Xref is not None else np.nan
+    results["acc_pred_cond_Z"] = acc_Z
+
     results["ctrl_compute_latency_mean_ms"] = ctrl_data.compute_latency_mean_ms
     results["ctrl_compute_latency_std_ms"] = ctrl_data.compute_latency_std_ms
+    results["ctrl_compute_latency_nonsolve_ms"] = ctrl_data.compute_latency_nonsolve_ms
     results["ctrl_total_latency_ms"] = ctrl_data.total_latency_ms
 
     results |= pd.read_csv(fsnn_data_analysis_file).iloc[0].to_dict()
@@ -94,6 +165,7 @@ if __name__ == "__main__" and "snakemake" in locals():
     null_ctrl_data = CtrlData.load(snakemake.input.null_ctrl_data)
     analyze_ctrl_data(
         snakemake.wildcards,
+        preprocess_params(snakemake.config),
         ctrl_data,
         null_ctrl_data,
         snakemake.input.fsnn_data_analysis,

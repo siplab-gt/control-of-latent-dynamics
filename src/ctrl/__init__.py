@@ -28,6 +28,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     baseline_latency: Quantity = None
     compute_latency_mean: Quantity = None
     compute_latency_std: Quantity = None
+    compute_latency_nonsolve: Quantity = None
+    """computation not from QP solve itself: KF, canonicalization"""
     latency_rng: np.random.Generator = None
     lds: LDS = None
     ref_type: str = None
@@ -184,8 +186,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         assert ssf == int(ssf), "sample period not integer multiple of b2 dt"
         return int(ssf)
 
-    def measure_latency(self) -> tuple[b2.Quantity, b2.Quantity]:
-        """returns mean, std of control computation (with Brian unit)"""
+    def measure_latency(self) -> tuple[b2.Quantity, b2.Quantity, b2.Quantity]:
+        """returns mean, std, non-solve mean of control computation (with Brian unit)"""
         self._measuring_latency = True
         durations = []
         solve_times = []
@@ -215,7 +217,9 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         # estimate mean and std using median and MAD
         median = np.median(durations)
         mad = np.median(np.abs(durations - median))
-        return median * b2.second, mad / 0.6745 * b2.second
+        # would include QP setup and Kalman filtering
+        non_solve_time = np.median(np.subtract(durations, solve_times))
+        return median * b2.second, mad / 0.6745 * b2.second, non_solve_time * b2.second
 
     def zscore(self, var: np.ndarray, varname: str):
         mean = getattr(self.lds, f"{varname}_mean")
