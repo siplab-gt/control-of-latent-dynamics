@@ -19,6 +19,7 @@ configfile: "config/config.yaml"
 wildcard_constraints:
     task="|".join(config["manual_sweep_params"]["task"]),
     setting="|".join(config["manual_sweep_params"]["setting"] + ["NA"]),
+    analysis="key|control",
 
 
 rule all:
@@ -409,6 +410,20 @@ rule key_metrics_table:
     localrule: True
     script:
         "../src/scripts/key_metrics_table.py"
+
+
+rule cmi_analysis:
+    input:
+        branch(
+            lambda wc: wc.analysis == "key",
+            then="<results>/{setting}_{task}_key_metrics.csv",
+            otherwise="<results>/{setting}_{task}.csv",
+        ),
+    output:
+        "<results>/{setting}_{task}_cmi_{analysis}.pkl.gz",
+    localrule: True
+    script:
+        "../src/scripts/cmi_analysis.py"
 
 
 rule analyze_ctrl_data:

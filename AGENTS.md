@@ -68,3 +68,16 @@ sbatch workflow/smk-submit-slurm.sbatch
 
 ## Testing
 There are no explicit `pytest` tests; the workflow itself acts as the integration test suite. Check `.github/workflows/main.yml` for CI details.
+Never trigger runs of the full sweep unless prompted
+For debugging the whole workflow, prefer the truncated sweep like so: `snakemake <file> --configfile config/testconfig.yaml`
+In fact, when running snakemake, always try `-n` first to verify it won't produce a huge number of jobs; if it does, ask for permission before running.
+
+## Data Preservation
+- **Do NOT delete results**: Never delete files in `results/`, including `results/test/` or temporary files, unless explicitly instructed. Re-generating these files can be computationally expensive or they might be needed for debugging.
+
+## Manual Script Usage
+Some scripts in `src/scripts/` include convenience wrappers for manual execution (outside Snakemake).
+- **cmi_analysis.py**:
+  - Run with a single positional argument (the input CSV).
+  - Infers `setting`, `task`, and `analysis` (key vs control) from the filename.
+  - Usage: `python src/scripts/cmi_analysis.py results/path/to/sufficient_stim_reaching.csv`
