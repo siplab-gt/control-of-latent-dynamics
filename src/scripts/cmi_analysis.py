@@ -138,7 +138,7 @@ def _prepare_arrays(df: pd.DataFrame, x_col, y_col, z_cols):
 
     inferred_type = pd.api.types.infer_dtype(x_vals, skipna=True)
     x_is_discrete = inferred_type in ("boolean", "string", "unicode")
-    
+
     if x_is_discrete:
         if inferred_type in ("string", "unicode"):
             x_vals, _ = pd.factorize(x_vals)
@@ -253,6 +253,7 @@ def main(cfg, results_csv, outfile, setting, task, analysis):
         ci_low, ci_high, boot_dist = _compute_bootstrap_ci(
             x, y, z, is_discrete, n_bootstraps, rng
         )
+        assert ci_low <= cmi_val <= ci_high, f"{ep=}, {cmi_val=}, {ci_low=}, {ci_high=}"
 
         print(f"{ep=}, {cmi_val=}, {p_value=}, {ci_low=}, {ci_high=}")
         result.ep_results.append(

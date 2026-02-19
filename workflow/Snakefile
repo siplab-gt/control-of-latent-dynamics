@@ -273,6 +273,8 @@ rule main_figs:
         "<results>/{setting}_{task}.csv",
         "<results>/{setting}_{task}_key_metrics.csv",
         "src/plot_style.py",
+        cmi_key="<results>/{setting}_{task}_cmi_key.pkl.gz",
+        cmi_control="<results>/{setting}_{task}_cmi_control.pkl.gz",
     output:
         main=multiext("<results>/figs/{setting}_{task}", *fig_exts),
         lineplots=multiext("<results>/figs/{setting}_{task}_lineplots", *fig_exts),

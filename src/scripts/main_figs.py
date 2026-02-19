@@ -1,10 +1,12 @@
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from scipy.interpolate import CubicSpline
 
 import src.plot_style as psty
+from src.scripts.cmi_analysis import CMIResult
 from src.helpers import setup_debugger
 
 
@@ -28,6 +30,8 @@ def main(
     cfg,
     results_csv,
     key_metrics_csv,
+    cmi_key_file,
+    cmi_control_file,
     outfiles,
     setting,
 ):
@@ -75,14 +79,15 @@ def main(
         return fig, axs
 
     def grid_subplots_main():
-        n_rows = 1 + 2 * rows
+        n_rows = 1 + 3 * rows
         height_ratios = [2.0] + [1.3] * (n_rows - 1)
+        # Using sharex=False to avoid squishing top plots with CMI plots
         fig, axs = plt.subplots(
             n_rows,
             plots_per_row,
             figsize=(psty.double_col_width, sum(height_ratios)),
             layout="compressed",
-            sharex="col",
+            sharex=False,
             sharey="row",
             gridspec_kw={"height_ratios": height_ratios},
         )
@@ -93,14 +98,22 @@ def main(
 
         axs_key = axs[1 : 1 + rows, :]
         axs_ctrl = axs[1 + rows : 1 + 2 * rows, :]
+        axs_cmi = axs[1 + 2 * rows : 1 + 3 * rows, :]
 
-        for axs in [axs_key, axs_ctrl]:
+        # Manually share x-axis between Key and Control rows only
+        for ax_k, ax_c in zip(axs_key.flat, axs_ctrl.flat):
+            ax_k.sharex(ax_c)
+            ax_k.label_outer()
+            ax_k.spines["bottom"].set_visible(False)
+            ax_k.tick_params(axis="x", which="both", length=0)
+
+        for axs in [axs_key, axs_ctrl, axs_cmi]:
             for i in range(len(expl_params), len(axs.flatten())):
                 axs.flatten()[i].axis("off")
 
-        return fig, ax_top, axs_key, axs_ctrl
+        return fig, ax_top, axs_key, axs_ctrl, axs_cmi
 
-    main_fig, ax_top, axs_key, axs_ctrl = grid_subplots_main()
+    main_fig, ax_top, axs_key, axs_ctrl, axs_cmi = grid_subplots_main()
 
     ref_condition = cfg["reference_params"]
 
@@ -307,6 +320,228 @@ def main(
             label=mean_or_std + " " + colorbar_label,
         )
 
+    def plot_cmi(cmi_axs):
+        cmi_key_res = CMIResult.load(cmi_key_file)
+        cmi_ctrl_res = CMIResult.load(cmi_control_file)
+
+        # Maps
+        key_map = {res.ep: res for res in cmi_key_res.ep_results}
+        ctrl_map = {res.ep: res for res in cmi_ctrl_res.ep_results}
+
+        # Helper to get significance threshold (FDR corrected)
+        def get_fdr_threshold(results_list, alpha=0.05):
+            pvals = np.array([res.p_value for res in results_list])
+            n = len(pvals)
+            if n == 0:
+                print("No results for FDR calculation")
+                return 0.05  # Fallback
+
+            # Sort p-values
+            sorted_pvals = np.sort(pvals)
+            # Find largest k such that P(k) <= (k/n)*alpha
+            k_indices = np.arange(1, n + 1)
+            fdr_thresholds = (k_indices / n) * alpha
+
+            # Find indices where condition holds
+            valid_k = np.where(sorted_pvals <= fdr_thresholds)[0]
+
+            if len(valid_k) > 0:
+                # Largest k is the last valid index
+                max_k_idx = valid_k[-1]
+                # The critical P-value is the P-value at that rank
+                p_crit = sorted_pvals[max_k_idx]
+                return p_crit
+            else:
+                # No significant results found at this alpha
+                # Return strict 0 to indicate no line or just alpha/n (Bonferroni) as a conservative bound?
+                # User asked for "q-value significance threshold".
+                # If nothing is significant, drawing the line at the theoretical threshold
+                # for the *first* rejection (alpha/n) might be appropriate to show *why* nothing is significant.
+                return alpha / n
+
+        # We compute distinct thresholds for Key and Control analyses
+        p_crit_key = get_fdr_threshold(cmi_key_res.ep_results)
+        p_crit_ctrl = get_fdr_threshold(cmi_ctrl_res.ep_results)
+
+        print(f"FDR Critical P: Key={p_crit_key:.5f}, Ctrl={p_crit_ctrl:.5f}")
+
+        for ep, ax in zip(expl_params, cmi_axs.flat):
+            # If neither exist, hide
+            if ep not in key_map and ep not in ctrl_map:
+                ax.set_visible(False)
+                continue
+
+            # Prepare data for seaborn
+            # We want 2 split violins side-by-side
+            # X-axis: 0 -> Key, 1 -> Control
+            # Hue: Null vs Boot
+
+            plot_data = []
+
+            # Key Data
+            if ep in key_map:
+                res = key_map[ep]
+                # assert res.ci_low <= res.cmi <= res.ci_high, (
+                #     f"Key {ep}: {res.ci_low} <= {res.cmi} <= {res.ci_high}"
+                # )
+                # Null
+                n_null = len(res.null_dist)
+                plot_data.extend(
+                    [
+                        {"Type": "Key", "Condition": "Null", "CMI": val}
+                        for val in res.null_dist
+                    ]
+                )
+                # Boot
+                n_boot = len(res.boot_dist)
+                plot_data.extend(
+                    [
+                        {"Type": "Key", "Condition": "Boot", "CMI": val}
+                        for val in res.boot_dist
+                    ]
+                )
+
+                # Significance threshold line value (from Null distribution)
+                # If p_crit is X, we want the (1-X) percentile of Null
+                thresh_key = np.percentile(res.null_dist, 100 * (1 - p_crit_key))
+            else:
+                thresh_key = None
+
+            # Control Data (Note: naming "Control" to distinct from "Key")
+            # But we want specific colors.
+            # "Control" metric usually corresponds to `c["ctrl"]` (teal)
+            # "Key" metric usually corresponds to `c["key"]` (blue/purple a1)
+
+            if ep in ctrl_map:
+                res = ctrl_map[ep]
+                # assert res.ci_low <= res.cmi <= res.ci_high, (
+                #     f"Key {ep}: {res.ci_low} <= {res.cmi} <= {res.ci_high}"
+                # )
+                # Null
+                n_null = len(res.null_dist)
+                plot_data.extend(
+                    [
+                        {"Type": "Control", "Condition": "Null", "CMI": val}
+                        for val in res.null_dist
+                    ]
+                )
+                # Boot
+                n_boot = len(res.boot_dist)
+                plot_data.extend(
+                    [
+                        {"Type": "Control", "Condition": "Boot", "CMI": val}
+                        for val in res.boot_dist
+                    ]
+                )
+
+                thresh_ctrl = np.percentile(res.null_dist, 100 * (1 - p_crit_ctrl))
+            else:
+                thresh_ctrl = None
+
+            df_plot = pd.DataFrame(plot_data)
+
+            if df_plot.empty:
+                ax.set_visible(False)
+                continue
+
+            # Define palette matching hue
+            # We have hue="Condition" (Null, Boot)
+            # But we want different colors for Key-Boot vs Control-Boot.
+            # Seaborn split violin doesn't support varying hue colors by x-group easily.
+            # Workaround: Plot them separately.
+
+            # Plot Key
+            if ep in key_map:
+                sns.violinplot(
+                    data=df_plot[df_plot["Type"] == "Key"],
+                    x="Type",
+                    y="CMI",
+                    hue="Condition",
+                    split=True,
+                    inner=None,
+                    palette={"Null": "0.6", "Boot": psty.c["key"]},
+                    ax=ax,
+                    width=0.8,
+                    linewidth=0,
+                    order=["Key", "Control"],  # Force x-positions
+                    hue_order=["Null", "Boot"],
+                    legend=False,
+                )
+                # Add threshold line
+                # x=0. The violin is centered at 0.
+                # It spans [-0.4, 0.4] roughly with width=0.8
+                # Null is left side (-).
+                xmin, xmax = -0.4, 0.4
+                ax.hlines(
+                    thresh_key, xmin, xmax, colors="gray", linestyle="--", linewidth=1.0
+                )  # , linestyle="--")
+
+                # Add CMI estimate and CI markers on the right (Boot) side
+                # Key is at x=0. Boot is right side (0 to 0.4).
+                # Place marker exactly at 0 (flat edge)
+                x_marker = 0.0
+                ax.plot(
+                    [x_marker, x_marker],
+                    [res.ci_low, res.ci_high],
+                    color="k",
+                    linewidth=2,
+                )
+                ax.plot(x_marker, res.cmi, color="k", marker="o", markersize=3)
+
+            # Plot Control
+            if ep in ctrl_map:
+                sns.violinplot(
+                    data=df_plot[df_plot["Type"] == "Control"],
+                    x="Type",
+                    y="CMI",
+                    hue="Condition",
+                    split=True,
+                    inner=None,
+                    palette={"Null": "0.6", "Boot": psty.c["ctrl"]},
+                    ax=ax,
+                    width=0.8,
+                    linewidth=0,
+                    order=["Key", "Control"],
+                    hue_order=["Null", "Boot"],
+                    legend=False,
+                )
+                # x=1.
+                xmin, xmax = 0.6, 1.4  # Left side of the second violin
+                ax.hlines(
+                    thresh_ctrl,
+                    xmin,
+                    xmax,
+                    colors="gray",
+                    linestyle="--",
+                    linewidth=1.0,
+                )
+
+                # Add CMI estimate and CI markers on the right (Boot) side
+                # Control is at x=1. Boot is right side (1 to 1.4).
+                x_marker = 1.0
+                ax.plot(
+                    [x_marker, x_marker],
+                    [res.ci_low, res.ci_high],
+                    color="k",
+                    linewidth=2,
+                )
+                ax.plot(x_marker, res.cmi, color="k", marker="o", markersize=3)
+
+            # Clean up
+            ax.set_xlabel("")
+            if ax == cmi_axs.flat[0]:
+                ax.set_ylabel("CMI (bits)")
+            else:
+                ax.set_ylabel("")
+            # Or keep them? Space is tight.
+            # The colors distinguish them (Purple vs Teal).
+            # Maybe unnecessary text.
+
+            # Add a legend only on the first plot?
+            # Or no legend, rely on caption.
+
+    plot_cmi(axs_cmi)
+
     # main fig: top row (Q over k), key metric row, control performance row
     if main_fig_plot_type == "lineplots":
         plot_lineplots(axs_key, key_metric_name)
@@ -315,10 +550,7 @@ def main(
 
     plot_control_performance(axs_ctrl)
 
-    for ax in axs_key.flat:
-        ax.spines["bottom"].set_visible(False)
-        ax.tick_params(axis="x", which="both", length=0)
-    for axs in [axs_key, axs_ctrl]:
+    for axs in [axs_key, axs_ctrl, axs_cmi]:
         for ax in axs.flat:
             ax.grid(True, color="0.9", linewidth=0.6)
         for ax in axs[:, 1:].flat:
@@ -354,6 +586,8 @@ if __name__ == "__main__" and "snakemake" in locals():
         snakemake.config,
         snakemake.input[0],
         snakemake.input[1],
+        snakemake.input.cmi_key,
+        snakemake.input.cmi_control,
         snakemake.output,
         setting=snakemake.wildcards.setting,
     )
@@ -376,6 +610,16 @@ if __name__ == "__main__" and "snakemake" not in locals():
         required=True,
         help="CSV file with precomputed key metrics",
     )
+    parser.add_argument(
+        "--cmi-key",
+        required=True,
+        help="Pickle file with CMI analysis results for key metric",
+    )
+    parser.add_argument(
+        "--cmi-control",
+        required=True,
+        help="Pickle file with CMI analysis results for control metric",
+    )
     args = parser.parse_args()
 
     setting_task = pathlib.Path(args.results_csv).stem
@@ -396,4 +640,12 @@ if __name__ == "__main__" and "snakemake" not in locals():
 
     cfg = snakemake.common.configfile._load_configfile("./config/config.yaml")
 
-    main(cfg, args.results_csv, args.key_metrics_csv, outfiles, setting=setting)
+    main(
+        cfg,
+        args.results_csv,
+        args.key_metrics_csv,
+        args.cmi_key,
+        args.cmi_control,
+        outfiles,
+        setting=setting,
+    )
