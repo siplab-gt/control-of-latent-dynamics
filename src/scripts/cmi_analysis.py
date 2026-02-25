@@ -2,13 +2,13 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+from jaxtyping import Float
 from npeet_plus import mi, micd
 from scipy.stats import bootstrap
-from jaxtyping import Float
 
 import src.plot_style as psty
-from src.helpers import setup_debugger
 from src.data_classes import BaseDataClass
+from src.helpers import preprocess_params, setup_debugger
 
 
 @dataclass
@@ -20,8 +20,27 @@ class CMIEstimate(BaseDataClass):
     q_value: float
     ci_low: float
     ci_high: float
-    null_dist: Float[np.ndarray, "*"]
-    boot_dist: Float[np.ndarray, "*"]
+    null_dist: Float[np.ndarray, "n_shuffles"] = field(repr=False)
+    boot_dist: Float[np.ndarray, "n_bootstraps"] = field(repr=False)
+
+    @property
+    def summary_dict(self):
+        return {
+            "ep": self.ep,
+            "n_samples": self.n_samples,
+            "null_min": np.min(self.null_dist),
+            "null_mean": np.mean(self.null_dist),
+            "null_max": np.max(self.null_dist),
+            "ci_low": self.ci_low,
+            "cmi": self.cmi,
+            "ci_high": self.ci_high,
+            "p_value": self.p_value,
+            "q_value": self.q_value,
+        }
+
+    def print_summary(self):
+        with np.printoptions(precision=3, suppress=True):
+            print(pd.DataFrame([self.summary_dict]))
 
 
 @dataclass
@@ -92,7 +111,6 @@ def _compute_bootstrap_ci(x, y, z, discrete, n_boot, rng):
         n_resamples=n_boot,
         method="BCa",
         random_state=rng,
-        paired=True,
     )
 
     # Use atleast_1d to handle both scalar and array returns from bootstrap
@@ -110,22 +128,17 @@ def _compute_bootstrap_ci(x, y, z, discrete, n_boot, rng):
             n_resamples=n_boot,
             method="percentile",
             random_state=rng,
-            paired=True,
         )
         ci_low = np.atleast_1d(res.confidence_interval.low)[0]
         ci_high = np.atleast_1d(res.confidence_interval.high)[0]
 
-    try:
-        boot_dist = np.asarray(res.bootstrap_distribution)
-    except AttributeError:
-        boot_dist = np.array([])
+    boot_dist = np.asarray(res.bootstrap_distribution)
     return ci_low, ci_high, boot_dist
 
 
 def _prepare_arrays(df: pd.DataFrame, x_col, y_col, z_cols):
-    data = df[[x_col, y_col] + z_cols].dropna()
-    if data.empty:
-        return None, None
+    data = df[[x_col, y_col] + z_cols]
+    assert not data.empty
 
     x_vals = data[x_col]
 
@@ -145,13 +158,9 @@ def _prepare_arrays(df: pd.DataFrame, x_col, y_col, z_cols):
         else:
             x_vals = x_vals.astype(int)
 
-    y = data[y_col]
-    z_df = data[z_cols].copy()
-
-    # Convert to numpy
     x = np.asarray(x_vals)
-    y = y.to_numpy()
-    z = z_df.to_numpy()
+    y = data[y_col].to_numpy()
+    z = data[z_cols].to_numpy()
 
     if x.ndim == 1:
         x = x.reshape(-1, 1)
@@ -163,9 +172,9 @@ def _prepare_arrays(df: pd.DataFrame, x_col, y_col, z_cols):
     return x, y, z, data, x_is_discrete
 
 
-def main(cfg, results_csv, outfile, setting, task, analysis):
+def main(cfg, base_params, results_csv, outfile, setting, task, analysis):
     psty.style_plots()
-    df = pd.read_csv(results_csv) if results_csv else None
+    df = pd.read_csv(results_csv)
 
     expl_params = cfg["star_sweep_params"].copy()
     if setting == "optimal_stim_rec":
@@ -183,8 +192,6 @@ def main(cfg, results_csv, outfile, setting, task, analysis):
     if analysis not in {"key", "control"}:
         raise ValueError(f"Unknown analysis: {analysis}")
 
-    n_shuffles = 1000
-    n_bootstraps = 1000
     rng = np.random.default_rng(SEED)
 
     if analysis == "key":
@@ -194,14 +201,16 @@ def main(cfg, results_csv, outfile, setting, task, analysis):
         metric_name = metric
         conditioning_vars = ["seed", "k"]
 
+    n_shuffle_boot = base_params["n_shuffle_boot"]
+
     result = CMIResult(
         setting=setting,
         task=task,
         analysis=analysis,
         metric_name=metric_name,
         conditioning_vars=conditioning_vars,
-        n_shuffles=n_shuffles,
-        n_bootstraps=n_bootstraps,
+        n_shuffles=base_params["n_shuffle_boot"],
+        n_bootstraps=base_params["n_shuffle_boot"],
         random_seed=SEED,
     )
 
@@ -223,39 +232,41 @@ def main(cfg, results_csv, outfile, setting, task, analysis):
             y_col = metric
             z_cols = ["seed", "k"]
 
-        if subset.empty:
-            continue
+        assert not subset.empty, f"No data for {ep}"
+        assert len(subset[y_col].unique()) > 1, (
+            f"y should vary for {ep}. {subset[y_col].unique()=}"
+        )
 
-        prep_res = _prepare_arrays(subset, x_col, y_col, z_cols)
-        if prep_res[0] is None:
-            continue
-
-        # Explicit unpacking for linter clarity
-        x, y, z, data, is_discrete = prep_res
-        # Type hints / checks effectively
-        if x is None or y is None or z is None:
-            continue
+        x, y, z, data, x_is_discrete = _prepare_arrays(subset, x_col, y_col, z_cols)
 
         if len(x) <= 3:
             print(f"Skipping {ep}: too few samples ({len(x)})")
             continue
 
-        cmi_val = _estimate_cmi(x, y, z, is_discrete)
+        cmi_val = _estimate_cmi(x, y, z, x_is_discrete)
 
         group_ids = _group_ids_from_z(data[z_cols])
-        null_dist = np.zeros(n_shuffles)
-        for i in range(n_shuffles):
-            y_shuffled = _shuffle_within_groups(y, group_ids, rng)
-            null_dist[i] = _estimate_cmi(x, y_shuffled, z, is_discrete)
+        for gid in np.unique(group_ids):
+            x_gid = x[group_ids == gid]
+            assert np.var(x_gid) > 0, f"x should vary within groups for {ep}. {x_gid=}"
+            y_gid = y[group_ids == gid]
+            assert np.var(y_gid) > 0, f"y should vary within groups for {ep}. {y_gid=}"
 
-        p_value = (np.sum(null_dist >= cmi_val) + 1) / (n_shuffles + 1)
+        null_dist = np.zeros(n_shuffle_boot)
+        for i in range(n_shuffle_boot):
+            y_shuffled = _shuffle_within_groups(y, group_ids, rng)
+            null_dist[i] = _estimate_cmi(x, y_shuffled, z, x_is_discrete)
+        assert np.min(null_dist) != np.max(null_dist), (
+            f"Null distribution shouldn't be constant. {ep=}. {null_dist[0]=}"
+        )
+
+        p_value = (np.sum(null_dist >= cmi_val) + 1) / (n_shuffle_boot + 1)
 
         ci_low, ci_high, boot_dist = _compute_bootstrap_ci(
-            x, y, z, is_discrete, n_bootstraps, rng
+            x, y, z, x_is_discrete, n_shuffle_boot, rng
         )
         assert ci_low <= cmi_val <= ci_high, f"{ep=}, {cmi_val=}, {ci_low=}, {ci_high=}"
 
-        print(f"{ep=}, {cmi_val=}, {p_value=}, {ci_low=}, {ci_high=}")
         result.ep_results.append(
             CMIEstimate(
                 ep=str(ep),
@@ -269,6 +280,7 @@ def main(cfg, results_csv, outfile, setting, task, analysis):
                 boot_dist=boot_dist,
             )
         )
+        result.ep_results[-1].print_summary()
 
     pvals = [entry.p_value for entry in result.ep_results]
     if pvals:
@@ -276,6 +288,7 @@ def main(cfg, results_csv, outfile, setting, task, analysis):
         for entry, qval in zip(result.ep_results, qvals, strict=True):
             entry.q_value = float(qval)
             print(f"{entry.ep}: q = {entry.q_value}")
+    print(pd.DataFrame([entry.summary_dict for entry in result.ep_results]))
 
     result.save(outfile)
     print(f"Saved CMI results to {outfile}")
@@ -287,7 +300,8 @@ if __name__ == "__main__" and "snakemake" in locals():
     setup_debugger(snakemake.config.get("debug", False))
 
     main(
-        snakemake.config,
+        preprocess_params(snakemake.config),
+        preprocess_params(snakemake.params),
         snakemake.input[0],
         snakemake.output[0],
         setting=snakemake.wildcards.setting,
@@ -299,11 +313,15 @@ if __name__ == "__main__" and "snakemake" in locals():
 if __name__ == "__main__" and "snakemake" not in locals():
     import argparse
     from pathlib import Path
+
     import snakemake
 
     parser = argparse.ArgumentParser()
     parser.add_argument("results", type=Path, help="Path to results CSV file")
+    parser.add_argument("--debug", action="store_true", help="Enable debugging")
     args = parser.parse_args()
+
+    setup_debugger(args.debug)
 
     results_file = args.results.resolve()
     filename = results_file.name
@@ -348,6 +366,7 @@ if __name__ == "__main__" and "snakemake" not in locals():
 
     main(
         cfg,
+        preprocess_params(cfg).cmi_analysis,
         str(results_file),
         str(outfile),
         setting=setting,

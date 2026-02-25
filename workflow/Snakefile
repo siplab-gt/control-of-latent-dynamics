@@ -423,6 +423,8 @@ rule cmi_analysis:
         ),
     output:
         "<results>/{setting}_{task}_cmi_{analysis}.pkl.gz",
+    params:
+        step_cfg("cmi_analysis"),
     localrule: True
     script:
         "../src/scripts/cmi_analysis.py"
