@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
 
+import infomeasure as im
 import numpy as np
 import pandas as pd
 from jaxtyping import Float
-from npeet_plus import mi, micd
 from scipy.stats import bootstrap
 
 import src.plot_style as psty
@@ -82,7 +82,14 @@ def _estimate_cmi(x, y, z, discrete):
         # flip since midc is broken
         res = micd(y, x, z, k=k)
     else:
-        res = mi(x, y, z, k=k)
+        res = im.cmi(
+            x,
+            y,
+            cond=z,
+            approach="kernel",
+            kernel="mixed_gaussian_aa:2:0.1",
+            bandwidth=-999,  # should be estimated automatically via Scott's rule
+        )
     assert np.isfinite(res), f"CMI must be finite; got {res}"
     return res
 

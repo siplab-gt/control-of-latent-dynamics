@@ -22,7 +22,7 @@ dependencies = [
     'tqdm',
     'tensorflow[and-cuda]',
     'marimo',
-    'npeet_plus',
+    'infomeasure @ git+https://github.com/kjohnsen/infomeasure.git@........',
 ]
 
 [tool.setuptools]
