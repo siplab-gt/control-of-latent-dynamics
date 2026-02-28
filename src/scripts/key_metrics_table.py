@@ -1,32 +1,32 @@
 import pandas as pd
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import PchipInterpolator
 
 from src.helpers import setup_debugger
 
 
-def cubic_spline_interp(x, y):
+def interpolator(x, y):
     i_sort = x.argsort()
     assert (x[i_sort][1:] - x[i_sort][:-1] > 0).all(), (
         "x values must be unique for interpolation"
     )
-    return CubicSpline(x[i_sort], y[i_sort])
+    return PchipInterpolator(x[i_sort], y[i_sort])
 
 
 def interp_argmax(x, y):
-    cs = cubic_spline_interp(x, y)
-    deriv = cs.derivative()
+    interp = interpolator(x, y)
+    deriv = interp.derivative()
     extrema_candidates = deriv.roots()
     if len(extrema_candidates) == 0:
         return x[y.argmax()]  # No extrema found, return argmax of original data
-    y_values = cs(extrema_candidates)
+    y_values = interp(extrema_candidates)
     return extrema_candidates[y_values.argmax()]
 
 
 def interp_argwhere(x, y, target_y):
     """returns first x where interpolation equals target y within
     range of input x"""
-    shifted_cs = cubic_spline_interp(x, y - target_y)
-    roots = shifted_cs.roots()
+    shifted_interp = interpolator(x, y - target_y)
+    roots = shifted_interp.roots()
     roots = roots[(roots >= x.min()) & (roots <= x.max())]  # Filter roots within bounds
     if len(roots) == 0:
         return float("nan")  # No solution found

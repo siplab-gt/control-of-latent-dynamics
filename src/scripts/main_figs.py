@@ -3,35 +3,30 @@ import matplotlib.ticker as ticker
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from scipy.interpolate import CubicSpline
 
 import src.plot_style as psty
-from src.scripts.cmi_analysis import CMIResult
+from src.scripts.key_metrics_table import interpolator
+
+# from src.scripts.dependence_analysis import dependenceResult
 from src.helpers import setup_debugger
-
-
-def cubic_spline_interp(x, y):
-    i_sort = np.argsort(x)
-    assert np.all(np.diff(x[i_sort]) > 0), "x values must be unique for interpolation"
-    cs = CubicSpline(x[i_sort], y[i_sort])
-    return cs
 
 
 seed_line_kwargs = dict(
     lw=0.4,
+    alpha=0.3,
     estimator=None,
     units="seed",
 )
 
-mean_line_lw = 2
+mean_line_lw = 1.5
 
 
 def main(
     cfg,
     results_csv,
     key_metrics_csv,
-    cmi_key_file,
-    cmi_control_file,
+    dependence_key_file,
+    dependence_control_file,
     outfiles,
     setting,
 ):
@@ -81,7 +76,7 @@ def main(
     def grid_subplots_main():
         n_rows = 1 + 3 * rows
         height_ratios = [2.0] + [1.3] * (n_rows - 1)
-        # Using sharex=False to avoid squishing top plots with CMI plots
+        # Using sharex=False to avoid squishing top plots with dependence plots
         fig, axs = plt.subplots(
             n_rows,
             plots_per_row,
@@ -98,7 +93,7 @@ def main(
 
         axs_key = axs[1 : 1 + rows, :]
         axs_ctrl = axs[1 + rows : 1 + 2 * rows, :]
-        axs_cmi = axs[1 + 2 * rows : 1 + 3 * rows, :]
+        axs_dependence = axs[1 + 2 * rows : 1 + 3 * rows, :]
 
         # Manually share x-axis between Key and Control rows only
         for ax_k, ax_c in zip(axs_key.flat, axs_ctrl.flat):
@@ -107,13 +102,13 @@ def main(
             ax_k.spines["bottom"].set_visible(False)
             ax_k.tick_params(axis="x", which="both", length=0)
 
-        for axs in [axs_key, axs_ctrl, axs_cmi]:
+        for axs in [axs_key, axs_ctrl, axs_dependence]:
             for i in range(len(expl_params), len(axs.flatten())):
                 axs.flatten()[i].axis("off")
 
-        return fig, ax_top, axs_key, axs_ctrl, axs_cmi
+        return fig, ax_top, axs_key, axs_ctrl, axs_dependence
 
-    main_fig, ax_top, axs_key, axs_ctrl, axs_cmi = grid_subplots_main()
+    main_fig, ax_top, axs_key, axs_ctrl, axs_dependence = grid_subplots_main()
 
     ref_condition = cfg["reference_params"]
 
@@ -133,8 +128,8 @@ def main(
         x = group["k"].values
         y = group[metric].values
         k_interp = np.arange(x.min(), x.max() + 1)
-        cs = cubic_spline_interp(x, y)
-        y_interp = cs(k_interp)
+        interp = interpolator(x, y)
+        y_interp = interp(k_interp)
         return pd.DataFrame({"k": k_interp, metric: y_interp})
 
     interp_ref_data = ref_data.groupby(["ctrl_latency", "seed"]).apply(
@@ -182,6 +177,7 @@ def main(
         style="ctrl_latency",
         dashes=psty.ctrl_styles,
     )
+    ax_top.set(ylim=(-1, 1))
 
     def plot_lineplots(lp_axs, key_metric_name):
         """Plot lineplots showing key metric vs exploration parameter."""
@@ -189,6 +185,10 @@ def main(
             subset = key_metrics_df.query(
                 "ep == @ep and key_metric_name == @key_metric_name"
             )
+
+            if ep not in ["signals", "model_task_inputs"]:
+                subset.loc[:, "ep_value"] = pd.to_numeric(subset["ep_value"])
+
             if subset.empty:
                 ax.set_visible(False)
                 continue
@@ -262,6 +262,7 @@ def main(
         sns.move_legend(ax, "upper left", bbox_to_anchor=(1, 1))
         for ax in cp_axs[..., 1:].flat:
             ax.set(ylabel="")
+        cp_axs.flat[0].set(ylim=(-1, 1))
 
     def plot_heatmaps(hm_fig, hm_axs, mean_or_std):
         vmin, vmax = df[metric].min(), df[metric].max()
@@ -320,13 +321,13 @@ def main(
             label=mean_or_std + " " + colorbar_label,
         )
 
-    def plot_cmi(cmi_axs):
-        cmi_key_res = CMIResult.load(cmi_key_file)
-        cmi_ctrl_res = CMIResult.load(cmi_control_file)
+    def plot_dependence(dependence_axs):
+        dependence_key_res = dependenceResult.load(dependence_key_file)
+        dependence_ctrl_res = dependenceResult.load(dependence_control_file)
 
         # Maps
-        key_map = {res.ep: res for res in cmi_key_res.ep_results}
-        ctrl_map = {res.ep: res for res in cmi_ctrl_res.ep_results}
+        key_map = {res.ep: res for res in dependence_key_res.ep_results}
+        ctrl_map = {res.ep: res for res in dependence_ctrl_res.ep_results}
 
         # Helper to get significance threshold (FDR corrected)
         def get_fdr_threshold(results_list, alpha=0.05):
@@ -360,12 +361,12 @@ def main(
                 return alpha / n
 
         # We compute distinct thresholds for Key and Control analyses
-        p_crit_key = get_fdr_threshold(cmi_key_res.ep_results)
-        p_crit_ctrl = get_fdr_threshold(cmi_ctrl_res.ep_results)
+        p_crit_key = get_fdr_threshold(dependence_key_res.ep_results)
+        p_crit_ctrl = get_fdr_threshold(dependence_ctrl_res.ep_results)
 
         print(f"FDR Critical P: Key={p_crit_key:.5f}, Ctrl={p_crit_ctrl:.5f}")
 
-        for ep, ax in zip(expl_params, cmi_axs.flat):
+        for ep, ax in zip(expl_params, dependence_axs.flat):
             # If neither exist, hide
             if ep not in key_map and ep not in ctrl_map:
                 ax.set_visible(False)
@@ -381,14 +382,14 @@ def main(
             # Key Data
             if ep in key_map:
                 res = key_map[ep]
-                # assert res.ci_low <= res.cmi <= res.ci_high, (
-                #     f"Key {ep}: {res.ci_low} <= {res.cmi} <= {res.ci_high}"
+                # assert res.ci_low <= res.dependence <= res.ci_high, (
+                #     f"Key {ep}: {res.ci_low} <= {res.dependence} <= {res.ci_high}"
                 # )
                 # Null
                 n_null = len(res.null_dist)
                 plot_data.extend(
                     [
-                        {"Type": "Key", "Condition": "Null", "CMI": val}
+                        {"Type": "Key", "Condition": "Null", "dependence": val}
                         for val in res.null_dist
                     ]
                 )
@@ -396,7 +397,7 @@ def main(
                 n_boot = len(res.boot_dist)
                 plot_data.extend(
                     [
-                        {"Type": "Key", "Condition": "Boot", "CMI": val}
+                        {"Type": "Key", "Condition": "Boot", "dependence": val}
                         for val in res.boot_dist
                     ]
                 )
@@ -414,14 +415,14 @@ def main(
 
             if ep in ctrl_map:
                 res = ctrl_map[ep]
-                # assert res.ci_low <= res.cmi <= res.ci_high, (
-                #     f"Key {ep}: {res.ci_low} <= {res.cmi} <= {res.ci_high}"
+                # assert res.ci_low <= res.dependence <= res.ci_high, (
+                #     f"Key {ep}: {res.ci_low} <= {res.dependence} <= {res.ci_high}"
                 # )
                 # Null
                 n_null = len(res.null_dist)
                 plot_data.extend(
                     [
-                        {"Type": "Control", "Condition": "Null", "CMI": val}
+                        {"Type": "Control", "Condition": "Null", "dependence": val}
                         for val in res.null_dist
                     ]
                 )
@@ -429,7 +430,7 @@ def main(
                 n_boot = len(res.boot_dist)
                 plot_data.extend(
                     [
-                        {"Type": "Control", "Condition": "Boot", "CMI": val}
+                        {"Type": "Control", "Condition": "Boot", "dependence": val}
                         for val in res.boot_dist
                     ]
                 )
@@ -455,7 +456,7 @@ def main(
                 sns.violinplot(
                     data=df_plot[df_plot["Type"] == "Key"],
                     x="Type",
-                    y="CMI",
+                    y="dependence",
                     hue="Condition",
                     split=True,
                     inner=None,
@@ -476,7 +477,7 @@ def main(
                     thresh_key, xmin, xmax, colors="gray", linestyle="--", linewidth=1.0
                 )  # , linestyle="--")
 
-                # Add CMI estimate and CI markers on the right (Boot) side
+                # Add dependence estimate and CI markers on the right (Boot) side
                 # Key is at x=0. Boot is right side (0 to 0.4).
                 # Place marker exactly at 0 (flat edge)
                 x_marker = 0.0
@@ -486,14 +487,14 @@ def main(
                     color="k",
                     linewidth=2,
                 )
-                ax.plot(x_marker, res.cmi, color="k", marker="o", markersize=3)
+                ax.plot(x_marker, res.dependence, color="k", marker="o", markersize=3)
 
             # Plot Control
             if ep in ctrl_map:
                 sns.violinplot(
                     data=df_plot[df_plot["Type"] == "Control"],
                     x="Type",
-                    y="CMI",
+                    y="dependence",
                     hue="Condition",
                     split=True,
                     inner=None,
@@ -516,7 +517,7 @@ def main(
                     linewidth=1.0,
                 )
 
-                # Add CMI estimate and CI markers on the right (Boot) side
+                # Add dependence estimate and CI markers on the right (Boot) side
                 # Control is at x=1. Boot is right side (1 to 1.4).
                 x_marker = 1.0
                 ax.plot(
@@ -525,12 +526,12 @@ def main(
                     color="k",
                     linewidth=2,
                 )
-                ax.plot(x_marker, res.cmi, color="k", marker="o", markersize=3)
+                ax.plot(x_marker, res.dependence, color="k", marker="o", markersize=3)
 
             # Clean up
             ax.set_xlabel("")
-            if ax == cmi_axs.flat[0]:
-                ax.set_ylabel("CMI (bits)")
+            if ax == dependence_axs.flat[0]:
+                ax.set_ylabel("dependence (bits)")
             else:
                 ax.set_ylabel("")
             # Or keep them? Space is tight.
@@ -540,7 +541,9 @@ def main(
             # Add a legend only on the first plot?
             # Or no legend, rely on caption.
 
-    plot_cmi(axs_cmi)
+    if dependence_key_file is not None:
+        assert dependence_control_file is not None
+        plot_dependence(axs_dependence)
 
     # main fig: top row (Q over k), key metric row, control performance row
     if main_fig_plot_type == "lineplots":
@@ -550,7 +553,7 @@ def main(
 
     plot_control_performance(axs_ctrl)
 
-    for axs in [axs_key, axs_ctrl, axs_cmi]:
+    for axs in [axs_key, axs_ctrl, axs_dependence]:
         for ax in axs.flat:
             ax.grid(True, color="0.9", linewidth=0.6)
         for ax in axs[:, 1:].flat:
@@ -586,8 +589,8 @@ if __name__ == "__main__" and "snakemake" in locals():
         snakemake.config,
         snakemake.input[0],
         snakemake.input[1],
-        snakemake.input.cmi_key,
-        snakemake.input.cmi_control,
+        snakemake.input.dependence_key,
+        snakemake.input.dependence_control,
         snakemake.output,
         setting=snakemake.wildcards.setting,
     )
@@ -611,14 +614,14 @@ if __name__ == "__main__" and "snakemake" not in locals():
         help="CSV file with precomputed key metrics",
     )
     parser.add_argument(
-        "--cmi-key",
-        required=True,
-        help="Pickle file with CMI analysis results for key metric",
+        "--dependence-key",
+        default=None,
+        help="Pickle file with dependence analysis results for key metric",
     )
     parser.add_argument(
-        "--cmi-control",
-        required=True,
-        help="Pickle file with CMI analysis results for control metric",
+        "--dependence-control",
+        default=None,
+        help="Pickle file with dependence analysis results for control metric",
     )
     args = parser.parse_args()
 
@@ -644,8 +647,8 @@ if __name__ == "__main__" and "snakemake" not in locals():
         cfg,
         args.results_csv,
         args.key_metrics_csv,
-        args.cmi_key,
-        args.cmi_control,
+        args.dependence_key,
+        args.dependence_control,
         outfiles,
         setting=setting,
     )
