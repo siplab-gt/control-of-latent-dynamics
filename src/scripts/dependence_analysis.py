@@ -59,17 +59,6 @@ def _group_ids_from_z(z_df):
     return pd.factorize(idx, sort=True)[0]
 
 
-def _bh_fdr(pvals):
-    pvals = np.asarray(pvals)
-    n = len(pvals)
-    order = np.argsort(pvals)
-    ranked = np.empty_like(order)
-    ranked[order] = np.arange(1, n + 1)
-    qvals = pvals * n / ranked
-    qvals[order] = np.minimum.accumulate(qvals[order][::-1])[::-1]
-    return np.clip(qvals, 0, 1)
-
-
 def _prepare_arrays(df: pd.DataFrame, x_col, y_col, z_cols):
     data = df[[x_col, y_col] + z_cols]
     assert not data.empty
@@ -142,117 +131,91 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
 
     n_shuffle_boot = base_params["n_shuffle_boot"]
 
-    result = CMIResult(
-        setting=setting,
-        task=task,
-        analysis=analysis,
-        metric_name=metric_name,
-        conditioning_vars=conditioning_vars,
-        n_shuffles=base_params["n_shuffle_boot"],
-        n_bootstraps=base_params["n_shuffle_boot"],
-        random_seed=SEED,
+    if analysis == "key":
+        subset = df.query("ep == @ep and key_metric_name == @key_metric_name")
+        x_col = "ep_value"
+        y_col = "key_metric_value"
+        z_cols = ["seed"]
+    else:
+        conds2keep = ref_condition.copy()
+        del conds2keep[ep], conds2keep["latency"]
+        query_str = " and ".join(
+            [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
+        )
+        query_str += ' and (ctrl_type == "LQMPC")'
+        subset = df.query(query_str)
+        x_col = ep
+        y_col = metric
+        z_cols = ["seed", "k"]
+
+    assert not subset.empty, f"No data for {ep}"
+    assert len(subset[y_col].unique()) > 1, (
+        f"y should vary for {ep}. {subset[y_col].unique()=}"
     )
 
-    expl_params = [ep]
+    x, y, z, data, x_is_discrete = _prepare_arrays(subset, x_col, y_col, z_cols)
 
-    for ep in expl_params:
-        if analysis == "key":
-            subset = df.query("ep == @ep and key_metric_name == @key_metric_name")
-            x_col = "ep_value"
-            y_col = "key_metric_value"
-            z_cols = ["seed"]
-        else:
-            conds2keep = ref_condition.copy()
-            del conds2keep[ep], conds2keep["latency"]
-            query_str = " and ".join(
-                [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
-            )
-            query_str += ' and (ctrl_type == "LQMPC")'
-            subset = df.query(query_str)
-            x_col = ep
-            y_col = metric
-            z_cols = ["seed", "k"]
+    assert len(x) > 3, f"Too few samples for {ep}. {len(x)=}"
 
-        assert not subset.empty, f"No data for {ep}"
-        assert len(subset[y_col].unique()) > 1, (
-            f"y should vary for {ep}. {subset[y_col].unique()=}"
-        )
+    group_ids = _group_ids_from_z(data[z_cols])
+    for gid in np.unique(group_ids):
+        x_gid = x[group_ids == gid]
+        assert np.var(x_gid) > 0, f"x should vary within groups for {ep}. {x_gid=}"
+        y_gid = y[group_ids == gid]
+        assert np.var(y_gid) > 0, f"y should vary within groups for {ep}. {y_gid=}"
 
-        x, y, z, data, x_is_discrete = _prepare_arrays(subset, x_col, y_col, z_cols)
+    cat_XZ = []
+    cat_Z = []
+    if x_is_discrete:
+        cat_XZ.append(0)
 
-        if len(x) <= 3:
-            print(f"Skipping {ep}: too few samples ({len(x)})")
-            continue
+    for i in range(z.shape[1]):
+        cat_Z.append(i)
+        cat_XZ.append(1 + i)
 
-        group_ids = _group_ids_from_z(data[z_cols])
-        for gid in np.unique(group_ids):
-            x_gid = x[group_ids == gid]
-            assert np.var(x_gid) > 0, f"x should vary within groups for {ep}. {x_gid=}"
-            y_gid = y[group_ids == gid]
-            assert np.var(y_gid) > 0, f"y should vary within groups for {ep}. {y_gid=}"
+    regressor_type = base_params.get("cmi_estimator_type", "splines")
+    logger.info(f"Using {regressor_type} for CMI estimation for EP {ep}")
 
-        cat_XZ = []
-        cat_Z = []
-        if x_is_discrete:
-            cat_XZ.append(0)
+    p_value, cmi_val, null_dist = statistical_validation_permutation(
+        x,
+        y,
+        z,
+        group_ids=group_ids,
+        regressor_type=regressor_type,
+        cat_XZ=cat_XZ,
+        cat_Z=cat_Z,
+        n_permutations=n_shuffle_boot,
+        random_state=rng,
+    )
 
-        for i in range(z.shape[1]):
-            cat_Z.append(i)
-            cat_XZ.append(1 + i)
+    assert np.min(null_dist) != np.max(null_dist), (
+        f"Null distribution shouldn't be constant. {ep=}. {null_dist[0]=}"
+    )
 
-        regressor_type = base_params.get("cmi_estimator_type", "splines")
-        logger.info(f"Using {regressor_type} for CMI estimation for EP {ep}")
+    ci_low, ci_high, boot_dist = statistical_validation_bootstrap(
+        x,
+        y,
+        z,
+        regressor_type=regressor_type,
+        cat_XZ=cat_XZ,
+        cat_Z=cat_Z,
+        n_boot=n_shuffle_boot,
+        random_state=rng,
+    )
+    assert ci_low <= cmi_val <= ci_high, f"{ep=}, {cmi_val=}, {ci_low=}, {ci_high=}"
 
-        p_value, cmi_val, null_dist = statistical_validation_permutation(
-            x,
-            y,
-            z,
-            group_ids=group_ids,
-            regressor_type=regressor_type,
-            cat_XZ=cat_XZ,
-            cat_Z=cat_Z,
-            n_permutations=n_shuffle_boot,
-            random_state=rng,
-        )
-
-        assert np.min(null_dist) != np.max(null_dist), (
-            f"Null distribution shouldn't be constant. {ep=}. {null_dist[0]=}"
-        )
-
-        ci_low, ci_high, boot_dist = statistical_validation_bootstrap(
-            x,
-            y,
-            z,
-            regressor_type=regressor_type,
-            cat_XZ=cat_XZ,
-            cat_Z=cat_Z,
-            n_boot=n_shuffle_boot,
-            random_state=rng,
-        )
-        assert ci_low <= cmi_val <= ci_high, f"{ep=}, {cmi_val=}, {ci_low=}, {ci_high=}"
-
-        result.ep_results.append(
-            CMIEstimate(
-                ep=str(ep),
-                n_samples=len(x),
-                cmi=float(cmi_val),
-                p_value=float(p_value),
-                q_value=float("nan"),
-                ci_low=float(ci_low),
-                ci_high=float(ci_high),
-                null_dist=null_dist,
-                boot_dist=boot_dist,
-            )
-        )
-        result.ep_results[-1].print_summary()
-
-    pvals = [entry.p_value for entry in result.ep_results]
-    if pvals:
-        qvals = _bh_fdr(pvals)
-        for entry, qval in zip(result.ep_results, qvals, strict=True):
-            entry.q_value = float(qval)
-            print(f"{entry.ep}: q = {entry.q_value}")
-    print(pd.DataFrame([entry.summary_dict for entry in result.ep_results]))
+    result = CMIEstimate(
+        ep=str(ep),
+        n_samples=len(x),
+        cmi=float(cmi_val),
+        p_value=float(p_value),
+        q_value=float("nan"),
+        ci_low=float(ci_low),
+        ci_high=float(ci_high),
+        null_dist=null_dist,
+        boot_dist=boot_dist,
+    )
+    result.print_summary()
 
     result.save(outfile)
     print(f"Saved CMI results to {outfile}")

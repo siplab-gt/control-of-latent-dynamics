@@ -1,5 +1,9 @@
 from dataclasses import dataclass, field
 
+import numpy as np
+import pandas as pd
+from scipy.stats import false_discovery_control
+
 from src.data_classes import BaseDataClass
 from src.scripts.dependence_analysis import SEED, CMIEstimate
 
@@ -33,6 +37,15 @@ def main(cond_params, base_params, infiles, outfile):
         ep_results=ep_results,
     )
     result_set.save(outfile)
+
+    pvals = [entry.p_value for entry in result_set.ep_results]
+    if pvals:
+        qvals = false_discovery_control(pvals, method="bh")
+        for entry, qval in zip(result_set.ep_results, qvals, strict=True):
+            entry.q_value = float(qval)
+            print(f"{entry.ep}: q = {entry.q_value}")
+    print(pd.DataFrame([entry.summary_dict for entry in result_set.ep_results]))
+
     print(f"Saved aggregated CMI results to {outfile}")
 
 

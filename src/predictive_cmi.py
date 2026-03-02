@@ -32,9 +32,7 @@ class PredictiveCMIRegressor(BaseEstimator, RegressorMixin):
     def fit(self, X, y):
         # Determine continuous and categorical parts for non-TabPFN
         if self.regressor_type != "tabpfn" and len(self.categorical_features) > 0:
-            self.encoder = OneHotEncoder(
-                sparse_output=False, drop="first", handle_unknown="ignore"
-            )
+            self.encoder = OneHotEncoder(sparse_output=False)
             cat_cols = [X[:, i] for i in self.categorical_features]
             X_cat = np.column_stack(cat_cols)
             X_cat_encoded = self.encoder.fit_transform(X_cat)
