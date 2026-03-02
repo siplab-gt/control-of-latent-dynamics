@@ -1,0 +1,7 @@
+# This is for when all the main experiments are done and we want to simply
+# do analysis and plotting without fear of triggering giant re-runs
+consider-ancient:
+  main_figs: 0
+  diagnostic_figs: csvs 
+  key_metrics_table: 0
+  dependence_analysis: 0

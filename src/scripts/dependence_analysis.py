@@ -1,14 +1,20 @@
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 from jaxtyping import Float
-from npeet_plus import mi, micd
-from scipy.stats import bootstrap
 
 import src.plot_style as psty
 from src.data_classes import BaseDataClass
-from src.helpers import preprocess_params, setup_debugger
+from src.helpers import preprocess_params, setup_debugger, setup_logging
+from src.predictive_cmi import (
+    calculate_cmi,
+    statistical_validation_bootstrap,
+    statistical_validation_permutation,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,19 +49,6 @@ class CMIEstimate(BaseDataClass):
             print(pd.DataFrame([self.summary_dict]))
 
 
-@dataclass
-class CMIResult(BaseDataClass):
-    setting: str
-    task: str
-    analysis: str
-    metric_name: str
-    conditioning_vars: list[str]
-    n_shuffles: int
-    n_bootstraps: int
-    random_seed: int
-    ep_results: list[CMIEstimate] = field(default_factory=list)
-
-
 SEED = 18810929
 
 
@@ -64,27 +57,6 @@ def _group_ids_from_z(z_df):
         return pd.factorize(z_df.iloc[:, 0], sort=True)[0]
     idx = pd.MultiIndex.from_frame(z_df)
     return pd.factorize(idx, sort=True)[0]
-
-
-def _shuffle_within_groups(y, group_ids, rng):
-    shuffled = y.copy()
-    for gid in np.unique(group_ids):
-        idx = np.where(group_ids == gid)[0]
-        # shuffle via indices to handle numpy advanced indexing copy issues
-        perm = rng.permutation(len(idx))
-        shuffled[idx] = shuffled[idx][perm]
-    return shuffled
-
-
-def _estimate_cmi(x, y, z, discrete):
-    k = min(3, len(x) - 1)
-    if discrete:
-        # flip since midc is broken
-        res = micd(y, x, z, k=k)
-    else:
-        res = mi(x, y, z, k=k)
-    assert np.isfinite(res), f"CMI must be finite; got {res}"
-    return res
 
 
 def _bh_fdr(pvals):
@@ -96,44 +68,6 @@ def _bh_fdr(pvals):
     qvals = pvals * n / ranked
     qvals[order] = np.minimum.accumulate(qvals[order][::-1])[::-1]
     return np.clip(qvals, 0, 1)
-
-
-def _compute_bootstrap_ci(x, y, z, discrete, n_boot, rng):
-    def _stat(idx):
-        return _estimate_cmi(x[idx], y[idx], z[idx], discrete)
-
-    # data is a tuple of (indices,)
-    data = (np.arange(len(x)),)
-
-    res = bootstrap(
-        data,
-        _stat,
-        n_resamples=n_boot,
-        method="BCa",
-        random_state=rng,
-    )
-
-    # Use atleast_1d to handle both scalar and array returns from bootstrap
-    ci_low = np.atleast_1d(res.confidence_interval.low)[0]
-    ci_high = np.atleast_1d(res.confidence_interval.high)[0]
-
-    if not np.isfinite(ci_low) or not np.isfinite(ci_high):
-        print(
-            "Warning: bootstrap confidence interval is not finite: "
-            f"{res.confidence_interval}. Using percentile method."
-        )
-        res = bootstrap(
-            data,
-            _stat,
-            n_resamples=n_boot,
-            method="percentile",
-            random_state=rng,
-        )
-        ci_low = np.atleast_1d(res.confidence_interval.low)[0]
-        ci_high = np.atleast_1d(res.confidence_interval.high)[0]
-
-    boot_dist = np.asarray(res.bootstrap_distribution)
-    return ci_low, ci_high, boot_dist
 
 
 def _prepare_arrays(df: pd.DataFrame, x_col, y_col, z_cols):
@@ -172,9 +106,14 @@ def _prepare_arrays(df: pd.DataFrame, x_col, y_col, z_cols):
     return x, y, z, data, x_is_discrete
 
 
-def main(cfg, base_params, results_csv, outfile, setting, task, analysis):
+def main(wildcards, cfg, base_params, results_csv, outfile):
     psty.style_plots()
     df = pd.read_csv(results_csv)
+
+    setting = wildcards.setting
+    task = wildcards.task
+    analysis = wildcards.analysis
+    ep = wildcards.ep
 
     expl_params = cfg["star_sweep_params"].copy()
     if setting == "optimal_stim_rec":
@@ -214,6 +153,8 @@ def main(cfg, base_params, results_csv, outfile, setting, task, analysis):
         random_seed=SEED,
     )
 
+    expl_params = [ep]
+
     for ep in expl_params:
         if analysis == "key":
             subset = df.query("ep == @ep and key_metric_name == @key_metric_name")
@@ -243,8 +184,6 @@ def main(cfg, base_params, results_csv, outfile, setting, task, analysis):
             print(f"Skipping {ep}: too few samples ({len(x)})")
             continue
 
-        cmi_val = _estimate_cmi(x, y, z, x_is_discrete)
-
         group_ids = _group_ids_from_z(data[z_cols])
         for gid in np.unique(group_ids):
             x_gid = x[group_ids == gid]
@@ -252,18 +191,43 @@ def main(cfg, base_params, results_csv, outfile, setting, task, analysis):
             y_gid = y[group_ids == gid]
             assert np.var(y_gid) > 0, f"y should vary within groups for {ep}. {y_gid=}"
 
-        null_dist = np.zeros(n_shuffle_boot)
-        for i in range(n_shuffle_boot):
-            y_shuffled = _shuffle_within_groups(y, group_ids, rng)
-            null_dist[i] = _estimate_cmi(x, y_shuffled, z, x_is_discrete)
+        cat_XZ = []
+        cat_Z = []
+        if x_is_discrete:
+            cat_XZ.append(0)
+
+        for i in range(z.shape[1]):
+            cat_Z.append(i)
+            cat_XZ.append(1 + i)
+
+        regressor_type = base_params.get("cmi_estimator_type", "splines")
+        logger.info(f"Using {regressor_type} for CMI estimation for EP {ep}")
+
+        p_value, cmi_val, null_dist = statistical_validation_permutation(
+            x,
+            y,
+            z,
+            group_ids=group_ids,
+            regressor_type=regressor_type,
+            cat_XZ=cat_XZ,
+            cat_Z=cat_Z,
+            n_permutations=n_shuffle_boot,
+            random_state=rng,
+        )
+
         assert np.min(null_dist) != np.max(null_dist), (
             f"Null distribution shouldn't be constant. {ep=}. {null_dist[0]=}"
         )
 
-        p_value = (np.sum(null_dist >= cmi_val) + 1) / (n_shuffle_boot + 1)
-
-        ci_low, ci_high, boot_dist = _compute_bootstrap_ci(
-            x, y, z, x_is_discrete, n_shuffle_boot, rng
+        ci_low, ci_high, boot_dist = statistical_validation_bootstrap(
+            x,
+            y,
+            z,
+            regressor_type=regressor_type,
+            cat_XZ=cat_XZ,
+            cat_Z=cat_Z,
+            n_boot=n_shuffle_boot,
+            random_state=rng,
         )
         assert ci_low <= cmi_val <= ci_high, f"{ep=}, {cmi_val=}, {ci_low=}, {ci_high=}"
 
@@ -298,15 +262,14 @@ if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
     setup_debugger(snakemake.config.get("debug", False))
+    log_fh = setup_logging(snakemake.config, snakemake.log[0])
 
     main(
+        snakemake.wildcards,
         preprocess_params(snakemake.config),
         preprocess_params(snakemake.params),
         snakemake.input[0],
         snakemake.output[0],
-        setting=snakemake.wildcards.setting,
-        task=snakemake.wildcards.task,
-        analysis=snakemake.wildcards.analysis,
     )
 
 
@@ -318,6 +281,7 @@ if __name__ == "__main__" and "snakemake" not in locals():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("results", type=Path, help="Path to results CSV file")
+    parser.add_argument("--ep", type=str, required=True, help="Explanatory variable")
     parser.add_argument("--debug", action="store_true", help="Enable debugging")
     args = parser.parse_args()
 
@@ -366,10 +330,11 @@ if __name__ == "__main__" and "snakemake" not in locals():
 
     main(
         cfg,
-        preprocess_params(cfg).cmi_analysis,
+        preprocess_params(cfg).dependence_analysis,
         str(results_file),
         str(outfile),
         setting=setting,
         task=task,
         analysis=analysis,
+        ep=args.ep,
     )

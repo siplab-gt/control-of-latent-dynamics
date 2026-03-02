@@ -47,11 +47,15 @@ def compute_optimal_alpha_stim(subset_df, ep, metric):
         k_opt = interp_argmax(x, y)
         return pd.Series({"optimal_alpha_stim": k_opt / total_channel_budget})
 
-    return (
+    out = (
         subset_df.groupby([ep, "ctrl_latency", "seed"])
         .apply(get_optimal_alpha_stim, include_groups=False)
         .reset_index()
     )
+    assert out["optimal_alpha_stim"].between(0, 1).all(), (
+        "Optimal alpha stim must be between 0 and 1"
+    )
+    return out
 
 
 def compute_k_suff(subset_df, ep, metric, cfg):

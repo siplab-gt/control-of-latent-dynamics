@@ -251,6 +251,7 @@ ctrl_expts_optimal_stim_rec:
   ref_type: Z # controlling output
   
 dependence_analysis:
+  cmi_estimator_type: splines
   n_shuffle_boot: 1000 # TODO 9999
   significance_threshold: 0.05
 

@@ -422,12 +422,31 @@ rule dependence_analysis:
             otherwise="<results>/{setting}_{task}.csv",
         ),
     output:
-        "<results>/{setting}_{task}_dependence_{analysis}.pkl.gz",
+        "<results>/{setting}_{task}_dependence/{ep}_{analysis}.pkl.gz",
     params:
         step_cfg("dependence_analysis"),
-    localrule: True
+    log:
+        "<logs>/{setting}_{task}_dependence/{ep}_{analysis}.log",
+    conda:
+        "cold"
+    resources:
+        mem_mb=4000,
+        runtime=10,
     script:
         "../src/scripts/dependence_analysis.py"
+
+
+rule aggregate_dependence_analysis:
+    input:
+        lambda wc: expand(
+            "<results>/{{setting}}_{{task}}_dependence/{ep}_{{analysis}}.pkl.gz",
+            ep=(list(config["star_sweep_params"].keys()) + (list(config["star_sweep_params_measurement_only"].keys()) if wc.setting == "optimal_stim_rec" else []))
+        ),
+    output:
+        "<results>/{setting}_{task}_dependence_{analysis}.pkl.gz",
+    localrule: True
+    script:
+        "../src/scripts/aggregate_dependence_analysis.py"
 
 
 rule analyze_ctrl_data:
