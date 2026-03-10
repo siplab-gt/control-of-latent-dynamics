@@ -389,6 +389,7 @@ dependencies:
       - snakemake-executor-plugin-slurm-jobstep==0.4.0
       - snakemake-logger-plugin-snkmt==0.1.6
       - snkmt==0.2.4
+      - sparse==0.17.0
       - sqlalchemy==2.0.46
       - stack-data==0.6.3
       - starlette==0.52.1
