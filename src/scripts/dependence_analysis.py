@@ -6,13 +6,12 @@ import pandas as pd
 from jaxtyping import Float
 
 import src.plot_style as psty
-from src.data_classes import BaseDataClass
-from src.helpers import preprocess_params, setup_debugger, setup_logging
-from src.predictive_cmi import (
-    calculate_cmi,
+from src.cmi_estimation import (
     statistical_validation_bootstrap,
     statistical_validation_permutation,
 )
+from src.data_classes import BaseDataClass
+from src.helpers import preprocess_params, setup_debugger, setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +152,7 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
         f"y should vary for {ep}. {subset[y_col].unique()=}"
     )
 
-    x, y, z, data, x_is_discrete = _prepare_arrays(subset, x_col, y_col, z_cols)
+    x, y, z, data, x_is_cat = _prepare_arrays(subset, x_col, y_col, z_cols)
 
     assert len(x) > 3, f"Too few samples for {ep}. {len(x)=}"
 
@@ -164,28 +163,45 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
         y_gid = y[group_ids == gid]
         assert np.var(y_gid) > 0, f"y should vary within groups for {ep}. {y_gid=}"
 
+    # we will treat categorical variables as discrete unordered but
+    # other numerical X and Z (like k or n trials) as discrete ordered
     cat_XZ = []
     cat_Z = []
-    if x_is_discrete:
+    var_types = ""
+    if x_is_cat:
         cat_XZ.append(0)
+        var_types += "u"  # unordered discrete
+    else:
+        var_types += "o"  # ordered discrete
 
-    for i in range(z.shape[1]):
-        cat_Z.append(i)
-        cat_XZ.append(1 + i)
+    var_types += "c"  # y is continuous
 
-    regressor_type = base_params.get("cmi_estimator_type", "splines")
-    logger.info(f"Using {regressor_type} for CMI estimation for EP {ep}")
+    for i, z_var in enumerate(z_cols):
+        if z_var in ["seed"]:
+            cat_Z.append(i)
+            cat_XZ.append(1 + i)
+            var_types += "u"  # unordered discrete
+        elif z_var in ["k"]:
+            var_types += "o"  # ordered discrete
+        else:
+            raise ValueError(f"Unknown Z variable: {z_var}")
 
-    p_value, cmi_val, null_dist = statistical_validation_permutation(
-        x,
-        y,
-        z,
+    logger.info(f"Using {wildcards.estimator_type} for CMI estimation for EP {ep}")
+
+    common_kwargs = dict(
+        x=x,
+        y=y,
+        z=z,
         group_ids=group_ids,
-        regressor_type=regressor_type,
+        estimator_type=wildcards.estimator_type,
         cat_XZ=cat_XZ,
         cat_Z=cat_Z,
-        n_permutations=n_shuffle_boot,
-        random_state=rng,
+        var_types=var_types,
+        rng=rng,
+    )
+
+    p_value, cmi_val, null_dist = statistical_validation_permutation(
+        **common_kwargs, n_permutations=n_shuffle_boot
     )
 
     assert np.min(null_dist) != np.max(null_dist), (
@@ -193,14 +209,7 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
     )
 
     ci_low, ci_high, boot_dist = statistical_validation_bootstrap(
-        x,
-        y,
-        z,
-        regressor_type=regressor_type,
-        cat_XZ=cat_XZ,
-        cat_Z=cat_Z,
-        n_boot=n_shuffle_boot,
-        random_state=rng,
+        **common_kwargs, n_boot=n_shuffle_boot
     )
     assert ci_low <= cmi_val <= ci_high, f"{ep=}, {cmi_val=}, {ci_low=}, {ci_high=}"
 
@@ -229,7 +238,7 @@ if __name__ == "__main__" and "snakemake" in locals():
 
     main(
         snakemake.wildcards,
-        preprocess_params(snakemake.config),
+        snakemake.config,
         preprocess_params(snakemake.params),
         snakemake.input[0],
         snakemake.output[0],

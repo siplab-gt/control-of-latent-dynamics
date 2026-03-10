@@ -216,7 +216,7 @@ rule testq1:
             task="reaching",
             latency=False,
             ctrl_type="LQMPC",
-            k=100,
+            # k=484,
             m=NA,
             seed=17230616,
             signals=NA,
@@ -263,6 +263,24 @@ rule testq2:
     shell:
         # copy only files (not directories)
         "find $(dirname {input}) -maxdepth 1 -type f -print0 | xargs -0 cp -t $(dirname {output})"
+
+
+rule test_sweep:
+    input:
+        [
+            wildcard_path(
+                fill_in_ref=True,
+                file="summary.csv",
+                setting="sufficient_stim",
+                task="reaching",
+                latency=False,
+                ctrl_type="LQMPC",
+                seed=s,
+                signals=NA,
+            )
+            for s in [17230616, 18051223, 16320829]
+        ],
+    localrule: True
 
 
 fig_exts = [".webp", ".pdf"]
@@ -422,11 +440,11 @@ rule dependence_analysis:
             otherwise="<results>/{setting}_{task}.csv",
         ),
     output:
-        "<results>/{setting}_{task}_dependence/{ep}_{analysis}.pkl.gz",
+        "<results>/{setting}_{task}_dependence/{ep}_{analysis}_{estimator_type}.pkl.gz",
     params:
         step_cfg("dependence_analysis"),
     log:
-        "<logs>/{setting}_{task}_dependence/{ep}_{analysis}.log",
+        "<logs>/{setting}_{task}_dependence/{ep}_{analysis}_{estimator_type}.log",
     conda:
         "cold"
     resources:
@@ -440,7 +458,14 @@ rule aggregate_dependence_analysis:
     input:
         lambda wc: expand(
             "<results>/{{setting}}_{{task}}_dependence/{ep}_{{analysis}}.pkl.gz",
-            ep=(list(config["star_sweep_params"].keys()) + (list(config["star_sweep_params_measurement_only"].keys()) if wc.setting == "optimal_stim_rec" else []))
+            ep=(
+                list(config["star_sweep_params"].keys())
+                + (
+                    list(config["star_sweep_params_measurement_only"].keys())
+                    if wc.setting == "optimal_stim_rec"
+                    else []
+                )
+            ),
         ),
     output:
         "<results>/{setting}_{task}_dependence_{analysis}.pkl.gz",

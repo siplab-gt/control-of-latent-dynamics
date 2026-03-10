@@ -1,7 +1,7 @@
-results/**
+*results*/**
 results_archive/**
 resources/**
-logs/**
+*logs*/**
 .snakemake
 .snakemake/**
 .panoptes.db
