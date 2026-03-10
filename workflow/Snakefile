@@ -165,7 +165,7 @@ def subcfg(*steps: str) -> callable:
             params |= config[step]
             for var in override_vars:
                 try:
-                    params |= config.get(f"{step}_{getattr(wildcards, var)}", {})
+                    params |= config.get(f"{step}_{wildcards.get(var)}", {})
                 except (KeyError, AttributeError):
                     pass
         return params

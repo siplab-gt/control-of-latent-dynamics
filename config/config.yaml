@@ -153,7 +153,9 @@ prep_fsnn:
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
   # in reference density/area configuration. 1024 to match max channels in Q1
-  n_neurons_base: 1024
+  n_neurons_base: 1024 
+  # so that the base condition in Q1 has exactly 1024 neurons
+  network_area_scale_base: 1.06348
   layer_density_ratios:
     - 1.231 # L2/3, =80/65
     - 1.539 # L4, =100/65
