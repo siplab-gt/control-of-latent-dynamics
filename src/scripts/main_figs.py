@@ -1,15 +1,13 @@
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 import numpy as np
 import pandas as pd
 import seaborn as sns
 
 import src.plot_style as psty
-from src.scripts.key_metrics_table import interpolator
 
 # from src.scripts.dependence_analysis import dependenceResult
-from src.helpers import setup_debugger
-
+from src.helpers import preprocess_params, setup_debugger
+from src.scripts.key_metrics_table import interpolator
 
 seed_line_kwargs = dict(
     lw=0.4,
@@ -22,26 +20,24 @@ mean_line_lw = 1.5
 
 
 def main(
-    cfg,
+    base_params,
+    setting,
     results_csv,
     key_metrics_csv,
     dependence_key_file,
     dependence_control_file,
     outfiles,
-    setting,
 ):
     expl_params = cfg["star_sweep_params"]
+    ctrl_metric = base_params.ctrl_metric
+    key_metric = base_params.key_metric
     if setting == "sufficient_stim":
-        metric = "Q_track_Xref_X_fsnn"
         colorbar_label = r"$Q_\text{track}\left(X_\text{ref}, X\right)$"
-        key_metric_name = "k_suff"
         main_fig_plot_type = "lineplots"
         plots_per_row = 6
     else:  # optimal_stim_rec
         assert setting == "optimal_stim_rec", f"Unknown setting: {setting}"
-        metric = "Q_track_Zref_Z"
         colorbar_label = r"$Q_\text{track}\left(Z_\text{ref}, Z\right)$"
-        key_metric_name = "optimal_alpha_stim"
         main_fig_plot_type = "lineplots"
         expl_params |= cfg["star_sweep_params_measurement_only"]
         plots_per_row = 7
@@ -126,34 +122,34 @@ def main(
 
     def _interp(group):
         x = group["k"].values
-        y = group[metric].values
+        y = group[ctrl_metric].values
         k_interp = np.arange(x.min(), x.max() + 1)
         interp = interpolator(x, y)
         y_interp = interp(k_interp)
-        return pd.DataFrame({"k": k_interp, metric: y_interp})
+        return pd.DataFrame({"k": k_interp, ctrl_metric: y_interp})
 
     interp_ref_data = ref_data.groupby(["ctrl_latency", "seed"]).apply(
         _interp, include_groups=False
     )
 
-    # dots to show actual data
-    sns.scatterplot(
-        data=ref_data,
-        x="k",
-        y=metric,
-        hue="ctrl_latency",
-        ax=ax_top,
-        marker=".",
-        lw=0.4,
-        legend=False,
-        palette=psty.ctrl_palette,
-        # style="ctrl_latency",
-    )
+    # # dots to show actual data
+    # sns.scatterplot(
+    #     data=ref_data,
+    #     x="k",
+    #     y=metric,
+    #     hue="ctrl_latency",
+    #     ax=ax_top,
+    #     marker=".",
+    #     lw=0.4,
+    #     legend=False,
+    #     palette=psty.ctrl_palette,
+    #     # style="ctrl_latency",
+    # )
     # thin lines show interpolated per-seed data
     sns.lineplot(
         data=interp_ref_data,
         x="k",
-        y=metric,
+        y=ctrl_metric,
         hue="ctrl_latency",
         ax=ax_top,
         marker=None,
@@ -168,7 +164,7 @@ def main(
     sns.lineplot(
         data=interp_ref_data,
         x="k",
-        y=metric,
+        y=ctrl_metric,
         hue="ctrl_latency",
         ax=ax_top,
         errorbar=None,
@@ -177,14 +173,15 @@ def main(
         style="ctrl_latency",
         dashes=psty.ctrl_styles,
     )
-    ax_top.set(ylim=(-1, 1))
+    ybot = max(interp_ref_data[ctrl_metric].min() * 1.1, -1)
+
+    ax_top.set(ylim=(ybot, 1))
+    ax_top.axhline(0, color="black", lw=0.5, linestyle="--")
 
     def plot_lineplots(lp_axs, key_metric_name):
         """Plot lineplots showing key metric vs exploration parameter."""
         for ep, ax in zip(expl_params, lp_axs.flat):
-            subset = key_metrics_df.query(
-                "ep == @ep and key_metric_name == @key_metric_name"
-            )
+            subset = key_metrics_df.query("ep == @ep")
 
             if ep not in ["signals", "model_task_inputs"]:
                 subset.loc[:, "ep_value"] = pd.to_numeric(subset["ep_value"])
@@ -196,7 +193,7 @@ def main(
             sns.lineplot(
                 data=subset,
                 x="ep_value",
-                y="key_metric_value",
+                y=key_metric,
                 hue="ctrl_latency",
                 ax=ax,
                 legend=False,
@@ -207,7 +204,7 @@ def main(
             sns.lineplot(
                 data=subset,
                 x="ep_value",
-                y="key_metric_value",
+                y=key_metric,
                 hue="ctrl_latency",
                 ax=ax,
                 legend=False,
@@ -240,7 +237,7 @@ def main(
             sns.lineplot(
                 data=subset,
                 x=ep,
-                y=metric,
+                y=ctrl_metric,
                 hue="k",
                 **seed_line_kwargs,
                 legend=False,
@@ -250,7 +247,7 @@ def main(
             sns.lineplot(
                 data=subset,
                 x=ep,
-                y=metric,
+                y=ctrl_metric,
                 hue="k",
                 errorbar=None,
                 lw=mean_line_lw,
@@ -265,7 +262,7 @@ def main(
         cp_axs.flat[0].set(ylim=(-1, 1))
 
     def plot_heatmaps(hm_fig, hm_axs, mean_or_std):
-        vmin, vmax = df[metric].min(), df[metric].max()
+        vmin, vmax = df[ctrl_metric].min(), df[ctrl_metric].max()
         vmin = max(vmin, -1)
         vmax = min(vmax, 1)
         heatmap_kwargs = dict(
@@ -285,9 +282,9 @@ def main(
             )
             subset = df.query(query_str)
             # average over seeds
-            subset = subset.groupby([ep, "k"])[[metric]]
+            subset = subset.groupby([ep, "k"])[[ctrl_metric]]
             subset = getattr(subset, mean_or_std)().reset_index()
-            subset = subset.pivot(index="k", columns=ep, values=metric)
+            subset = subset.pivot(index="k", columns=ep, values=ctrl_metric)
             sns.heatmap(
                 subset,
                 ax=ax,
@@ -547,7 +544,7 @@ def main(
 
     # main fig: top row (Q over k), key metric row, control performance row
     if main_fig_plot_type == "lineplots":
-        plot_lineplots(axs_key, key_metric_name)
+        plot_lineplots(axs_key, key_metric)
     else:  # heatmaps
         plot_heatmaps(main_fig, axs_key, "mean")
 
@@ -561,7 +558,7 @@ def main(
             ax.tick_params(axis="y", which="both", length=0)
 
     fig_lp, axs_lp = grid_subplots()
-    plot_lineplots(axs_lp, key_metric_name)
+    plot_lineplots(axs_lp, key_metric)
 
     fig_hm_mean, axs_hm_mean = grid_subplots()
     plot_heatmaps(fig_hm_mean, axs_hm_mean, "mean")
@@ -586,13 +583,13 @@ if __name__ == "__main__" and "snakemake" in locals():
     setup_debugger(snakemake.config.get("debug", False))
 
     main(
-        snakemake.config,
+        snakemake.params,
+        snakemake.wildcards.setting,
         snakemake.input[0],
         snakemake.input[1],
         snakemake.input.dependence_key,
         snakemake.input.dependence_control,
         snakemake.output,
-        setting=snakemake.wildcards.setting,
     )
 
 
@@ -607,11 +604,6 @@ if __name__ == "__main__" and "snakemake" not in locals():
         "--results-csv",
         required=True,
         help="CSV file with results to plot",
-    )
-    parser.add_argument(
-        "--key-metrics-csv",
-        required=True,
-        help="CSV file with precomputed key metrics",
     )
     parser.add_argument(
         "--dependence-key",
@@ -643,12 +635,14 @@ if __name__ == "__main__" and "snakemake" not in locals():
 
     cfg = snakemake.common.configfile._load_configfile("./config/config.yaml")
 
+    key_metrics_csv = args.results_csv.replace(".csv", "_key_metrics.csv")
+
     main(
-        cfg,
-        args.results_csv,
-        args.key_metrics_csv,
-        args.dependence_key,
-        args.dependence_control,
-        outfiles,
+        base_params=preprocess_params(cfg[f"analysis_{setting}"]),
         setting=setting,
+        results_csv=args.results_csv,
+        key_metrics_csv=key_metrics_csv,
+        dependence_key_file=args.dependence_key,
+        dependence_control_file=args.dependence_control,
+        outfiles=outfiles,
     )

@@ -300,6 +300,8 @@ rule main_figs:
             "<results>/figs/{setting}_{task}_heatmaps_mean", *fig_exts
         ),
         heatmaps_std=multiext("<results>/figs/{setting}_{task}_heatmaps_std", *fig_exts),
+    params:
+        lookup("analysis_{setting}", within=config)
     localrule: True
     script:
         "../src/scripts/main_figs.py"
@@ -427,6 +429,8 @@ rule key_metrics_table:
         "<results>/{setting}_{task}.csv",
     output:
         "<results>/{setting}_{task}_key_metrics.csv",
+    params:
+        lookup(dpath='analysis_{setting}', within=config)
     localrule: True
     script:
         "../src/scripts/key_metrics_table.py"
