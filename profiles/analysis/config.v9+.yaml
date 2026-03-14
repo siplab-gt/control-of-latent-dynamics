@@ -5,3 +5,9 @@ consider-ancient:
   diagnostic_figs: csvs 
   key_metrics_table: 0
   dependence_analysis: 0
+
+allowed-rules:
+  - dependence_analysis
+  - key_metrics_table
+  - main_figs
+  - diagnostic_figs
