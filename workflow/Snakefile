@@ -406,6 +406,11 @@ def fsnn_mem_required(wc):
 def runtime_min(n_trials, n_train_trials=0, multiplier=1):
     def f(wc):
         scale = float(wc["density_scale"]) * float(wc["network_area_scale"])
+        # scale also for k>100: k=1000 -> multiply by 2
+        if "k" in wc.keys():
+            k = int(wc["k"])
+            if k > 100:
+                scale *= 2 * (k - 100) / (1024 - 100)
         # observed per-trial runtimes for small networks
         # got 5.4 seconds per trial for demean on big network (*6)
         # get ~1s/trial on Myelin, but ~7 for PACE.
@@ -581,7 +586,7 @@ rule sys_id_expts:
         "cold"
     resources:
         mem_mb=fsnn_mem_required,
-        runtime=runtime_min(n_trials_sys_id_max, multiplier=1.5),
+        runtime=runtime_min(n_trials_sys_id_max, multiplier=2),
     retries: 1  # since there can be conflicts hitting the cython cache
     script:
         "../src/scripts/sys_id_expts.py"
