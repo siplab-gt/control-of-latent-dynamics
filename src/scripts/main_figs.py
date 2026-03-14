@@ -18,6 +18,33 @@ seed_line_kwargs = dict(
 
 mean_line_lw = 1.5
 
+# rename dict for various columns for improved display
+_r = dict(
+    Q_track_Xref_Xhat_lds=r"$Q_{\text{track}}(X_{\text{ref}}, \widehat{X}_{\text{LDS}})$",
+    Q_track_Xref_X_fsnn=r"$Q_{\text{track}}(X_{\text{ref}}, X_{\text{fSNN}})$",
+    Q_track_Zref_Z=r"$Q_{\text{track}}(Z_{\text{ref}}, Z)$",
+    optimal_alpha_stim=r"$\alpha_\text{stim}^*$",
+    k=r"$k$",
+    m=r"$m$",
+    n_trials_sys_id=r"$n_{\text{sys ID trials}}$",
+    n_latent_dims_offset=r"$n_x$ offset",
+    beam_width_um="beam width\n(μm)",
+    network_area_scale="network\narea scale",
+    density_scale="density\nscale",
+    model_task_inputs="model\ntask inputs",
+    ctrl_latency="control type",
+)
+
+_r["k_0.9"] = r"$k_{0.9}$"
+
+
+def r(label):
+    return _r.get(label, label)
+
+
+def prettify_column_names(df):
+    return df.rename(columns={col: r(col) for col in df.columns})
+
 
 def main(
     base_params,
@@ -53,6 +80,9 @@ def main(
         {"OLFalse": "OL", "LQMPCFalse": "MPC", "LQMPCTrue": "MPC with latency"}
     )
     rows = int(np.ceil(len(expl_params) / plots_per_row))
+
+    rdf = prettify_column_names(df)
+    r_key_metrics_df = prettify_column_names(key_metrics_df)
 
     def grid_subplots(extra_row=False):
         n_rows = rows + 1 if extra_row else rows
@@ -105,6 +135,7 @@ def main(
         return fig, ax_top, axs_key, axs_ctrl, axs_dependence
 
     main_fig, ax_top, axs_key, axs_ctrl, axs_dependence = grid_subplots_main()
+    main_fig.get_layout_engine().set(wspace=0.0, w_pad=0.015)
 
     ref_condition = cfg["reference_params"]
 
@@ -121,15 +152,17 @@ def main(
     ).copy()
 
     def _interp(group):
-        x = group["k"].values
-        y = group[ctrl_metric].values
+        x = group[r("k")].values
+        y = group[r(ctrl_metric)].values
         k_interp = np.arange(x.min(), x.max() + 1)
         interp = interpolator(x, y)
         y_interp = interp(k_interp)
-        return pd.DataFrame({"k": k_interp, ctrl_metric: y_interp})
+        return pd.DataFrame({r("k"): k_interp, r(ctrl_metric): y_interp})
 
-    interp_ref_data = ref_data.groupby(["ctrl_latency", "seed"]).apply(
-        _interp, include_groups=False
+    interp_ref_data = (
+        prettify_column_names(ref_data)
+        .groupby([r("ctrl_latency"), "seed"])
+        .apply(_interp, include_groups=False)
     )
 
     # # dots to show actual data
@@ -148,32 +181,32 @@ def main(
     # thin lines show interpolated per-seed data
     sns.lineplot(
         data=interp_ref_data,
-        x="k",
-        y=ctrl_metric,
-        hue="ctrl_latency",
+        x=r("k"),
+        y=r(ctrl_metric),
+        hue=r("ctrl_latency"),
         ax=ax_top,
         marker=None,
         errorbar=None,
         **seed_line_kwargs,
         legend=False,
         palette=psty.ctrl_palette,
-        style="ctrl_latency",
+        style=r("ctrl_latency"),
         dashes=psty.ctrl_styles,
     )
     # thick lines show average of interpolated data
     sns.lineplot(
         data=interp_ref_data,
-        x="k",
-        y=ctrl_metric,
-        hue="ctrl_latency",
+        x=r("k"),
+        y=r(ctrl_metric),
+        hue=r("ctrl_latency"),
         ax=ax_top,
         errorbar=None,
         lw=mean_line_lw,
         palette=psty.ctrl_palette,
-        style="ctrl_latency",
+        style=r("ctrl_latency"),
         dashes=psty.ctrl_styles,
     )
-    ybot = max(interp_ref_data[ctrl_metric].min() * 1.1, -1)
+    ybot = max(interp_ref_data[r(ctrl_metric)].min() * 1.1, -1)
 
     ax_top.set(ylim=(ybot, 1))
     ax_top.axhline(0, color="black", lw=0.5, linestyle="--")
@@ -189,12 +222,13 @@ def main(
             if subset.empty:
                 ax.set_visible(False)
                 continue
+            subset = prettify_column_names(subset)
             # per-seed lines
             sns.lineplot(
                 data=subset,
                 x="ep_value",
-                y=key_metric,
-                hue="ctrl_latency",
+                y=r(key_metric),
+                hue=r("ctrl_latency"),
                 ax=ax,
                 legend=False,
                 palette=psty.key_palette,
@@ -204,8 +238,8 @@ def main(
             sns.lineplot(
                 data=subset,
                 x="ep_value",
-                y=key_metric,
-                hue="ctrl_latency",
+                y=r(key_metric),
+                hue=r("ctrl_latency"),
                 ax=ax,
                 legend=False,
                 palette=psty.key_palette,
@@ -213,8 +247,8 @@ def main(
                 lw=mean_line_lw,
             )
             # ax.set(ylim=(0, 1))
-        for ax in lp_axs[..., 1:].flat:
-            ax.set(ylabel="")
+        # for ax in lp_axs[..., 1:].flat:
+        #     ax.set(ylabel="")
 
     def plot_control_performance(cp_axs):
         """Plot control performance metric vs exploration parameter per seed and k."""
@@ -233,12 +267,13 @@ def main(
             k_values = np.sort(subset["k"].unique())
             k_palette = sns.color_palette("viridis", n_colors=len(k_values))
             k_palette = dict(zip(k_values, k_palette))
+            subset = prettify_column_names(subset)
 
             sns.lineplot(
                 data=subset,
-                x=ep,
-                y=ctrl_metric,
-                hue="k",
+                x=r(ep),
+                y=r(ctrl_metric),
+                hue=r("k"),
                 **seed_line_kwargs,
                 legend=False,
                 palette=psty.cmap,
@@ -246,9 +281,9 @@ def main(
             )
             sns.lineplot(
                 data=subset,
-                x=ep,
-                y=ctrl_metric,
-                hue="k",
+                x=r(ep),
+                y=r(ctrl_metric),
+                hue=r("k"),
                 errorbar=None,
                 lw=mean_line_lw,
                 legend=(ax == cp_axs.flat[-1]),
@@ -257,8 +292,8 @@ def main(
             )
 
         sns.move_legend(ax, "upper left", bbox_to_anchor=(1, 1))
-        for ax in cp_axs[..., 1:].flat:
-            ax.set(ylabel="")
+        # for ax in cp_axs[..., 1:].flat:
+        # ax.set(ylabel="")
         cp_axs.flat[0].set(ylim=(-1, 1))
 
     def plot_heatmaps(hm_fig, hm_axs, mean_or_std):
@@ -615,6 +650,7 @@ if __name__ == "__main__" and "snakemake" not in locals():
         default=None,
         help="Pickle file with dependence analysis results for control metric",
     )
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     args = parser.parse_args()
 
     setting_task = pathlib.Path(args.results_csv).stem
@@ -634,6 +670,7 @@ if __name__ == "__main__" and "snakemake" not in locals():
     print(f"{outfiles=}")
 
     cfg = snakemake.common.configfile._load_configfile("./config/config.yaml")
+    setup_debugger(args.debug)
 
     key_metrics_csv = args.results_csv.replace(".csv", "_key_metrics.csv")
 
