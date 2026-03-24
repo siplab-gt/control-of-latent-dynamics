@@ -281,15 +281,15 @@ analysis_sufficient_stim:
   ctrl_metric: Q_track_Xref_Xhat_lds
   # ctrl_metric: Q_track_Xref_X_fsnn
   key_metric: "k_0.9"
-
+  
 analysis_optimal_stim_rec:
   ctrl_metric: Q_track_Zref_Z
   key_metric: optimal_alpha_stim
   
 dependence_analysis:
-  cmi_estimator_type: splines
-  n_shuffle_boot: 1000 # TODO 9999
+  n_shuffle_boot: 100 # TODO 9999
   significance_threshold: 0.05
+  estimator_type: kernel
 
 # non-essential stuff, don't need to pass in as params to trigger re-runs when changed
 ######################################################################################

@@ -8,6 +8,8 @@ consider-ancient:
 
 allowed-rules:
   - dependence_analysis
+  - dependence_analysis_default
+  - aggregate_dependence_analysis
   - key_metrics_table
   - main_figs
   - diagnostic_figs

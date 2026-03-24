@@ -168,7 +168,7 @@ def subcfg(*steps: str) -> callable:
     def wc_fn(wildcards):
         params = {}
         for step in steps:
-            params |= config[step]
+            params |= config.get(step, {})
             for var in override_vars:
                 try:
                     params |= config.get(f"{step}_{wildcards.get(var)}", {})
@@ -212,7 +212,7 @@ def get_q2_kms():
     return zip(kk.tolist(), mm.tolist())
 
 
-test_k, test_m = list(get_q2_kms())[-1]
+test_k, test_m = list(get_q2_kms())[2]
 
 
 rule testq2:
@@ -263,8 +263,8 @@ rule main_figs:
         "<results>/{setting}_{task}.csv",
         "<results>/{setting}_{task}_key_metrics.csv",
         "src/plot_style.py",
-        dependence_key="<results>/{setting}_{task}_dependence_key.pkl.gz",
-        dependence_control="<results>/{setting}_{task}_dependence_control.pkl.gz",
+        dependence_key="<results>/{setting}_{task}_dependence/key.pkl.gz",
+        dependence_control="<results>/{setting}_{task}_dependence/control.pkl.gz",
     output:
         main=multiext("<results>/figs/{setting}_{task}", *fig_exts),
         lineplots=multiext("<results>/figs/{setting}_{task}_lineplots", *fig_exts),
@@ -403,6 +403,9 @@ rule key_metrics_table:
     localrule: True
     script:
         "../src/scripts/key_metrics_table.py"
+        
+
+est_type = config["dependence_analysis"]["estimator_type"]
 
 
 rule dependence_analysis:
@@ -415,7 +418,7 @@ rule dependence_analysis:
     output:
         "<results>/{setting}_{task}_dependence/{ep}_{analysis}_{estimator_type}.pkl.gz",
     params:
-        step_cfg("dependence_analysis"),
+        subcfg("dependence_analysis", "analysis"),
     log:
         "<logs>/{setting}_{task}_dependence/{ep}_{analysis}_{estimator_type}.log",
     conda:
@@ -425,12 +428,21 @@ rule dependence_analysis:
         runtime=10,
     script:
         "../src/scripts/dependence_analysis.py"
+        
+rule dependence_analysis_default:
+    input:
+        f"<results>/{{setting}}_{{task}}_dependence/{{ep}}_{{analysis}}_{est_type}.pkl.gz",
+    output:
+        "<results>/{setting}_{task}_dependence/{ep}_{analysis}.pkl.gz",
+    localrule: True
+    shell:
+        "ln -s -r {input} {output}"
 
 
 rule aggregate_dependence_analysis:
     input:
         lambda wc: expand(
-            "<results>/{{setting}}_{{task}}_dependence/{ep}_{{analysis}}.pkl.gz",
+            "<results>/{{setting}}_{{task}}_dependence/{ep}_{{analysis}}_{estimator_type}.pkl.gz",
             ep=(
                 list(config["star_sweep_params"].keys())
                 + (
@@ -439,9 +451,10 @@ rule aggregate_dependence_analysis:
                     else []
                 )
             ),
+            estimator_type=est_type,
         ),
     output:
-        "<results>/{setting}_{task}_dependence_{analysis}.pkl.gz",
+        "<results>/{setting}_{task}_dependence/{analysis}.pkl.gz",
     localrule: True
     script:
         "../src/scripts/aggregate_dependence_analysis.py"

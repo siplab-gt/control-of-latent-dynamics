@@ -123,7 +123,26 @@ def substr(s, ii):
     return "".join([s[j] for j in ii])
 
 
-def kernel_cmi(X, y, Z, var_types) -> np.ndarray:
+def heuristic_bw(data_col, var_type):
+    assert len(data_col.shape) == 1
+    n = len(data_col)
+    if var_type == "c":
+        # Silverman's rule of thumb
+        sigma = np.std(data_col)
+        iqr = np.percentile(data_col, 75) - np.percentile(data_col, 25)
+        return 0.9 * min(sigma, iqr / 1.34) * n ** (-1 / 5)
+    elif var_type == "o":
+        return 1 / (1 + n**0.5)
+    elif var_type == "u":
+        c = len(np.unique(data_col))
+        h = (c - 1) / (c * n**0.5)
+        assert 0 <= h <= (c - 1) / c
+        return h
+    else:
+        raise ValueError(f"Unknown var_type: {var_type}")
+
+
+def kernel_cmi(X, y, Z, var_types, bw=None) -> np.ndarray:
     """Calculate the conditional mutual information of the data.
 
     Returns
@@ -134,21 +153,30 @@ def kernel_cmi(X, y, Z, var_types) -> np.ndarray:
     # Combine data into a joint dataset
     data = np.hstack([X, y, Z])
     iz = np.arange(2, data.shape[1])
+    if bw is None:
+        bw = np.array(
+            [heuristic_bw(data[:, i], var_types[i]) for i in range(data.shape[1])]
+        )
+    # logger.debug(f"{bw=}")
 
     # Compute densities for all points in the joint dataset
-    kde_xyz = KDEMultivariate(data, var_types)
-    logger.debug(f"{kde_xyz.bw=}")
-    kde_z = KDEMultivariate(data[:, iz], substr(var_types, iz))
-    logger.debug(f"{kde_z.bw=}")
-    kde_xz = KDEMultivariate(data[:, (0, *iz)], substr(var_types, (0, *iz)))
-    logger.debug(f"{kde_xz.bw=}")
-    kde_yz = KDEMultivariate(data[:, (1, *iz)], substr(var_types, (1, *iz)))
-    logger.debug(f"{kde_yz.bw=}")
+    kde_xyz = KDEMultivariate(data, var_types, bw)
+    # logger.debug(f"{kde_xyz.bw=}")
+    kde_z = KDEMultivariate(data[:, iz], substr(var_types, iz), bw[iz])
+    # logger.debug(f"{kde_z.bw=}")
+    ixz = [0, *iz]
+    kde_xz = KDEMultivariate(data[:, ixz], substr(var_types, ixz), bw[ixz])
+    # logger.debug(f"{kde_xz.bw=}")
+    iyz = [1, *iz]
+    kde_yz = KDEMultivariate(data[:, iyz], substr(var_types, iyz), bw[iyz])
+    # logger.debug(f"{kde_yz.bw=}")
 
     p_xyz = kde_xyz.pdf()
     p_z = kde_z.pdf()
     p_xz = kde_xz.pdf()
     p_yz = kde_yz.pdf()
+    for p in [p_xyz, p_z, p_xz, p_yz]:
+        assert np.all(p > 0)
 
     local_mi_values = np.log2(p_xyz) + np.log2(p_z) - np.log2(p_xz) - np.log2(p_yz)
     return np.mean(local_mi_values)
@@ -174,7 +202,7 @@ def calculate_cmi(
         # Information Gain
         cmi_bits = (ll_full - ll_reduced) / (n * np.log(2))
     elif estimator_type == "kernel":
-        cmi_bits = kernel_cmi(X, y, Z, var_types)
+        cmi_bits = kernel_cmi(X, y, Z, var_types, bw=kwargs.get("bw", None))
     else:
         raise ValueError(f"Unknown CMI estimation method: {estimator_type}")
 
@@ -279,6 +307,12 @@ def statistical_validation_permutation(
 
     x, z, cat_XZ, cat_Z = _preprocess_features(x, z, cat_XZ, cat_Z, estimator_type)
 
+    if estimator_type == "kernel":
+        data = np.hstack([x, y, z])
+        bw = np.array(
+            [heuristic_bw(data[:, i], var_types[i]) for i in range(data.shape[1])]
+        )
+        kwargs["bw"] = bw
     observed_cmi = calculate_cmi(x, y, z, **kwargs)
     logger.info(f"Observed CMI: {observed_cmi}")
 
@@ -317,6 +351,7 @@ def statistical_validation_bootstrap(
     cat_Z=None,
     var_types=None,
     n_boot=1000,
+    **kwargs,
 ):
     """
     Phase 4: Statistical Validation - Bootstrapping (95% CI).
@@ -333,6 +368,7 @@ def statistical_validation_bootstrap(
             estimator_type,
             cat_XZ=cat_XZ,
             cat_Z=cat_Z,
+            var_types=var_types,
         )
         c = boot_call_count[0]
         if c % max(1, n_boot // 10) == 0:
@@ -346,7 +382,7 @@ def statistical_validation_bootstrap(
         data,
         _stat,
         n_resamples=n_boot,
-        method="BCa",
+        method="percentile",
         random_state=rng,
     )
 
@@ -354,12 +390,16 @@ def statistical_validation_bootstrap(
     ci_high = np.atleast_1d(res.confidence_interval.high)[0]
 
     if not np.isfinite(ci_low) or not np.isfinite(ci_high):
+        logger.warning(
+            "BCa confidence interval failed. Falling back to percentile method."
+        )
         res = bootstrap(
             data,
             _stat,
             n_resamples=n_boot,
             method="percentile",
             random_state=rng,
+            bootstrap_result=res,
         )
         ci_low = np.atleast_1d(res.confidence_interval.low)[0]
         ci_high = np.atleast_1d(res.confidence_interval.high)[0]
