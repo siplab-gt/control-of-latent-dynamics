@@ -107,14 +107,7 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
     if setting == "optimal_stim_rec":
         expl_params |= cfg["star_sweep_params_measurement_only"]
 
-    if setting == "sufficient_stim":
-        metric = "Q_track_Xref_X_fsnn"
-        key_metric_name = "k_suff"
-    else:
-        metric = "Q_track_Zref_Z"
-        key_metric_name = "optimal_alpha_stim"
-
-    ref_condition = cfg["reference_params"]
+    ref_condition = cfg["reference_params"] | cfg[f"reference_params_{setting}"]
 
     if analysis not in {"key", "control"}:
         raise ValueError(f"Unknown analysis: {analysis}")
@@ -122,18 +115,18 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
     rng = np.random.default_rng(SEED)
 
     if analysis == "key":
-        metric_name = key_metric_name
+        metric_name = base_params.key_metric
         conditioning_vars = ["seed"]
     else:
-        metric_name = metric
+        metric_name = base_params.ctrl_metric
         conditioning_vars = ["seed", "k"]
 
     n_shuffle_boot = base_params["n_shuffle_boot"]
 
     if analysis == "key":
-        subset = df.query("ep == @ep and key_metric_name == @key_metric_name")
+        subset = df.query("ep == @ep")
         x_col = "ep_value"
-        y_col = "key_metric_value"
+        y_col = metric_name
         z_cols = ["seed"]
     else:
         conds2keep = ref_condition.copy()
@@ -144,13 +137,14 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
         query_str += ' and (ctrl_type == "LQMPC")'
         subset = df.query(query_str)
         x_col = ep
-        y_col = metric
+        y_col = metric_name
         z_cols = ["seed", "k"]
 
     assert not subset.empty, f"No data for {ep}"
     assert len(subset[y_col].unique()) > 1, (
         f"y should vary for {ep}. {subset[y_col].unique()=}"
     )
+    logger.info(f"Using {subset.shape[0]} samples for {ep} {analysis}")
 
     x, y, z, data, x_is_cat = _prepare_arrays(subset, x_col, y_col, z_cols)
 

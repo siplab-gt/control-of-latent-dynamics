@@ -4,9 +4,8 @@ import pandas as pd
 import seaborn as sns
 
 import src.plot_style as psty
-
-# from src.scripts.dependence_analysis import dependenceResult
 from src.helpers import preprocess_params, setup_debugger
+from src.scripts.aggregate_dependence_analysis import CMIEstimateSet
 from src.scripts.key_metrics_table import interpolator
 
 seed_line_kwargs = dict(
@@ -48,6 +47,7 @@ def prettify_column_names(df):
 
 def main(
     base_params,
+    cfg,
     setting,
     results_csv,
     key_metrics_csv,
@@ -55,7 +55,7 @@ def main(
     dependence_control_file,
     outfiles,
 ):
-    expl_params = cfg["star_sweep_params"]
+    expl_params = cfg["star_sweep_params"] | cfg[f"star_sweep_params_{setting}"]
     ctrl_metric = base_params.ctrl_metric
     key_metric = base_params.key_metric
     if setting == "sufficient_stim":
@@ -66,7 +66,6 @@ def main(
         assert setting == "optimal_stim_rec", f"Unknown setting: {setting}"
         colorbar_label = r"$Q_\text{track}\left(Z_\text{ref}, Z\right)$"
         main_fig_plot_type = "lineplots"
-        expl_params |= cfg["star_sweep_params_measurement_only"]
         plots_per_row = 7
 
     psty.style_plots()
@@ -129,7 +128,8 @@ def main(
             ax_k.tick_params(axis="x", which="both", length=0)
 
         for axs in [axs_key, axs_ctrl, axs_dependence]:
-            for i in range(len(expl_params), len(axs.flatten())):
+            for i in range(len(expl_params), len(axs.flat)):
+                assert False
                 axs.flatten()[i].axis("off")
 
         return fig, ax_top, axs_key, axs_ctrl, axs_dependence
@@ -138,7 +138,7 @@ def main(
     main_fig.get_layout_engine().set(wspace=0.0, w_pad=0.015)
 
     ref_condition = cfg["reference_params"]
-
+    ref_condition |= cfg[f"reference_params_{setting}"]
     # top plot
     ref_cond_except_latency = ref_condition.copy()
     del ref_cond_except_latency["latency"]
@@ -354,8 +354,8 @@ def main(
         )
 
     def plot_dependence(dependence_axs):
-        dependence_key_res = dependenceResult.load(dependence_key_file)
-        dependence_ctrl_res = dependenceResult.load(dependence_control_file)
+        dependence_key_res = CMIEstimateSet.load(dependence_key_file)
+        dependence_ctrl_res = CMIEstimateSet.load(dependence_control_file)
 
         # Maps
         key_map = {res.ep: res for res in dependence_key_res.ep_results}
@@ -414,10 +414,6 @@ def main(
             # Key Data
             if ep in key_map:
                 res = key_map[ep]
-                # assert res.ci_low <= res.dependence <= res.ci_high, (
-                #     f"Key {ep}: {res.ci_low} <= {res.dependence} <= {res.ci_high}"
-                # )
-                # Null
                 n_null = len(res.null_dist)
                 plot_data.extend(
                     [
@@ -447,14 +443,10 @@ def main(
 
             if ep in ctrl_map:
                 res = ctrl_map[ep]
-                # assert res.ci_low <= res.dependence <= res.ci_high, (
-                #     f"Key {ep}: {res.ci_low} <= {res.dependence} <= {res.ci_high}"
-                # )
-                # Null
                 n_null = len(res.null_dist)
                 plot_data.extend(
                     [
-                        {"Type": "Control", "Condition": "Null", "dependence": val}
+                        {"Type": "Control", "Condition": "Null", "cmi": val}
                         for val in res.null_dist
                     ]
                 )
@@ -462,7 +454,7 @@ def main(
                 n_boot = len(res.boot_dist)
                 plot_data.extend(
                     [
-                        {"Type": "Control", "Condition": "Boot", "dependence": val}
+                        {"Type": "Control", "Condition": "Boot", "cmi": val}
                         for val in res.boot_dist
                     ]
                 )
@@ -519,14 +511,14 @@ def main(
                     color="k",
                     linewidth=2,
                 )
-                ax.plot(x_marker, res.dependence, color="k", marker="o", markersize=3)
+                ax.plot(x_marker, res.cmi, color="k", marker="o", markersize=3)
 
             # Plot Control
             if ep in ctrl_map:
                 sns.violinplot(
                     data=df_plot[df_plot["Type"] == "Control"],
                     x="Type",
-                    y="dependence",
+                    y="cmi",
                     hue="Condition",
                     split=True,
                     inner=None,
@@ -558,7 +550,7 @@ def main(
                     color="k",
                     linewidth=2,
                 )
-                ax.plot(x_marker, res.dependence, color="k", marker="o", markersize=3)
+                ax.plot(x_marker, res.cmi, color="k", marker="o", markersize=3)
 
             # Clean up
             ax.set_xlabel("")
@@ -618,7 +610,8 @@ if __name__ == "__main__" and "snakemake" in locals():
     setup_debugger(snakemake.config.get("debug", False))
 
     main(
-        snakemake.params,
+        preprocess_params(snakemake.params),
+        snakemake.config,
         snakemake.wildcards.setting,
         snakemake.input[0],
         snakemake.input[1],

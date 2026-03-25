@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
 from scipy.stats import false_discovery_control
 
 from src.data_classes import BaseDataClass
+from src.helpers import preprocess_params
 from src.scripts.dependence_analysis import SEED, CMIEstimate
 
 
@@ -52,4 +52,9 @@ def main(cond_params, base_params, infiles, outfile):
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
 
-    main(snakemake.wildcards, snakemake.params, snakemake.input, snakemake.output[0])
+    main(
+        snakemake.wildcards,
+        preprocess_params(snakemake.params),
+        snakemake.input,
+        snakemake.output[0],
+    )

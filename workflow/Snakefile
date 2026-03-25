@@ -273,7 +273,7 @@ rule main_figs:
         ),
         heatmaps_std=multiext("<results>/figs/{setting}_{task}_heatmaps_std", *fig_exts),
     params:
-        lookup("analysis_{setting}", within=config)
+        subcfg("analysis"),
     localrule: True
     script:
         "../src/scripts/main_figs.py"
@@ -399,11 +399,11 @@ rule key_metrics_table:
     output:
         "<results>/{setting}_{task}_key_metrics.csv",
     params:
-        lookup(dpath='analysis_{setting}', within=config)
+        lookup(dpath="analysis_{setting}", within=config),
     localrule: True
     script:
         "../src/scripts/key_metrics_table.py"
-        
+
 
 est_type = config["dependence_analysis"]["estimator_type"]
 
@@ -415,6 +415,7 @@ rule dependence_analysis:
             then="<results>/{setting}_{task}_key_metrics.csv",
             otherwise="<results>/{setting}_{task}.csv",
         ),
+        "src/cmi_estimation.py",
     output:
         "<results>/{setting}_{task}_dependence/{ep}_{analysis}_{estimator_type}.pkl.gz",
     params:
@@ -428,7 +429,8 @@ rule dependence_analysis:
         runtime=10,
     script:
         "../src/scripts/dependence_analysis.py"
-        
+
+
 rule dependence_analysis_default:
     input:
         f"<results>/{{setting}}_{{task}}_dependence/{{ep}}_{{analysis}}_{est_type}.pkl.gz",
@@ -445,14 +447,12 @@ rule aggregate_dependence_analysis:
             "<results>/{{setting}}_{{task}}_dependence/{ep}_{{analysis}}_{estimator_type}.pkl.gz",
             ep=(
                 list(config["star_sweep_params"].keys())
-                + (
-                    list(config["star_sweep_params_measurement_only"].keys())
-                    if wc.setting == "optimal_stim_rec"
-                    else []
-                )
+                + list(config[f"star_sweep_params_{wc.setting}"].keys())
             ),
             estimator_type=est_type,
         ),
+    params:
+        subcfg("dependence_analysis", "analysis"),
     output:
         "<results>/{setting}_{task}_dependence/{analysis}.pkl.gz",
     localrule: True

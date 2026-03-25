@@ -351,24 +351,37 @@ def statistical_validation_bootstrap(
     cat_Z=None,
     var_types=None,
     n_boot=1000,
+    group_ids=None,
     **kwargs,
 ):
     """
     Phase 4: Statistical Validation - Bootstrapping (95% CI).
+    Because per-group sample sizes are low, we do cluster bootstrapping.
     """
     x, z, cat_XZ, cat_Z = _preprocess_features(x, z, cat_XZ, cat_Z, estimator_type)
 
     boot_call_count = [0]
 
-    def _stat(idx):
+    def _stat(group_idx):
+        x_boot = np.empty_like(x)
+        y_boot = np.empty_like(y)
+        z_boot = np.empty_like(z)
+        group_size = np.sum(group_ids == 0)
+        for i_sample, i_group in enumerate(group_idx):
+            idx = np.where(group_ids == i_group)[0]
+            x_boot[i_sample * group_size : (i_sample + 1) * group_size] = x[idx]
+            y_boot[i_sample * group_size : (i_sample + 1) * group_size] = y[idx]
+            z_boot[i_sample * group_size : (i_sample + 1) * group_size] = z[idx]
+
         cmi = calculate_cmi(
-            x[idx],
-            y[idx],
-            z[idx],
+            x_boot,
+            y_boot,
+            z_boot,
             estimator_type,
             cat_XZ=cat_XZ,
             cat_Z=cat_Z,
             var_types=var_types,
+            **kwargs,
         )
         c = boot_call_count[0]
         if c % max(1, n_boot // 10) == 0:
@@ -376,13 +389,14 @@ def statistical_validation_bootstrap(
         boot_call_count[0] += 1
         return cmi
 
-    data = (np.arange(len(y)),)
+    data = (np.arange(group_ids.max() + 1),)
+    assert np.all(np.sort(np.unique(group_ids)) == np.arange(group_ids.max() + 1))
     logger.info(f"Beginning {n_boot} bootstrap resamples...")
     res = bootstrap(
         data,
         _stat,
         n_resamples=n_boot,
-        method="percentile",
+        method="BCa",
         random_state=rng,
     )
 

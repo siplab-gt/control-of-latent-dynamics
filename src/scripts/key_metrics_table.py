@@ -19,7 +19,7 @@ def interp_argwhere(x, y, target_y):
     """returns first x where interpolation equals target y within
     range of input x"""
     shifted_interp = interpolator(x, y - target_y)
-    new_x = np.linspace(x.min(), x.max(), 1000)
+    new_x = np.linspace(x.min(), x.max(), 10000)
     new_y = shifted_interp(new_x)
     ans = new_x[np.argmin(np.abs(new_y))]
     assert x.min() <= ans <= x.max(), (
@@ -74,7 +74,9 @@ def compute_k_suff(subset_df, ep, metric, cfg=None):
 
 
 def build_key_metrics_table(cfg, base_params, results_csv, wildcards):
-    expl_params = cfg["star_sweep_params"].copy()
+    expl_params = (
+        cfg["star_sweep_params"].copy() | cfg[f"star_sweep_params_{wildcards.setting}"]
+    )
 
     ctrl_metric = base_params.ctrl_metric
     key_metric = base_params.key_metric
@@ -83,7 +85,6 @@ def build_key_metrics_table(cfg, base_params, results_csv, wildcards):
     else:
         assert key_metric == "optimal_alpha_stim", f"Unknown key metric: {key_metric}"
         key_metric_func = compute_optimal_alpha_stim
-        expl_params |= cfg["star_sweep_params_measurement_only"]
 
     df = pd.read_csv(results_csv)
     df["alpha_stim"] = df.k / (df.m + df.k)
@@ -94,6 +95,7 @@ def build_key_metrics_table(cfg, base_params, results_csv, wildcards):
     )
 
     ref_condition = cfg["reference_params"]
+    ref_condition |= cfg[f"reference_params_{wildcards.setting}"]
     rows = []
 
     for ep in expl_params:
