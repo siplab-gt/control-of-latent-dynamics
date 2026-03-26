@@ -103,9 +103,7 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
     analysis = wildcards.analysis
     ep = wildcards.ep
 
-    expl_params = cfg["star_sweep_params"].copy()
-    if setting == "optimal_stim_rec":
-        expl_params |= cfg["star_sweep_params_measurement_only"]
+    expl_params = cfg["star_sweep_params"].copy() | cfg[f"star_sweep_params_{setting}"]
 
     ref_condition = cfg["reference_params"] | cfg[f"reference_params_{setting}"]
 
@@ -155,7 +153,8 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
         x_gid = x[group_ids == gid]
         assert np.var(x_gid) > 0, f"x should vary within groups for {ep}. {x_gid=}"
         y_gid = y[group_ids == gid]
-        assert np.var(y_gid) > 0, f"y should vary within groups for {ep}. {y_gid=}"
+        if metric_name not in ["optimal_alpha_stim"]:  # likely to repeat exact values
+            assert np.var(y_gid) > 0, f"y should vary within groups for {ep}. {y_gid=}"
 
     # we will treat categorical variables as discrete unordered but
     # other numerical X and Z (like k or n trials) as discrete ordered
@@ -182,6 +181,8 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
 
     logger.info(f"Using {wildcards.estimator_type} for CMI estimation for EP {ep}")
 
+    cluster_ids = _group_ids_from_z(data[["seed"]])
+
     common_kwargs = dict(
         x=x,
         y=y,
@@ -203,7 +204,7 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
     )
 
     ci_low, ci_high, boot_dist = statistical_validation_bootstrap(
-        **common_kwargs, n_boot=n_shuffle_boot
+        **common_kwargs, n_boot=n_shuffle_boot, cluster_ids=cluster_ids
     )
     assert ci_low <= cmi_val <= ci_high, f"{ep=}, {cmi_val=}, {ci_low=}, {ci_high=}"
 

@@ -130,7 +130,12 @@ def heuristic_bw(data_col, var_type):
         # Silverman's rule of thumb
         sigma = np.std(data_col)
         iqr = np.percentile(data_col, 75) - np.percentile(data_col, 25)
-        return 0.9 * min(sigma, iqr / 1.34) * n ** (-1 / 5)
+        if iqr == 0:
+            a = sigma
+            assert sigma > 0
+        else:
+            a = min(sigma, iqr / 1.34)
+        return 0.9 * a * n ** (-1 / 5)
     elif var_type == "o":
         return 1 / (1 + n**0.5)
     elif var_type == "u":
@@ -352,26 +357,43 @@ def statistical_validation_bootstrap(
     var_types=None,
     n_boot=1000,
     group_ids=None,
+    cluster_ids=None,
     **kwargs,
 ):
     """
     Phase 4: Statistical Validation - Bootstrapping (95% CI).
     Because per-group sample sizes are low, we do cluster bootstrapping.
+    And since bootstrapping assumes IID samples, we treat each seed as a cluster.
     """
     x, z, cat_XZ, cat_Z = _preprocess_features(x, z, cat_XZ, cat_Z, estimator_type)
 
+    if cluster_ids is None:
+        cluster_ids = group_ids
+
     boot_call_count = [0]
 
-    def _stat(group_idx):
-        x_boot = np.empty_like(x)
-        y_boot = np.empty_like(y)
-        z_boot = np.empty_like(z)
-        group_size = np.sum(group_ids == 0)
-        for i_sample, i_group in enumerate(group_idx):
-            idx = np.where(group_ids == i_group)[0]
-            x_boot[i_sample * group_size : (i_sample + 1) * group_size] = x[idx]
-            y_boot[i_sample * group_size : (i_sample + 1) * group_size] = y[idx]
-            z_boot[i_sample * group_size : (i_sample + 1) * group_size] = z[idx]
+    if estimator_type == "kernel":
+        data = np.hstack([x, y, z])
+        bw = np.array(
+            [heuristic_bw(data[:, i], var_types[i]) for i in range(data.shape[1])]
+        )
+        kwargs["bw"] = bw
+
+    def _stat(cluster_idx):
+        x_boot = []
+        y_boot = []
+        z_boot = []
+
+        for i_cluster in cluster_idx:
+            idx = np.where(cluster_ids == i_cluster)[0]
+            x_boot.append(x[idx])
+            y_boot.append(y[idx])
+            z_boot.append(z[idx])
+
+        x_boot = np.concatenate(x_boot, axis=0)
+        y_boot = np.concatenate(y_boot, axis=0)
+        z_boot = np.concatenate(z_boot, axis=0)
+        assert len(x_boot) == len(y_boot) == len(z_boot) == len(x)
 
         cmi = calculate_cmi(
             x_boot,
@@ -389,34 +411,22 @@ def statistical_validation_bootstrap(
         boot_call_count[0] += 1
         return cmi
 
-    data = (np.arange(group_ids.max() + 1),)
-    assert np.all(np.sort(np.unique(group_ids)) == np.arange(group_ids.max() + 1))
-    logger.info(f"Beginning {n_boot} bootstrap resamples...")
+    unique_clusters = np.unique(cluster_ids)
+    data = (unique_clusters,)
+    logger.info(
+        f"Beginning {n_boot} bootstrap resamples over {len(unique_clusters)} clusters..."
+    )
     res = bootstrap(
         data,
         _stat,
         n_resamples=n_boot,
-        method="BCa",
+        method="percentile",  # since BCa supposedly not robust for super small G
         random_state=rng,
     )
 
     ci_low = np.atleast_1d(res.confidence_interval.low)[0]
     ci_high = np.atleast_1d(res.confidence_interval.high)[0]
-
-    if not np.isfinite(ci_low) or not np.isfinite(ci_high):
-        logger.warning(
-            "BCa confidence interval failed. Falling back to percentile method."
-        )
-        res = bootstrap(
-            data,
-            _stat,
-            n_resamples=n_boot,
-            method="percentile",
-            random_state=rng,
-            bootstrap_result=res,
-        )
-        ci_low = np.atleast_1d(res.confidence_interval.low)[0]
-        ci_high = np.atleast_1d(res.confidence_interval.high)[0]
+    assert np.isfinite(ci_low) and np.isfinite(ci_high)
 
     boot_cmis = np.asarray(res.bootstrap_distribution)
     return ci_low, ci_high, boot_cmis
