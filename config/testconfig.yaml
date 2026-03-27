@@ -17,25 +17,16 @@ grid_sweep_params:
 star_sweep_params:
   n_trials_sys_id:
     - 10
-    - 11
   # offset to number of PCs used to train fSNN, which is also used as ground-truth n_x
   n_latent_dims_offset:
     - -2
     - 0
   density_scale:
     - 1
-    - 1.33
-    # - 1.67
-    # - 2
-  network_area_scale: # proportional to array area
-    - 1.44 # minimum for 0.4 mm padding around 4x4mm array, which we want for LFP
-    - 2
-    # - 3
+  network_area_scale:
+    - 1.44
   beam_width_um:
-    # - 10
-    # - 50
     - 100
-    - 200
   model_task_inputs:
     - false
 
@@ -58,7 +49,6 @@ manual_sweep_params:
   m: "depends on setting"
   latency:
     - true
-    - false
 
 #################
 reference_params:
