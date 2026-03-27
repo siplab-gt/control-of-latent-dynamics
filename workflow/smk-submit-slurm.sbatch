@@ -2,7 +2,7 @@
 #SBATCH -Jcold-snakemake-coord                  # Job name (coordinator)
 #SBATCH -N1 --ntasks-per-node=1                 # Coordinator only needs 1 core
 #SBATCH --mem-per-cpu=4G                        # Memory for coordinator
-#SBATCH -t2-00:00:00                           # Time limit D-HH:MM:SS
+#SBATCH -t1-00:00:00                           # Time limit D-HH:MM:SS
 #SBATCH -ologs/slurm-%j.out                         # Combined output and error messages file
 #SBATCH -A gts-crozell3-ece              # Account
 #SBATCH --mail-type=END,FAIL                    # Notify when job ends or fails

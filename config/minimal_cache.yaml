@@ -25,8 +25,7 @@ star_sweep_params_measurement_only:
 
 manual_sweep_params:
   setting:
-    - sufficient_stim
-    - optimal_stim_rec
+    - usid_stim_rec
   task:
     - reaching
   ctrl_type:
@@ -48,14 +47,7 @@ reference_params:
   model_task_inputs: false
   signals: lfp
 
-q1:
-  sufficient_ctrl: 0.9
-  k:
-    - 8
-    - 64
-  m: NA
-
-q2:
+q_usid:
   channel_budget: 64
   num_stim_ratio_levels: 2
 
@@ -105,8 +97,8 @@ prep_fsnn_reaching:
   n_trials_pca: 20
   g: 3
 
-model_fit_optimal_stim_rec:
-  epochs: 10
+model_fit_usid_stim_rec:
+  foo: bar
 
 ctrl_expts:
   Q_cost: 1
@@ -132,10 +124,7 @@ ctrl_expts_LQMPC:
     warm_start: true
     enforce_dpp: true
 
-ctrl_expts_sufficient_stim:
-  ref_type: X
-
-ctrl_expts_optimal_stim_rec:
+ctrl_expts_usid_stim_rec:
   ref_type: Z
 
 power_per_neuron_uW: 1
@@ -151,8 +140,6 @@ model_fit:
 
 model_fit_method: "usid"
 
-model_fit_sufficient_stim:
-  foo: bar
 
 expts:
   u_max_mWmm2: 75

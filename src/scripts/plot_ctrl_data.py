@@ -12,7 +12,9 @@ def plot_all(ctrl_data: CtrlData, outfile, setting="", style="default"):
     light_vars = ["Xhat_fsnn", None, "Zhat", "Yhat", None, None]
 
     to_ignore = dict(
-        sufficient_stim=[], optimal_stim_rec=["Xref_fsnn", "Xref_lds", "Yref"]
+        sufficient_stim=[],
+        optimal_stim_rec=["Xref_fsnn", "Xref_lds", "Yref"],
+        usid_stim_rec=["Xref_fsnn", "Xref_lds", "Yref"],
     )[setting]
 
     nrows = len(vars)

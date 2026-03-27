@@ -52,16 +52,14 @@ star_sweep_params:
 
 star_sweep_params_measurement_only:
   signals:
-    - spikes
+    # - spikes    # dropped — USID uses LFP only
     - lfp
-    - both
 
 # don't automatically sweep these, will be handled manually in Snakefile
 ########################################################################
 manual_sweep_params:
   setting:
-    - sufficient_stim
-    - optimal_stim_rec
+    - usid_stim_rec
   task:
     # - cycling
     - reaching
@@ -91,21 +89,8 @@ reference_params:
 # question-specific parameters
 ##############################
 
-q1: # a.k.a. sufficient stim, how many channels are good enough?
-  ##############################################################
-  sufficient_ctrl: 0.9
-  k:
-    - 1
-    - 2
-    - 4
-    - 8
-    - 16
-    - 32
-    - 64
-  m: NA
-
-q2: # a.k.a. optimal stim/rec balance
-  ###################################
+q_usid: # optimal stim/rec balance for USID
+  #########################################
   channel_budget: 64
   num_stim_ratio_levels: 7
 
@@ -194,18 +179,8 @@ model_fit:
 # (snake/config/base/trainer.yaml, snake/config/overlays/*.yaml)
 model_fit_method: "usid"
 
-model_fit_sufficient_stim:
+model_fit_usid_stim_rec:
   foo: bar
-  # task_specific:  # ???
-  #   reaching:
-  #     n_x1: 3
-  #     epochs: 100
-
-model_fit_optimal_stim_rec:
-  epochs: 2500 # only needed here for braid
-  # as explained in BRAID tutorial, this makes U observable when forecasting and programs steps_ahead=[1, 10]
-  # steps_ahead_model_code: "ObsUKfw_ObsUCfw_sta1;9;10"
-  steps_ahead_model_code: ""
 
 expts: # common to sys ID and ctrl expts
   u_max_mWmm2: 75
@@ -248,11 +223,8 @@ ctrl_expts_LQMPC:
     warm_start: true
     enforce_dpp: true
 
-ctrl_expts_sufficient_stim:
-  ref_type: X # controlling ground-truth factors
-
-ctrl_expts_optimal_stim_rec:
-  ref_type: Z # controlling output
+ctrl_expts_usid_stim_rec:
+  ref_type: Z
 
 # non-essential stuff, don't need to pass in as params to trigger re-runs when changed
 ######################################################################################

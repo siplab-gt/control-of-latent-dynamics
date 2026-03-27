@@ -229,6 +229,8 @@ rule testq1:
 
 
 def get_q2_kms():
+    if "q2" not in config:
+        return iter([])
     budget = int(config["q2"]["channel_budget"])
     kk = np.linspace(
         1, budget - 1, int(config["q2"]["num_stim_ratio_levels"]), endpoint=True
@@ -238,26 +240,34 @@ def get_q2_kms():
     return zip(kk.tolist(), mm.tolist())
 
 
-test_k, test_m = list(get_q2_kms())[-1]
+def get_usid_kms():
+    budget = int(config["q_usid"]["channel_budget"])
+    kk = np.linspace(
+        1, budget - 1, int(config["q_usid"]["num_stim_ratio_levels"]), endpoint=True
+    )
+    kk = np.round(kk).astype(int)
+    mm = budget - kk
+    return zip(kk.tolist(), mm.tolist())
 
 
-rule testq2:
+test_usid_k, test_usid_m = list(get_usid_kms())[-1]
+
+
+rule testq_usid:
     input:
         lambda wc: wildcard_path(
             fill_in_ref=True,
             file=wc.file,
-            setting="optimal_stim_rec",
+            setting="usid_stim_rec",
             task="reaching",
             ctrl_type="LQMPC",
             latency=False,
-            k=test_k,
-            # k=16,
-            m=test_m,
-            # m=48,
-            seed=17230616,
+            k=test_usid_k,
+            m=test_usid_m,
+            seed=config["grid_sweep_params"]["seed"][0],
         ),
     output:
-        "<results>/testq2/{file}",
+        "<results>/testq_usid/{file}",
     localrule: True
     shell:
         # copy only files (not directories)
@@ -309,58 +319,107 @@ rule diagnostic_figs_combined:
         "../src/scripts/diagnostic_figs.py"
 
 
-rule sufficient_stim_tabulate:
-    input:
-        # to get main fig
-        [
-            wildcard_path(
-                file="summary.csv",
-                setting="sufficient_stim",
-                latency=latency,
-                ctrl_type=ctrl,
-                m=NA,
-                k=config["q1"]["k"],
-                seed=config["grid_sweep_params"]["seed"],
-                signals=NA,
-                fill_in_ref=True,
-            )
-            for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
-        ],
-        # exploratory variables
-        [
-            wildcard_path(
-                file="summary.csv",
-                setting="sufficient_stim",
-                latency=latency,
-                ctrl_type=ctrl,
-                k=config["q1"]["k"],
-                m=NA,
-                seed=config["grid_sweep_params"]["seed"],
-                signals=NA,
-                **{var: config["star_sweep_params"][var]},
-                fill_in_ref=True,
-            )
-            for var in config["star_sweep_params"]
-            for ctrl, latency in [("OL", False), ("LQMPC", True)]
-        ],
-    output:
-        protected("<results>/sufficient_stim_{task}.csv"),
-    localrule: True
-    run:
-        dfs = [pd.read_csv(infile) for infile in input]
-        df = pd.concat(dfs, ignore_index=True)
-        print("concatenated sufficient stim DFs")
-        df.to_csv(output[0], index=False)
-        print(f"wrote sufficient stim results to {output[0]}")
+if "q1" in config:
+    rule sufficient_stim_tabulate:
+        input:
+            # to get main fig
+            [
+                wildcard_path(
+                    file="summary.csv",
+                    setting="sufficient_stim",
+                    latency=latency,
+                    ctrl_type=ctrl,
+                    m=NA,
+                    k=config["q1"]["k"],
+                    seed=config["grid_sweep_params"]["seed"],
+                    signals=NA,
+                    fill_in_ref=True,
+                )
+                for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
+            ],
+            # exploratory variables
+            [
+                wildcard_path(
+                    file="summary.csv",
+                    setting="sufficient_stim",
+                    latency=latency,
+                    ctrl_type=ctrl,
+                    k=config["q1"]["k"],
+                    m=NA,
+                    seed=config["grid_sweep_params"]["seed"],
+                    signals=NA,
+                    **{var: config["star_sweep_params"][var]},
+                    fill_in_ref=True,
+                )
+                for var in config["star_sweep_params"]
+                for ctrl, latency in [("OL", False), ("LQMPC", True)]
+            ],
+        output:
+            protected("<results>/sufficient_stim_{task}.csv"),
+        localrule: True
+        run:
+            dfs = [pd.read_csv(infile) for infile in input]
+            df = pd.concat(dfs, ignore_index=True)
+            print("concatenated sufficient stim DFs")
+            df.to_csv(output[0], index=False)
+            print(f"wrote sufficient stim results to {output[0]}")
 
 
-rule optimal_stim_rec_tabulate:
+if "q2" in config:
+    rule optimal_stim_rec_tabulate:
+        input:
+            # to get main fig
+            [
+                wildcard_path(
+                    file="summary.csv",
+                    setting="optimal_stim_rec",
+                    latency=latency,
+                    ctrl_type=ctrl,
+                    k=k,
+                    m=m,
+                    seed=config["grid_sweep_params"]["seed"],
+                    fill_in_ref=True,
+                )
+                for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
+                for k, m in get_q2_kms()
+            ],
+            # exploratory variables
+            [
+                wildcard_path(
+                    file="summary.csv",
+                    setting="optimal_stim_rec",
+                    latency=latency,
+                    ctrl_type=ctrl,
+                    k=k,
+                    m=m,
+                    seed=config["grid_sweep_params"]["seed"],
+                    **{var: values},
+                    fill_in_ref=True,
+                )
+                for var, values in (
+                    config["star_sweep_params"]
+                    | config["star_sweep_params_measurement_only"]
+                ).items()
+                for ctrl, latency in [("OL", False), ("LQMPC", True)]
+                for k, m in get_q2_kms()
+            ],
+        output:
+            protected("<results>/optimal_stim_rec_{task}.csv"),
+        localrule: True
+        run:
+            dfs = [pd.read_csv(infile) for infile in input]
+            df = pd.concat(dfs, ignore_index=True)
+            print("concatenated optimal stim rec DFs")
+            df.to_csv(output[0], index=False)
+            print(f"wrote optimal stim rec results to {output[0]}")
+
+
+rule usid_stim_rec_tabulate:
     input:
-        # to get main fig
         [
             wildcard_path(
                 file="summary.csv",
-                setting="optimal_stim_rec",
+                setting="usid_stim_rec",
                 latency=latency,
                 ctrl_type=ctrl,
                 k=k,
@@ -369,13 +428,12 @@ rule optimal_stim_rec_tabulate:
                 fill_in_ref=True,
             )
             for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
-            for k, m in get_q2_kms()
+            for k, m in get_usid_kms()
         ],
-        # exploratory variables
         [
             wildcard_path(
                 file="summary.csv",
-                setting="optimal_stim_rec",
+                setting="usid_stim_rec",
                 latency=latency,
                 ctrl_type=ctrl,
                 k=k,
@@ -389,17 +447,17 @@ rule optimal_stim_rec_tabulate:
                 | config["star_sweep_params_measurement_only"]
             ).items()
             for ctrl, latency in [("OL", False), ("LQMPC", True)]
-            for k, m in get_q2_kms()
+            for k, m in get_usid_kms()
         ],
     output:
-        protected("<results>/optimal_stim_rec_{task}.csv"),
+        protected("<results>/usid_stim_rec_{task}.csv"),
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
         df = pd.concat(dfs, ignore_index=True)
-        print("concatenated optimal stim rec DFs")
+        print("concatenated USID stim rec DFs")
         df.to_csv(output[0], index=False)
-        print(f"wrote optimal stim rec results to {output[0]}")
+        print(f"wrote USID stim rec results to {output[0]}")
 
 
 rule analyze_ctrl_data:

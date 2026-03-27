@@ -82,8 +82,7 @@ def main(
         key_metric_func = compute_k_suff
         main_fig_plot_type = "lineplots"
         plots_per_row = 3
-    else:  # optimal_stim_rec
-        assert setting == "optimal_stim_rec", f"Unknown setting: {setting}"
+    elif setting in ("optimal_stim_rec", "usid_stim_rec"):
         metric = "Q_track_Zref_Z"
         colorbar_label = r"$Q_\text{track}\left(Z_\text{ref}, Z\right)$"
         key_metric_name = "optimal_p_stim"
