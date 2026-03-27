@@ -358,8 +358,10 @@ def main(
         dependence_ctrl_res = CMIEstimateSet.load(dependence_control_file)
 
         # Maps
-        key_map = {res.ep: res for res in dependence_key_res.ep_results}
-        ctrl_map = {res.ep: res for res in dependence_ctrl_res.ep_results}
+        key_map = {res.ep: res for res in dependence_key_res.null_corrected_ep_results}
+        ctrl_map = {
+            res.ep: res for res in dependence_ctrl_res.null_corrected_ep_results
+        }
 
         # Helper to get significance threshold (FDR corrected)
         def get_fdr_threshold(results_list, alpha=0.05):
@@ -477,6 +479,7 @@ def main(
 
             # Plot Key
             if ep in key_map:
+                res = key_map[ep]
                 sns.violinplot(
                     data=df_plot[df_plot["Type"] == "Key"],
                     x="Type",
@@ -515,6 +518,7 @@ def main(
 
             # Plot Control
             if ep in ctrl_map:
+                res = ctrl_map[ep]
                 sns.violinplot(
                     data=df_plot[df_plot["Type"] == "Control"],
                     x="Type",
@@ -554,8 +558,11 @@ def main(
 
             # Clean up
             ax.set_xlabel("")
+            # remove x spine, ticks, labels
+            ax.spines["bottom"].set_visible(False)
+            ax.set_xticks([])
             if ax == dependence_axs.flat[0]:
-                ax.set_ylabel("dependence (bits)")
+                ax.set_ylabel("Null-corrected CMI (bits)")
             else:
                 ax.set_ylabel("")
             # Or keep them? Space is tight.

@@ -5,7 +5,7 @@ from scipy.stats import false_discovery_control
 
 from src.data_classes import BaseDataClass
 from src.helpers import preprocess_params
-from src.scripts.dependence_analysis import SEED, CMIEstimate
+from src.scripts.dependence_analysis import SEED, CMIEstimate, NullCorrectedCMIEstimate
 
 
 @dataclass
@@ -17,6 +17,12 @@ class CMIEstimateSet(BaseDataClass):
     n_bootstraps: int
     random_seed: int
     ep_results: list[CMIEstimate] = field(default_factory=list)
+
+    @property
+    def null_corrected_ep_results(self):
+        return [
+            NullCorrectedCMIEstimate(cmi_estimate=entry) for entry in self.ep_results
+        ]
 
 
 def main(cond_params, base_params, infiles, outfile):

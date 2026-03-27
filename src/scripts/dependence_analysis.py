@@ -48,6 +48,23 @@ class CMIEstimate(BaseDataClass):
             print(pd.DataFrame([self.summary_dict]))
 
 
+class NullCorrectedCMIEstimate(CMIEstimate):
+    """CMI estimate with null distribution bias correction."""
+
+    cmi_estimate: CMIEstimate
+
+    def __init__(self, cmi_estimate: CMIEstimate):
+        self.cmi_estimate = cmi_estimate
+
+    def __getattr__(self, name):
+        if name in ["cmi", "ci_low", "ci_high", "null_dist", "boot_dist"]:
+            return getattr(self.cmi_estimate, name) - np.mean(
+                self.cmi_estimate.null_dist
+            )
+        else:
+            return getattr(self.cmi_estimate, name)
+
+
 SEED = 18810929
 
 
