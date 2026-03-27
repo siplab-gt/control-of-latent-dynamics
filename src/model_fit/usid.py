@@ -24,9 +24,13 @@ from sklearn.linear_model import Ridge
 log = logging.getLogger(__name__)
 
 # Add USID repo to path for imports
-USID_REPO_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..")
-)
+USID_REPO_PATH = os.environ.get("USID_REPO_ROOT")
+if not USID_REPO_PATH:
+    raise EnvironmentError(
+        "USID_REPO_ROOT environment variable not set. "
+        "Set it to the root of the siplab-gt/usid repository."
+    )
+USID_REPO_PATH = os.path.abspath(USID_REPO_PATH)
 if USID_REPO_PATH not in sys.path:
     sys.path.insert(0, USID_REPO_PATH)
 

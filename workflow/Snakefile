@@ -1,6 +1,7 @@
 from copy import deepcopy
 from functools import cache
 from math import ceil
+import os
 import numpy as np
 import pandas as pd
 import itertools
@@ -543,7 +544,11 @@ def get_usid_dependencies(wildcards):
         return []
     if config.get("model_fit_method", "braid") != "usid":
         return []
-    usid_repo = "../../.."
+    usid_repo = os.environ.get("USID_REPO_ROOT", "")
+    if not usid_repo:
+        raise ValueError(
+            "USID_REPO_ROOT not set. Export it to the siplab-gt/usid repo root."
+        )
     return [
         f"{usid_repo}/scripts/usid_subspace_interface.py",
         f"{usid_repo}/models/USIDModel.py",

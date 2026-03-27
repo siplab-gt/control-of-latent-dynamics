@@ -14,9 +14,9 @@ module load cuda/12.1.1                         # CUDA for Brian2CUDA (supports 
 eval "$(conda shell.bash hook)"
 conda activate ~/r-crozell3-0/envs/USID
 
-# Add USID repo to PYTHONPATH for model_fit_method=usid
-USID_REPO="$(cd ../../.. && pwd)"
-export PYTHONPATH="${PYTHONPATH}:${USID_REPO}"
+# USID repo path (required for model_fit_method=usid)
+export USID_REPO_ROOT="/storage/project/r-crozell3-0/zbeddingfield3/projects/usid"
+export PYTHONPATH="${PYTHONPATH}:${USID_REPO_ROOT}"
 
 # Config file selection (default to testconfig for faster runs)
 CONFIG_FILE="${1:-../config/testconfig.yaml}"
