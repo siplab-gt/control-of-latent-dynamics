@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 
 from src.data_classes import BaseDataClass
 from src.helpers import (
+    PassthroughIOProcessor,  # Required for dill to deserialize CleoPrep with LFP
     preprocess_params,
     seed_everything,
     setup_debugger,
@@ -120,12 +121,17 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     print("loaded cleo_prep before sys_id_expts", cleo_prep)
     assert cleo_prep.sim.network == cleo_prep.fsnn.net
 
-    seed = seed_everything(int(cond_params["seed"]), "sys_id_expts")
+    natural_only = getattr(base_params, 'natural_only', False)
+    salt = "natural_electrode_expts" if natural_only else "sys_id_expts"
+    seed = seed_everything(int(cond_params["seed"]), salt)
     rng = np.random.default_rng(seed)
 
     k = cond_params.k
-    u_max = base_params.u_max_mWmm2
-    n_trials = base_params.n_trials_sys_id_max
+    if natural_only:
+        n_trials = int(base_params.n_trials_natural)
+    else:
+        u_max = base_params.u_max_mWmm2
+        n_trials = int(base_params.n_trials_sys_id_max)
 
     spike_counts = []
 
@@ -137,11 +143,16 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
             ]:
                 t, i, counts = state_dict["Probe"]["mua"]
                 spike_counts.append(counts)
-            u_logmean = np.log(base_params.typical_Irr0_mWmm2)
-            u_logstd = np.log(u_max) / 3
-            value = (
-                rng.lognormal(u_logmean, u_logstd, k).clip(0, u_max) * b2.mwatt / b2.mm2
-            )
+            if natural_only:
+                # Zero irradiance → zero photocurrent → pure natural dynamics
+                value = np.zeros(k) * b2.mwatt / b2.mm2
+            else:
+                u_logmean = np.log(base_params.typical_Irr0_mWmm2)
+                u_logstd = np.log(u_max) / 3
+                value = (
+                    rng.lognormal(u_logmean, u_logstd, k).clip(0, u_max)
+                    * b2.mwatt / b2.mm2
+                )
             return {"light array": value}, t_samp
 
     cleo_prep.sim.set_io_processor(

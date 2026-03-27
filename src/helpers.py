@@ -13,6 +13,18 @@ from jaxtyping import UInt
 from src.log_redirector import setup_permanent_logging
 
 
+class PassthroughIOProcessor(cleo.LatencyIOProcessor):
+    """Minimal IOProcessor that provides sample_period but no control.
+
+    Used for open-loop data collection where we need an IOProcessor
+    (for LFP signal sample_period) but don't need actual control.
+    """
+
+    def process(self, state_dict: dict, t_samp: b2.Quantity) -> tuple[dict, b2.Quantity]:
+        """Return empty control signals (no-op for open-loop data collection)."""
+        return {}, 0 * b2.ms
+
+
 def seed_everything(seed: int, extra_seed_str=""):
     """Set seed for numpy, brian, and cleo
 

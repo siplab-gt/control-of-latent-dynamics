@@ -84,7 +84,11 @@ def step_from_filename(filename: str) -> str:
         return "prep_fsnn"
     elif "cleo" in filename:
         return "cleo_prep"
+    elif "natural_electrode" in filename:
+        return "sys_id_expts"
     elif "sys_id" in filename:
+        return "sys_id_expts"
+    elif "usid" in filename:
         return "sys_id_expts"
     elif "model_fit" in filename:
         return "model_fit"
@@ -142,7 +146,7 @@ def wildcard_path(file: str, fill_in_ref=False, **kwargs) -> str:
     return out
 
 
-NA = "NA"  # when a parameter is not applicable (e.g. ctrl_type for cleo_prep)
+NA = "NA"  # when a parameter is not applicable (e.g. latency for open-loop control)
 
 
 def params_from_cfg(*params: str, keep_parent_keys=False, keep_target_key=True) -> dict:
@@ -210,7 +214,7 @@ rule testq1:
             task="reaching",
             latency=False,
             ctrl_type="LQMPC",
-            k=100,
+            k=64,
             m=NA,
             seed=17230616,
             signals=NA,
@@ -326,8 +330,8 @@ rule sufficient_stim_tabulate:
             wildcard_path(
                 file="summary.csv",
                 setting="sufficient_stim",
-                latency=False,
-                ctrl_type="LQMPC",
+                latency=latency,
+                ctrl_type=ctrl,
                 k=config["q1"]["k"],
                 m=NA,
                 seed=config["grid_sweep_params"]["seed"],
@@ -336,12 +340,13 @@ rule sufficient_stim_tabulate:
                 fill_in_ref=True,
             )
             for var in config["star_sweep_params"]
+            for ctrl, latency in [("OL", False), ("LQMPC", True)]
         ],
     output:
         protected("<results>/sufficient_stim_{task}.csv"),
     localrule: True
     run:
-        dfs = [pd.read_csv(infile) for infile in set(input)]
+        dfs = [pd.read_csv(infile) for infile in input]
         df = pd.concat(dfs, ignore_index=True)
         print("concatenated sufficient stim DFs")
         df.to_csv(output[0], index=False)
@@ -370,8 +375,8 @@ rule optimal_stim_rec_tabulate:
             wildcard_path(
                 file="summary.csv",
                 setting="optimal_stim_rec",
-                latency=False,
-                ctrl_type="LQMPC",
+                latency=latency,
+                ctrl_type=ctrl,
                 k=k,
                 m=m,
                 seed=config["grid_sweep_params"]["seed"],
@@ -382,13 +387,14 @@ rule optimal_stim_rec_tabulate:
                 config["star_sweep_params"]
                 | config["star_sweep_params_measurement_only"]
             ).items()
+            for ctrl, latency in [("OL", False), ("LQMPC", True)]
             for k, m in get_q2_kms()
         ],
     output:
         protected("<results>/optimal_stim_rec_{task}.csv"),
     localrule: True
     run:
-        dfs = [pd.read_csv(infile) for infile in set(input)]
+        dfs = [pd.read_csv(infile) for infile in input]
         df = pd.concat(dfs, ignore_index=True)
         print("concatenated optimal stim rec DFs")
         df.to_csv(output[0], index=False)
@@ -419,7 +425,7 @@ rule plot_ctrl_data_wide:
         wildcard_path("ctrl_data.pkl.gz"),
         "src/plot_style.py",
     output:
-        wildcard_path("ctrl_data_wide_plot_{style}.{ext}"),
+        wildcard_path("ctrl_data_wide_plot_{style}.png"),
     localrule: True
     script:
         "../src/scripts/plot_ctrl_data.py"
@@ -465,10 +471,10 @@ rule ctrl_expts:
     output:
         data=wildcard_path("ctrl_data.pkl.gz"),
     conda:
-        "cold"
+        "envs/main.yaml"
     resources:
-        mem_mb=lambda wc: fsnn_mem_required(wc) * 1.5,
-        runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=8),
+        mem_mb=4000,
+        runtime=15,
     log:
         wildcard_path("ctrl_expts.log"),
     retries: 1
@@ -507,43 +513,76 @@ rule analyze_model_fit:
         "../src/scripts/analyze_model_fit.py"
 
 
-rule analyze_model_fit_rollout:
-    input:
-        lds=wildcard_path("model_fit_lds.pkl.gz"),
-        sys_id=wildcard_path("sys_id_data.pkl.gz"),
-    output:
-        wildcard_path("model_fit_rollout_r2.csv"),
-    log:
-        wildcard_path("analyze_model_fit_rollout.log"),
-    localrule: True
-    script:
-        "../src/scripts/analyze_model_fit_rollout.py"
+# =============================================================================
+# Model Fit (BRAID, USID, or Known Factors)
+# =============================================================================
+
+# Model fit method selection based on config and wildcards
+def get_model_fit_method(wildcards):
+    """
+    Select model_fit method based on config and wildcards.
+
+    Priority:
+    1. sufficient_stim setting always uses known_factors
+    2. config["model_fit_method"] selects between "braid" (default) and "usid"
+    """
+    if wildcards.setting == "sufficient_stim":
+        return "src/model_fit/known_factors.py"
+    method = config.get("model_fit_method", "braid")
+    if method == "usid":
+        return "src/model_fit/usid.py"
+    return "src/model_fit/braid.py"
 
 
-rule plot_model_fit_rollout_r2:
-    input:
-        "src/plot_style.py",
-        r2_data=wildcard_path("model_fit_rollout_r2.csv"),
-    output:
-        wildcard_path("model_fit_rollout_r2_plot.{ext}"),
-    localrule: True
-    script:
-        "../src/scripts/plot_model_fit_rollout_r2.py"
+def get_usid_dependencies(wildcards):
+    """
+    Return USID repo files as dependencies when model_fit_method=usid.
+    This ensures Snakemake reruns model_fit if any USID integration code changes.
+    """
+    if wildcards.setting == "sufficient_stim":
+        return []
+    if config.get("model_fit_method", "braid") != "usid":
+        return []
+    usid_repo = "../../.."
+    return [
+        f"{usid_repo}/scripts/usid_subspace_interface.py",
+        f"{usid_repo}/models/USIDModel.py",
+        f"{usid_repo}/models/NaturalModel.py",
+        f"{usid_repo}/models/base_model.py",
+        f"{usid_repo}/models/Parameterization.py",
+        f"{usid_repo}/scripts/utils/config_io.py",
+        f"{usid_repo}/scripts/usid_data_interface.py",
+        f"{usid_repo}/scripts/usid_training_core.py",
+    ]
 
 
-# assume BRAID, GPU, heavier resources when not sufficient stim (known factors)
+def get_natural_data_input(wildcards):
+    """Return natural electrode data path when method=usid, empty list otherwise."""
+    if wildcards.setting == "sufficient_stim":
+        return []
+    if config.get("model_fit_method", "braid") != "usid":
+        return []
+    return wildcard_path("natural_electrode_data.pkl.gz")
+
+
+# assume GPU-heavy resources when not sufficient stim (BRAID or USID)
 def gpu_for_model_fit(wc):
     return int(wc.setting != "sufficient_stim" and config["model_fit_device"] == "gpu")
+
+
+def slurm_extra_for_model_fit(wc):
+    """Return SLURM partition for model fit."""
+    if gpu_for_model_fit(wc):
+        return "gpu-v100"
+    return "cpu-small"
 
 
 rule model_fit:
     input:
         "src/model_fit/__init__.py",
-        method=branch(
-            lambda wc: wc.setting == "sufficient_stim",
-            then="src/model_fit/known_factors.py",
-            otherwise="src/model_fit/braid.py",
-        ),
+        method=get_model_fit_method,
+        usid_deps=get_usid_dependencies,
+        natural_data=get_natural_data_input,
         sys_id_data=wildcard_path("sys_id_data.pkl.gz"),
     params:
         step_cfg("model_fit"),
@@ -553,15 +592,13 @@ rule model_fit:
         pred_data=wildcard_path("model_fit_pred_data.pkl.gz"),
     threads: lambda wc: max(1, 8 * gpu_for_model_fit(wc))
     resources:
-        gpu=gpu_for_model_fit,
-        gpu_jobs=gpu_for_model_fit,
-        mem_mb=lambda wc: 32000 if wc.setting != "sufficient_stim" else 4000,
-        # since slurm executor sets to 1, which breaks
-        tasks_per_gpu=0,
-        runtime=lambda wc: 120 if wc.setting != "sufficient_stim" else 10,
+        slurm_partition=slurm_extra_for_model_fit,
+        gpu=1,
+        mem_mb=32000,
+        runtime=120,
     retries: 1
     conda:
-        "cold"
+        "envs/main.yaml"
     log:
         wildcard_path("model_fit.log"),
     script:
@@ -609,13 +646,22 @@ rule sys_id_expts:
     log:
         wildcard_path("sys_id_expts.log"),
     conda:
-        "cold"
+        "envs/main.yaml"
     resources:
-        mem_mb=fsnn_mem_required,
-        runtime=runtime_min(n_trials_sys_id_max, multiplier=1.5),
+        mem_mb=4000,
+        runtime=60,
     retries: 1  # since there can be conflicts hitting the cython cache
     script:
         "../src/scripts/sys_id_expts.py"
+
+
+use rule sys_id_expts as natural_electrode_expts with:
+    params:
+        step_cfg("cleo_prep", "natural_electrode_expts"),
+    output:
+        wildcard_path("natural_electrode_data.pkl.gz"),
+    log:
+        wildcard_path("natural_electrode_expts.log"),
 
 
 rule impulse_responses:
@@ -658,7 +704,6 @@ rule plot_cleo:
         "src/fsnn/__init__.py",
         "src/fsnn/{task}.py",
         "src/scripts/cleo_prep.py",
-        "src/cleo_prep_{setting}.py",
         "src/plot_style.py",
     output:
         wildcard_path("cleo_plot.{ext}"),
@@ -683,7 +728,13 @@ rule cleo_prep:
         wildcard_path("cleo_prep.pkl.gz"),
     log:
         wildcard_path("cleo_prep.log"),
-    localrule: True
+    resources:
+        gpu=0,
+        mem_mb=16000,  # 16GB for loading large fSNN pickle files
+        runtime=60,    # 60 min timeout (increased from 30 for LFP jobs)
+    retries: 1
+    conda:
+        "envs/main.yaml"
     script:
         "../src/scripts/cleo_prep.py"
 
@@ -747,6 +798,13 @@ def gpu_for_fsnn_train(wc):
     return int(wc["mode"] == "train" and config["train_device"] == "cuda")
 
 
+def slurm_extra_for_fsnn(wc):
+    """Return SLURM partition for fSNN simulation."""
+    if gpu_for_fsnn_train(wc):
+        return "gpu-v100"
+    return "cpu-small"
+
+
 def fsnn_runtime(wc):
     params = fsnn_params(wc)
     n_train_trials = 0
@@ -771,13 +829,13 @@ rule _prep_fsnn:
     # only use 2 threads; more requires a lot of memory for parallel compilation
     threads: lambda wc: max(1, 4 * gpu_for_fsnn_train(wc))
     resources:
-        gpu=gpu_for_fsnn_train,
-        gpu_jobs=gpu_for_fsnn_train,
-        runtime=fsnn_runtime,
-        mem_mb=lambda wc: fsnn_mem_required(wc) if wc["mode"] != "train" else 64000,
+        slurm_partition=slurm_extra_for_fsnn,
+        gpu=1,
+        runtime=120,
+        mem_mb=64000,
     retries: 1
     conda:
-        "cold"
+        "envs/main.yaml"
     script:
         "../src/scripts/prep_fsnn.py"
 

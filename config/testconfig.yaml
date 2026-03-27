@@ -38,7 +38,6 @@ star_sweep_params:
     - 200
   model_task_inputs:
     - false
-    - true
 
 star_sweep_params_measurement_only:
   signals:
@@ -46,16 +45,32 @@ star_sweep_params_measurement_only:
     - lfp
     # - both
 
-# #################
+# don't automatically sweep these, will be handled manually in Snakefile
+########################################################################
+manual_sweep_params:
+  setting:
+    - sufficient_stim
+    - optimal_stim_rec
+  task:
+    - reaching
+  ctrl_type:
+    - OL
+    - LQMPC
+  k: "depends on setting"
+  m: "depends on setting"
+  latency:
+    - true
+    - false
+
+#################
 reference_params:
-  #   ###############
-  n_trials_sys_id: 10 # TODO
-  # n_latent_dims_offset: 0
-  # density_scale: 1
-  # network_area_scale: 1.44
-  # beam_width_um: 100
-  # latency: true
-  # model_task_inputs: true
+  n_trials_sys_id: 10
+  n_latent_dims_offset: 0
+  density_scale: 1
+  network_area_scale: 1.44
+  beam_width_um: 100
+  latency: true
+  model_task_inputs: false
   signals: lfp
 
 # question-specific parameters
@@ -63,19 +78,17 @@ reference_params:
 
 q1: # a.k.a. sufficient stim, how many channels are good enough?
   ##############################################################
+  sufficient_ctrl: 0.9
   k:
     - 1
-    # - 2
-    # - 4
-    - 33
-    # - 16
-    - 67
-    - 100
+    - 8
+    - 32
+    - 64
   m: NA
 
 q2: # a.k.a. optimal stim/rec balance
   ###################################
-  # channel_budget: 100
+  channel_budget: 64
   num_stim_ratio_levels: 4 # instead of 7
 # #########################################
 # # base parameters, used across conditions
@@ -87,9 +100,33 @@ q2: # a.k.a. optimal stim/rec balance
 # ##################################################################
 
 prep_fsnn:
+  dt_ms: 1
+  base_neuron_density: 125
+  layer_density_ratios:
+    - 1.231
+    - 1.539
+    - 1
+  layer_boundaries_um:
+    - 150
+    - 550
+    - 900
+    - 1450
+  connection_distance_penalty_max: 1
+  connection_layer_penalty_max: 0.1
   n_init_trials: 0
   n_main_trials: 0
-  # n_settle_trials: 0
+  n_settle_trials: 0
+  dtrls: 2
+  tau_v_ms: 10
+  tau_s_ms: 100
+  tau_f_ms: 5
+  vth: 1e-16
+  vr: -10
+  g: 6
+  muf: -0.3
+  gs: 0.11
+  gf: 0.13
+  default_float_dtype: float32
 
 prep_fsnn_demean:
   n_init_trials: 5 # 50
@@ -106,21 +143,86 @@ prep_fsnn_test:
 #   iti_lambda_s: 0
 #   t_event_s: [0.5, 1.95]
 #   muf: -0.5 # recurrent inhibtion
+prep_fsnn_cycling:
+  iti_min_s: 0
+  iti_lambda_s: 0
+  t_event_s: [0.5, 1.95]
+  muf: -0.5
+
 prep_fsnn_reaching:
+  iti_min_s: .4
+  iti_lambda_s: 2
+  t_event_s: [0.35, 0.15, 0.31]
   n_rate_neurons: 200 # 800
   n_trials_pca: 20 # for rate network
+  g: 3
 
 model_fit_optimal_stim_rec:
   epochs: 10 # only needed here for braid
 
 ctrl_expts:
-  #   Q_cost: 1
-  #   R_cost: 1e-3
-  #   ctrl_horizon_ms: 300
-  #   # n_trials_ctrl: 100
+  Q_cost: 1
+  R_cost: 1e-3
+  ctrl_horizon_ms: 300
   n_trials_ctrl: 5
-#   baseline_latency_ms: 1
+  baseline_latency_ms: 1
+  solvers: ["osqp", "clarabel", "scs"]
 
-pathvars:
-  results: results/test
-  logs: logs/test
+ctrl_expts_OL:
+  time_limit_ms: 2000
+  solver_args:
+    max_iter: 1e8
+    eps_infeas: 1e-8
+    verbose: true
+    ignore_dpp: true
+
+ctrl_expts_LQMPC:
+  time_limit_ms: 20
+  solver_args:
+    max_iter: 1e8
+    eps_infeas: 1e-8
+    warm_start: true
+    enforce_dpp: true
+
+ctrl_expts_sufficient_stim:
+  ref_type: X
+
+ctrl_expts_optimal_stim_rec:
+  ref_type: Z
+
+# Base parameters
+#################
+power_per_neuron_uW: 1
+
+cleo_prep:
+  array_side_length_mm: 4
+  array_n_per_side: 8
+  typical_Irr0_mWmm2: 5
+  subsample_factor: 10
+
+model_fit:
+  linear_Cz: true
+
+# Model fit method selection
+model_fit_method: "usid"
+
+model_fit_sufficient_stim:
+  foo: bar
+
+expts:
+  u_max_mWmm2: 75
+
+sys_id_expts:
+  foo: bar
+
+natural_electrode_expts:
+  natural_only: true
+  n_trials_natural: 10
+
+# Non-essential
+report_period_s: 60
+train_device: cuda  # requires module load cuda/12.1.1 for sm_70/V100 support
+model_fit_device: gpu
+log_level: DEBUG
+auto_plot: true
+debug: false

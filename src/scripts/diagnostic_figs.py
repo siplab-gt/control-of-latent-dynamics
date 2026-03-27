@@ -38,8 +38,6 @@ metric_groups = [
         [
             "Q_track_Zref_Z",
             "Q_track_Xref_X_fsnn",
-            "acc_pred_cond_X",
-            "acc_pred_cond_Z",
         ],
         "Q",
     ),
@@ -182,8 +180,8 @@ def main(cfg, results_csvs, outfiles):
     psty.style_plots()
 
     df = pd.concat([pd.read_csv(f) for f in results_csvs], ignore_index=True)
-    if "alpha_stim" not in df.columns and {"k", "m"}.issubset(df.columns):
-        df["alpha_stim"] = df["k"] / (df["m"] + df["k"])
+    if "p_stim" not in df.columns and {"k", "m"}.issubset(df.columns):
+        df["p_stim"] = df["k"] / (df["m"] + df["k"])
     df["m"] = df["m"].fillna(0)
     df["signals"] = df["signals"].fillna("N/A")
     df["seed"] = df["seed"].astype("category")

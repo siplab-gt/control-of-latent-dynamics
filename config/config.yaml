@@ -83,7 +83,7 @@ reference_params:
   density_scale: 1
   network_area_scale: 1.44
   beam_width_um: 100
-  latency: false
+  latency: true
   model_task_inputs: true
   signals: lfp
 
@@ -97,23 +97,17 @@ q1: # a.k.a. sufficient stim, how many channels are good enough?
   k:
     - 1
     - 2
-    - 5
-    - 10
-    - 20
-    - 30
-    - 40
-    - 50
-    - 60
-    - 70
-    - 80
-    - 90
-    - 100
+    - 4
+    - 8
+    - 16
+    - 32
+    - 64
   m: NA
 
 q2: # a.k.a. optimal stim/rec balance
   ###################################
-  channel_budget: 100
-  num_stim_ratio_levels: 11
+  channel_budget: 64
+  num_stim_ratio_levels: 7
 
 #########################################
 # base parameters, used across conditions
@@ -186,13 +180,19 @@ prep_fsnn_reaching:
 
 cleo_prep:
   array_side_length_mm: 4
-  array_n_per_side: 10
+  array_n_per_side: 8
   typical_Irr0_mWmm2: 5
   # needed early for LFP
   subsample_factor: 10 # ctrl/sample period relative to fsnn dt
 
 model_fit:
   linear_Cz: true
+
+# Model fit method selection
+# Options: "braid" (default), "usid", "known_factors" (sufficient_stim only)
+# When "usid" is selected, parameters are read from USID repo's config system
+# (snake/config/base/trainer.yaml, snake/config/overlays/*.yaml)
+model_fit_method: "usid"
 
 model_fit_sufficient_stim:
   foo: bar
@@ -212,6 +212,10 @@ expts: # common to sys ID and ctrl expts
 
 sys_id_expts:
   foo: bar
+
+natural_electrode_expts:
+  natural_only: true
+  n_trials_natural: 50
 
 ctrl_expts:
   Q_cost: 1

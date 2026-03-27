@@ -7,7 +7,7 @@ import cleo
 
 from src.data_classes import BaseDataClass
 from src.fsnn import fSNN
-from src.helpers import preprocess_params, setup_debugger, setup_logging
+from src.helpers import PassthroughIOProcessor, preprocess_params, setup_debugger, setup_logging
 
 log = logging.getLogger(__name__)
 
@@ -145,6 +145,9 @@ class CleoPrep(BaseDataClass):
             if cond_params.signals in ["lfp", "both"]:
                 # we don't have separate AMPA and GABA currents, but we will
                 # use the sum ΣI as a rudimentary LFP proxy (as shown in Mazzoni 2015)
+                sample_period = fsnn.dt * base_params.subsample_factor
+                # Set up PassthroughIOProcessor with sample_period for LFP signal
+                sim.set_io_processor(PassthroughIOProcessor(sample_period=sample_period))
                 signals.append(lfp := RWSLFPSignalFromPSCs(name="lfp"))
                 # SCLFP works quite a bit better than TKLFP from preliminary experiments.
                 # signals.append(lfp := TKLFPSignal(name="lfp"))
@@ -152,7 +155,7 @@ class CleoPrep(BaseDataClass):
                     Iampa_var_names=["vinf"],
                     Igaba_var_names=[],
                     tklfp_type="exc",
-                    sample_period=fsnn.dt * base_params.subsample_factor,
+                    sample_period=sample_period,
                 )
             probe = Probe(probe_coords, signals=signals)
             sim.inject(probe, fsnn.ng_main, **inj_kwargs)

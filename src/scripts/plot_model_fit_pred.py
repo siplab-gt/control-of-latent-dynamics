@@ -41,30 +41,22 @@ def plot_model_fit_predictions(
     ls = "-"
     if cond_params.signals in ["both", "spikes"]:
         i_split = expt_data.spikes.shape[1]
-        pred_spikes, pred_lfp = np.split(mfpd.Yhat, [i_split], axis=1)
     elif cond_params.signals == "lfp":
         i_split = 0
-        pred_spikes, pred_lfp = np.split(mfpd.Yhat, [i_split], axis=1)
-    elif cond_params.signals == "NA":
-        pred_spikes = pred_lfp = 0
+    pred_spikes, pred_lfp = np.split(mfpd.Yhat, [i_split], axis=1)
 
     if style != "heatmap":
         axs[0].plot(
             mfpd.t_ms, mfpd.Xhat_lds2fsnn + offsets_list[0], c="k", ls=ls, lw=lw
         )
         axs[1].plot(mfpd.t_ms, mfpd.Zhat + offsets_list[1], c="k", ls=ls, lw=lw)
-        if cond_params.signals != "NA":
-            axs[2].plot(mfpd.t_ms, pred_spikes + offsets_list[2], c="k", ls=ls, lw=lw)
-            axs[3].plot(mfpd.t_ms, pred_lfp + offsets_list[3], c="k", ls=ls, lw=lw)
+        axs[2].plot(mfpd.t_ms, pred_spikes + offsets_list[2], c="k", ls=ls, lw=lw)
+        axs[3].plot(mfpd.t_ms, pred_lfp + offsets_list[3], c="k", ls=ls, lw=lw)
 
     U_lds = expt_data.Uopto
     if lds.k_task > 0:
         U_lds = np.hstack([U_lds, expt_data.Utask])
     U_lds = (U_lds - lds.u_mean) / lds.u_std
-    # pad with zeros to simplify rollout past T
-    max_horizon = 50
-    T = expt_data.X.shape[0]
-    U_lds = np.vstack([U_lds, np.zeros((max_horizon, U_lds.shape[1]))])
 
     dt = expt_data.t_ms[1] - expt_data.t_ms[0]
     # plot rollouts of different lengths
@@ -74,14 +66,12 @@ def plot_model_fit_predictions(
         for n_ahead, alpha in [
             (5, 0.75),
             (25, 0.5),
-            (max_horizon, 0.25),
+            (50, 0.25),
         ]:
             for ax in axs:
                 ax.set_prop_cycle(None)  # reset color cycler
             for i_ahead in range(i_ahead_start, n_ahead):
-                Xhat_ahead = (
-                    Xhat_ahead @ lds.A.T + U_lds[i_ahead : i_ahead + T] @ lds.B.T
-                )
+                Xhat_ahead = Xhat_ahead @ lds.A.T + U_lds[i_ahead] @ lds.B.T
             i_ahead_start = n_ahead
 
             t_ms = expt_data.t_ms + n_ahead * dt
@@ -99,16 +89,11 @@ def plot_model_fit_predictions(
                 ls=ls,
                 lw=lw,
             )
-            if cond_params.signals != "NA":
-                spikes_ahead, lfp_ahead = np.split(
-                    Xhat_ahead @ lds.C.T * lds.y_std + lds.y_mean, [i_split], axis=1
-                )
-                axs[2].plot(
-                    t_ms, spikes_ahead + offsets_list[2], alpha=alpha, ls=ls, lw=lw
-                )
-                axs[3].plot(
-                    t_ms, lfp_ahead + offsets_list[3], alpha=alpha, ls=ls, lw=lw
-                )
+            spikes_ahead, lfp_ahead = np.split(
+                Xhat_ahead @ lds.C.T * lds.y_std + lds.y_mean, [i_split], axis=1
+            )
+            axs[2].plot(t_ms, spikes_ahead + offsets_list[2], alpha=alpha, ls=ls, lw=lw)
+            axs[3].plot(t_ms, lfp_ahead + offsets_list[3], alpha=alpha, ls=ls, lw=lw)
 
     for f in outfiles:
         print(f"Saving figure to {f}")

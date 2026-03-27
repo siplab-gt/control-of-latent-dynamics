@@ -17,14 +17,13 @@ c = {
 }
 c["mpc"] = c["main"]
 c["ol"] = c["a1"]
-c["x"] = c["a2"]
-c["y"] = c["a3"]
-c["z"] = c["a4"]
+c["y"] = c["a2"]
+c["z"] = c["a3"]
 
 ctrl_palette = {
     "OL": c["ol"],
-    "MPC": c["mpc"],
-    "MPC with latency": "black",
+    "LQMPC": c["mpc"],
+    "LQMPC no latency": "black",
 }
 
 cmap = sns.light_palette(c["dark"], as_cmap=True)

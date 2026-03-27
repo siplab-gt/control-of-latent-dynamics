@@ -124,8 +124,19 @@ def analyze_ctrl_data(
     assert Ztrials.shape == (ctrl_data.n_trials, nt, n_muscles)
 
     def acc_pred_cond(refs, true_conds, outputs, n_neighbors=3):
-        classifier = KNeighborsClassifier(n_neighbors=n_neighbors)
-        assert n_neighbors <= np.min(np.bincount(true_conds)), np.bincount(true_conds)
+        # Adapt n_neighbors to available samples per condition
+        min_samples_per_cond = np.min(np.bincount(true_conds))
+        if min_samples_per_cond == 0:
+            # Some conditions have no samples - can't do classification
+            return np.nan, np.full(len(outputs), np.nan)
+        effective_n_neighbors = min(n_neighbors, min_samples_per_cond)
+        if effective_n_neighbors < n_neighbors:
+            import logging
+            logging.warning(
+                f"Reduced n_neighbors from {n_neighbors} to {effective_n_neighbors} "
+                f"due to limited samples per condition: {np.bincount(true_conds)}"
+            )
+        classifier = KNeighborsClassifier(n_neighbors=effective_n_neighbors)
         classifier.fit(
             X=refs.reshape((len(refs), -1)),
             y=true_conds,

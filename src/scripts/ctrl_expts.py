@@ -11,6 +11,7 @@ from sklearn.linear_model import LinearRegression
 from src.ctrl import Controller
 from src.ctrl.solvers import get_solvers
 from src.helpers import (
+    PassthroughIOProcessor,  # Required for dill to deserialize CleoPrep with LFP
     preprocess_params,
     seed_everything,
     setup_debugger,

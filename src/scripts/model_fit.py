@@ -90,11 +90,20 @@ def model_fit(
     x_mean, x_std = np.mean(X, axis=0), np.std(X, axis=0)
     XN = (X - x_mean) / x_std
 
+    # Make normalization stats available to fit methods (used by USID inline training)
+    config['y_mean'] = y_mean
+    config['y_std'] = y_std
+    config['u_mean'] = u_mean
+    config['u_std'] = u_std
+
     lds, Zhat, Yhat, Xhat = importlib.import_module(
         method_module_file.replace(".py", "").replace("/", ".")
     ).fit_lds_to_data(YN, ZN, UN, XN, n_x, cond_params, base_params, outfiles, config)
 
     # saving preprocessing info in model objects to use during inference in runPredict function
+    # Note: This overwrites any stats set by the fit function (e.g., usid.py, braid.py).
+    # The fit functions receive pre-normalized data, so we store the original stats here
+    # for proper denormalization at inference time.
     (
         lds.y_mean,
         lds.y_std,
@@ -132,11 +141,17 @@ if __name__ == "__main__" and "snakemake" in locals():
     log_fh = setup_logging(snakemake.config, snakemake.log[0])
     setup_debugger(snakemake.config["debug"])
 
+    config_dict = preprocess_params(snakemake.config)
+    # Pass natural electrode data path for USID inline training
+    natural_data = getattr(snakemake.input, 'natural_data', None)
+    if natural_data:
+        config_dict['natural_data_path'] = str(natural_data)
+
     model_fit(
         preprocess_params(snakemake.wildcards),
         preprocess_params(snakemake.params),
         snakemake.input.sys_id_data,
         snakemake.input.method,
         snakemake.output,
-        preprocess_params(snakemake.config),
+        config_dict,
     )
