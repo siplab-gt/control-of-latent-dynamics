@@ -108,6 +108,16 @@ def ctrl_expts(
         log.warning(
             f"LDS unstable (max eigenvalue: {max_eigenvalue:.4f}). Scaled A and B by {scale_factor:.4f}"
         )
+        if hasattr(lds, 'K1'):
+            lds.A11 *= scale_factor
+            lds.A22 *= scale_factor
+            lds.K1 *= scale_factor
+            lds.K2 *= scale_factor
+            lds.B1_prime *= scale_factor
+            lds.B2_prime *= scale_factor
+            if lds.A12 is not None:
+                lds.A12 *= scale_factor
+            log.info(f"Scaled observer subspace matrices by {scale_factor:.4f}")
 
     if str2bool(cond_params.model_task_inputs):
         k_task = cleo_prep.fsnn.k_task
@@ -140,9 +150,11 @@ def ctrl_expts(
         Qcost=float(base_params.Q_cost),
         Rcost=float(base_params.R_cost),
         cleo_prep=cleo_prep,
-        state_estimation="ground truth"
-        if cond_params.setting == "sufficient_stim"
-        else "kalman",
+        state_estimation=(
+            "ground truth" if cond_params.setting == "sufficient_stim"
+            else "observer" if hasattr(lds, "K1")
+            else "kalman"
+        ),
         signals=cond_params.signals,
     )
 

@@ -6,7 +6,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 
 from src.data_classes import BaseDataClass
-from src.helpers import preprocess_params, setup_debugger, setup_logging, str2bool
+from src.helpers import preprocess_params, save_pkl_gz, setup_debugger, setup_logging, str2bool
 from src.log_redirector import redirect_output_to_file
 from src.model_fit import LDS
 from src.scripts.sys_id_expts import ExptData
@@ -132,7 +132,7 @@ def model_fit(
     model_fit_pred_data.save(outfiles.pred_data)
 
     log.info(f"Saving model to {outfiles.lds_model}")
-    lds.save(outfiles.lds_model)
+    save_pkl_gz(lds, outfiles.lds_model)
 
 
 if __name__ == "__main__" and "snakemake" in locals():

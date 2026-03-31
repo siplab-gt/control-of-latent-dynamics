@@ -199,10 +199,21 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             y = self.latency_rng.poisson(lam=avg_rate * self.sample_period)
 
             start = time.perf_counter()
-            xhat, P = self.update_state(xpred, y, Ppred)
-            uopto = self.compute_control(xhat)
-            u = np.concatenate((uopto, self.u_task_zscored(10 * ms)))
-            xpred, Ppred = self.predict_state(xhat, u, P)
+            if self.state_estimation == "observer":
+                xhat = xpred.copy()
+                uopto = self.compute_control(xhat)
+                u = np.concatenate((uopto, self.u_task_zscored(10 * ms)))
+                n1 = self.lds.n1
+                y_zscored = self.zscore(y, "y")
+                x1_next, x2_next = self._observer_step(
+                    self.lds, xpred[:n1], xpred[n1:], y_zscored, uopto,
+                )
+                xpred = np.concatenate([x1_next, x2_next])
+            else:
+                xhat, P = self.update_state(xpred, y, Ppred)
+                uopto = self.compute_control(xhat)
+                u = np.concatenate((uopto, self.u_task_zscored(10 * ms)))
+                xpred, Ppred = self.predict_state(xhat, u, P)
             end = time.perf_counter()
             durations.append(end - start)
             solve_times.append(self.prob.solver_stats.solve_time)
@@ -268,6 +279,32 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         Ppred = self.A @ P @ self.A.T + self.Q
 
         return xpred, Ppred
+
+    @staticmethod
+    def _observer_step(obs, x1, x2, y_zscored, u_opto_zscored):
+        """Single USID observer step (predictor form).
+
+        Computes x[t+1] from x[t], y[t], u[t] using the subspace observer
+        equations directly, bypassing the Kalman filter.
+
+        Args:
+            obs: SubspaceLDS with A11, A22, K1, K2, C1, A12,
+                 B1_prime, B2_prime attributes
+            x1: (n1,) natural state at time t
+            x2: (n2,) unnatural state at time t
+            y_zscored: (ny,) z-scored observation at time t
+            u_opto_zscored: (k_opto,) z-scored opto input at time t
+
+        Returns:
+            x1_next: (n1,) natural state at time t+1
+            x2_next: (n2,) unnatural state at time t+1
+        """
+        innovation = y_zscored - obs.C1 @ x1
+        x1_next = obs.A11 @ x1 + obs.K1 @ y_zscored + obs.B1_prime @ u_opto_zscored
+        if obs.A12 is not None:
+            x1_next += obs.A12 @ x2
+        x2_next = obs.A22 @ x2 + obs.K2 @ innovation + obs.B2_prime @ u_opto_zscored
+        return x1_next, x2_next
 
     def solve_optimization(self) -> None:
         """Solve the optimization problem with fallback through ordered solvers.
@@ -393,6 +430,8 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
         if self.state_estimation == "kalman":
             xhat, P = self.update_state(self.xpred, y, self.Ppred)
+        elif self.state_estimation == "observer":
+            xhat = self.xpred.copy()
         elif self.state_estimation == "ground truth":
             # need to be careful to create an entirely new array; strange crash even for array(y_mon.y)
             # xhat = np.zeros(self.n)
@@ -407,6 +446,13 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
         if self.state_estimation == "kalman":
             self.xpred, self.Ppred = self.predict_state(xhat, u, P)
+        elif self.state_estimation == "observer":
+            n1 = self.lds.n1
+            y_zscored = self.zscore(y, "y")
+            x1_next, x2_next = self._observer_step(
+                self.lds, self.xpred[:n1], self.xpred[n1:], y_zscored, uopto,
+            )
+            self.xpred = np.concatenate([x1_next, x2_next])
 
         uopto = self.unzscore(u, "u")[: self.k_opto]
         uopto = np.clip(uopto, 0, self.u_max_mWmm2)
