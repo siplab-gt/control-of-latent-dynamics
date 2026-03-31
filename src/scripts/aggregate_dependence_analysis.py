@@ -42,7 +42,6 @@ def main(cond_params, base_params, infiles, outfile):
         random_seed=SEED,
         ep_results=ep_results,
     )
-    result_set.save(outfile)
 
     pvals = [entry.p_value for entry in result_set.ep_results]
     if pvals:
@@ -52,6 +51,7 @@ def main(cond_params, base_params, infiles, outfile):
             print(f"{entry.ep}: q = {entry.q_value}")
     print(pd.DataFrame([entry.summary_dict for entry in result_set.ep_results]))
 
+    result_set.save(outfile)
     print(f"Saved aggregated CMI results to {outfile}")
 
 

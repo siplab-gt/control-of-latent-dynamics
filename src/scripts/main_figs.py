@@ -363,42 +363,44 @@ def main(
             res.ep: res for res in dependence_ctrl_res.null_corrected_ep_results
         }
 
-        # Helper to get significance threshold (FDR corrected)
-        def get_fdr_threshold(results_list, alpha=0.05):
-            pvals = np.array([res.p_value for res in results_list])
-            n = len(pvals)
-            if n == 0:
-                print("No results for FDR calculation")
-                return 0.05  # Fallback
-
-            # Sort p-values
-            sorted_pvals = np.sort(pvals)
-            # Find largest k such that P(k) <= (k/n)*alpha
-            k_indices = np.arange(1, n + 1)
-            fdr_thresholds = (k_indices / n) * alpha
-
-            # Find indices where condition holds
-            valid_k = np.where(sorted_pvals <= fdr_thresholds)[0]
-
-            if len(valid_k) > 0:
-                # Largest k is the last valid index
-                max_k_idx = valid_k[-1]
-                # The critical P-value is the P-value at that rank
-                p_crit = sorted_pvals[max_k_idx]
-                return p_crit
-            else:
-                # No significant results found at this alpha
-                # Return strict 0 to indicate no line or just alpha/n (Bonferroni) as a conservative bound?
-                # User asked for "q-value significance threshold".
-                # If nothing is significant, drawing the line at the theoretical threshold
-                # for the *first* rejection (alpha/n) might be appropriate to show *why* nothing is significant.
-                return alpha / n
+        def get_p_crit(results_list, alpha=0.05):
+            significant = [r for r in results_list if r.q_value <= alpha]
+            if not significant:
+                return alpha / len(results_list) if results_list else 0.05
+            return max(r.p_value for r in significant)
 
         # We compute distinct thresholds for Key and Control analyses
-        p_crit_key = get_fdr_threshold(dependence_key_res.ep_results)
-        p_crit_ctrl = get_fdr_threshold(dependence_ctrl_res.ep_results)
+        p_crit_key = get_p_crit(dependence_key_res.ep_results)
+        p_crit_ctrl = get_p_crit(dependence_ctrl_res.ep_results)
 
         print(f"FDR Critical P: Key={p_crit_key:.5f}, Ctrl={p_crit_ctrl:.5f}")
+
+        y_sig_marker = np.max(
+            [
+                np.max(r.boot_dist)
+                for r in dependence_key_res.null_corrected_ep_results
+                + dependence_ctrl_res.null_corrected_ep_results
+            ]
+        )
+
+        def add_significance_marker(ax, res, x_marker):
+            marker = ""
+            if res.q_value <= 0.05:
+                marker = "*"
+            if res.q_value <= 0.01:
+                marker = "**"
+            if res.q_value <= 0.001:
+                marker = "***"
+            if marker:
+                ax.text(
+                    x_marker,
+                    y_sig_marker,
+                    marker,
+                    ha="center",
+                    va="bottom",
+                    fontsize=12,
+                    color="k",
+                )
 
         for ep, ax in zip(expl_params, dependence_axs.flat):
             # If neither exist, hide
@@ -516,6 +518,8 @@ def main(
                 )
                 ax.plot(x_marker, res.cmi, color="k", marker="o", markersize=3)
 
+                add_significance_marker(ax, res, x_marker)
+
             # Plot Control
             if ep in ctrl_map:
                 res = ctrl_map[ep]
@@ -556,6 +560,8 @@ def main(
                 )
                 ax.plot(x_marker, res.cmi, color="k", marker="o", markersize=3)
 
+                add_significance_marker(ax, res, x_marker)
+
             # Clean up
             ax.set_xlabel("")
             # remove x spine, ticks, labels
@@ -572,6 +578,50 @@ def main(
             # Add a legend only on the first plot?
             # Or no legend, rely on caption.
 
+        import matplotlib.lines as mlines
+        import matplotlib.patches as mpatches
+
+        handles = [
+            mpatches.Patch(color="0.6", label="shuffled null"),
+            mpatches.Patch(color=psty.c["key"], label=r(key_metric)),
+            mpatches.Patch(color=psty.c["ctrl"], label=r(ctrl_metric)),
+            mlines.Line2D(
+                [],
+                [],
+                color="gray",
+                linestyle="--",
+                linewidth=1.0,
+                label=r"$q=0.05$",
+            ),
+            mlines.Line2D(
+                [],
+                [],
+                color="k",
+                linewidth=2,
+                marker="o",
+                markersize=3,
+                label="estimate & 95% CI",
+            ),
+            mlines.Line2D(
+                [],
+                [],
+                linestyle="none",
+                marker="*",
+                color="k",
+                markersize=4,
+                label=r"$q < 0.05$",
+            ),
+        ]
+
+        fig = dependence_axs.flat[0].figure
+
+        fig.legend(
+            handles=handles,
+            loc="lower center",
+            ncol=len(handles),
+            frameon=True,
+        )
+
     if dependence_key_file is not None:
         assert dependence_control_file is not None
         plot_dependence(axs_dependence)
@@ -587,6 +637,7 @@ def main(
     for axs in [axs_key, axs_ctrl, axs_dependence]:
         for ax in axs.flat:
             ax.grid(True, color="0.9", linewidth=0.6)
+            ax.set_axisbelow(True)
         for ax in axs[:, 1:].flat:
             ax.spines["left"].set_visible(False)
             ax.tick_params(axis="y", which="both", length=0)
