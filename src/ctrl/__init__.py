@@ -32,6 +32,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     """computation not from QP solve itself: KF, canonicalization"""
     latency_rng: np.random.Generator = None
     lds: LDS = None
+    """LDS or SubspaceLDS — both expose A, B, C, Q, R, x2z, etc."""
     ref_type: str = None
     """callable with signature t -> task inputs (shape ([T], k_task) array)"""
     ctrl_horizon: Quantity = None

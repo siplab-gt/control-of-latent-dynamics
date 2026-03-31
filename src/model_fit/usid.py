@@ -2,11 +2,13 @@
 USID model fitting for control-of-latent-dynamics pipeline.
 
 Trains USID inline (natural model + USID model) using the same data that
-model_fit.py normalizes, then converts to a unified LDS for LQMPCController.
+model_fit.py normalizes, then returns a SubspaceLDS that the Controller
+consumes directly. SubspaceLDS exposes unified A, B, C, Q, R properties
+(computed from its subspace matrices) that satisfy the LDS interface.
 
 This mirrors the BRAID pattern: fit_lds_to_data receives already-normalized
-data, trains the model, and returns an LDS.  Normalization statistics are
-stamped onto the LDS by model_fit.py after return.
+data, trains the model, and returns an LDS-like object.  Normalization
+statistics are stamped onto it by model_fit.py after return.
 
 Usage in Snakefile:
     Set config["model_fit_method"] = "usid" to use this module.
@@ -14,7 +16,6 @@ Usage in Snakefile:
 import logging
 import os
 import sys
-import types
 from pathlib import Path
 
 import numpy as np
@@ -36,7 +37,7 @@ if USID_REPO_PATH not in sys.path:
 
 import torch
 
-from scripts.usid_subspace_interface import usid_to_subspace_lds, subspace_lds_to_unified_lds
+from scripts.usid_subspace_interface import SubspaceLDS, usid_to_subspace_lds
 from scripts.usid_training_core import run_training
 from scripts.usid_data_interface import (
     DataBundle,
@@ -46,7 +47,6 @@ from scripts.usid_data_interface import (
 )
 from scripts.utils.config_io import to_ns
 from scripts.diagnostics import run_shared_diagnostics, run_external_diagnostics
-from src.model_fit import LDS
 from src.scripts.sys_id_expts import ExptData
 
 
@@ -62,16 +62,20 @@ def fit_lds_to_data(
     config: dict,
 ):
     """
-    Train USID model inline and convert to unified LDS for MPC control.
+    Train USID model inline and return SubspaceLDS for MPC control.
 
-    This function:
-    1. Loads USID config from merged YAML, applies COLD overrides
-    2. Loads and normalizes natural electrode data using model_fit stats
-    3. Prepares DataBundle from normalized sys_id + natural data
-    4. Trains Natural + USID models via run_training()
-    5. Converts trained USID to SubspaceLDS → unified LDS
-    6. Fits behavioral decoder (Cz) and estimates noise covariances
-    7. Returns unified LDS with predictions
+    SubspaceLDS preserves the natural/unnatural state decomposition while
+    exposing unified A, B, C, Q, R properties that the standard
+    LQMPCController consumes. This eliminates the intermediate LDS conversion.
+
+    Steps:
+    1. Load USID config from merged YAML, apply COLD overrides
+    2. Load and normalize natural electrode data using model_fit stats
+    3. Prepare DataBundle from normalized sys_id + natural data
+    4. Train Natural + USID models via run_training()
+    5. Extract SubspaceLDS from trained USID model
+    6. Fit behavioral decoder (Cz) and estimate noise covariances
+    7. Return SubspaceLDS with predictions
 
     Args:
         YN: (T, m) Observations (normalized by model_fit.py)
@@ -86,7 +90,7 @@ def fit_lds_to_data(
                 natural_data_path from model_fit.py)
 
     Returns:
-        lds: LDS object for standard LQMPCController
+        subspace_lds: SubspaceLDS (duck-types as LDS for Controller)
         Zhat: (T, m_z) Predicted behavioral outputs
         Yhat: (T, m) Predicted observations
         Xhat: (T, n_x) Estimated states
@@ -166,7 +170,7 @@ def fit_lds_to_data(
     n1, n2 = result.n1, result.n2
     usid_model = result.usid_model
 
-    # === 5. Extract LDS ===
+    # === 5. Extract SubspaceLDS ===
     log.info("Converting USID to SubspaceLDS...")
     subspace_lds = usid_to_subspace_lds(usid_model)
 
@@ -189,56 +193,31 @@ def fit_lds_to_data(
     subspace_lds.Cz2 = Cz2
     Zhat = Xhat[:, :n1] @ Cz1.T + Xhat[:, n1:] @ Cz2.T
 
-    # === Convert SubspaceLDS to unified LDS ===
-    log.info("Converting SubspaceLDS to unified LDS...")
-    subspace_lds.metadata['k_opto'] = k_opto
-    unified_dict = subspace_lds_to_unified_lds(subspace_lds, k_opto=k_opto)
-
-    A_unified = unified_dict['A']
-    B_unified = unified_dict['B']
-    C_unified = unified_dict['C']
-
-    # Estimate Q and R from the unified dynamics (matching BRAID's approach).
-    # Xhat is from the observer (teacher-forced) trajectory; computing residuals
-    # against A_unified/B_unified ensures Q is consistent with the dynamics
-    # the controller actually uses.
+    # Estimate empirical noise covariances from residuals against the unified
+    # dynamics (matching BRAID's approach). Xhat is from the observer
+    # (teacher-forced) trajectory; computing residuals against A/B ensures Q is
+    # consistent with the dynamics the controller actually uses.
     log.info("Estimating noise covariances...")
+    subspace_lds.metadata['k_opto'] = k_opto
+
     yres = YN - Yhat
-    R = np.cov(yres, rowvar=False)
-    if R.ndim == 0:
-        R = np.array([[R]])
+    R_empirical = np.cov(yres, rowvar=False)
+    if R_empirical.ndim == 0:
+        R_empirical = np.array([[R_empirical]])
+    subspace_lds.R = R_empirical
 
+    A_unified = subspace_lds.A
+    B_unified = subspace_lds.B
     xres = Xhat[1:] - (Xhat[:-1] @ A_unified.T + UN[:, :k_opto][:-1] @ B_unified.T)
-    Q = np.cov(xres, rowvar=False)
+    Q_empirical = np.cov(xres, rowvar=False)
+    subspace_lds.Q = Q_empirical
 
-    Cz = np.hstack([Cz1, Cz2])
-
-    lds = LDS(
-        A=A_unified,
-        B=B_unified,
-        C=C_unified,
-        Q=Q,
-        R=R,
-        k_opto=k_opto,
-    )
-
-    lds.Cz = Cz
-
-    def x2z(self, X):
-        """Map state to behavioral output."""
-        return X @ self.Cz.T
-
-    lds.x2z = types.MethodType(x2z, lds)
-
-    # Note: model_fit.py overwrites x_mean/x_std (and all other normalization
-    # stats) with fSNN ground-truth factor stats after we return. The controller
+    # Note: model_fit.py stamps normalization stats (y_mean, y_std, etc.) and
+    # linreg_lds2fsnn onto the returned object after we return. The controller
     # uses those stats to zscore reference trajectories and state estimates.
-    # The linreg_lds2fsnn mapping (also fitted by model_fit.py) bridges the gap
-    # between USID's state space and fSNN's factor space. This is the same
-    # pattern BRAID uses — neither model's states are in fSNN space natively.
 
     log.info("USID model fitting complete (inline training)")
-    return lds, Zhat, Yhat, Xhat
+    return subspace_lds, Zhat, Yhat, Xhat
 
 
 # ---------------------------------------------------------------------------
