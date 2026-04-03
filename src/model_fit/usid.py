@@ -392,6 +392,7 @@ def _prepare_data_bundle(
         val_y_seqs=val_y_list,
         val_u_seqs=val_u_list,
         val_source_types=['input_driven'] * len(val_y_list),
+        train_source_types=['input_driven'] * len(train_y_list),
         val_z_seqs=val_z_list,
         val_reference_states_seqs=val_x_list,
         metadata=metadata,
