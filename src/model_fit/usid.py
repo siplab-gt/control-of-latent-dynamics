@@ -65,7 +65,7 @@ def fit_lds_to_data(
     Train USID model inline and return SubspaceLDS for MPC control.
 
     SubspaceLDS preserves the natural/unnatural state decomposition while
-    exposing unified A, B, C, Q, R properties that the standard
+    exposing unified A, B, C properties that the standard
     LQMPCController consumes. This eliminates the intermediate LDS conversion.
 
     Steps:
@@ -74,7 +74,7 @@ def fit_lds_to_data(
     3. Prepare DataBundle from normalized sys_id + natural data
     4. Train Natural + USID models via run_training()
     5. Extract SubspaceLDS from trained USID model
-    6. Fit behavioral decoder (Cz) and estimate noise covariances
+    6. Fit behavioral decoder (Cz)
     7. Return SubspaceLDS with predictions
 
     Args:
@@ -193,24 +193,7 @@ def fit_lds_to_data(
     subspace_lds.Cz2 = Cz2
     Zhat = Xhat[:, :n1] @ Cz1.T + Xhat[:, n1:] @ Cz2.T
 
-    # Estimate empirical noise covariances from residuals against the unified
-    # dynamics (matching BRAID's approach). Xhat is from the observer
-    # (teacher-forced) trajectory; computing residuals against A/B ensures Q is
-    # consistent with the dynamics the controller actually uses.
-    log.info("Estimating noise covariances...")
     subspace_lds.metadata['k_opto'] = k_opto
-
-    yres = YN - Yhat
-    R_empirical = np.cov(yres, rowvar=False)
-    if R_empirical.ndim == 0:
-        R_empirical = np.array([[R_empirical]])
-    subspace_lds.R = R_empirical
-
-    A_unified = subspace_lds.A
-    B_unified = subspace_lds.B
-    xres = Xhat[1:] - (Xhat[:-1] @ A_unified.T + UN[:, :k_opto][:-1] @ B_unified.T)
-    Q_empirical = np.cov(xres, rowvar=False)
-    subspace_lds.Q = Q_empirical
 
     # Note: model_fit.py stamps normalization stats (y_mean, y_std, etc.) and
     # linreg_lds2fsnn onto the returned object after we return. The controller
