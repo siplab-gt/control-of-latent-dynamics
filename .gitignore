@@ -2,6 +2,7 @@ results/**
 results_archive/**
 resources/**
 logs/**
+workflow/logs/**
 .snakemake
 .snakemake/**
 .panoptes.db
