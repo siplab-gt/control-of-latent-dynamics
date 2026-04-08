@@ -22,6 +22,8 @@ export PYTHONPATH="${PYTHONPATH}:${USID_REPO_ROOT}"
 CONFIG_FILE="${1:-../config/testconfig.yaml}"
 echo "Using config: $CONFIG_FILE"
 
+mkdir -p "$(readlink -f results 2>/dev/null || echo results)" logs
+
 snakemake --unlock
 
 # Batch label for USID results grouping: YYYYMMDD_<coordinator_job_id>
@@ -40,4 +42,5 @@ snakemake \
     --jobs 100 \
     --default-resources slurm_account=gts-crozell3-ece tasks_per_gpu=0 \
     --rerun-incomplete \
-    --keep-going
+    --keep-going \
+    --forcerun model_fit
