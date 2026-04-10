@@ -46,6 +46,7 @@ from scripts.usid_data_interface import (
     stack_sequences_for_multisample,
 )
 from scripts.utils.config_io import to_ns
+from scripts.utils.checkpoints import load_trained_opsin
 from scripts.diagnostics import run_shared_diagnostics, run_external_diagnostics
 from src.scripts.sys_id_expts import ExptData
 
@@ -141,9 +142,39 @@ def fit_lds_to_data(
         natural_data_path, y_mean, y_std
     )
 
+    # === 2b. Optionally load opsin model ===
+    use_opsin = config.get('use_opsin', False)
+    opsin_model = None
+    if use_opsin:
+        opsin_path = config.get('opsin_checkpoint_path')
+        if opsin_path:
+            opsin_results_dir = Path(opsin_path)
+        else:
+            opsin_results_dir = Path(USID_REPO_PATH) / "experiments" / "opsin_results"
+        opsin_model = load_trained_opsin(
+            opsin_results_dir, num_light_channels=1, map_location=device
+        )
+        if opsin_model is None:
+            raise FileNotFoundError(
+                f"use_opsin=True but no trained opsin checkpoint found in {opsin_results_dir}"
+            )
+        log.info(f"Loaded opsin model (input_scale={opsin_model.input_scale.item():.1f}, "
+                 f"output_scale={opsin_model.output_scale.item():.2f})")
+
     # === 3. Prepare DataBundle ===
+    opto_UN = UN[:, :k_opto]
+    if use_opsin:
+        # Un-zscore light so opsin model receives raw mW/mm² inputs.
+        # model_fit.py z-scored everything; usid.py reverses it locally.
+        raw_light = opto_UN * u_std[:k_opto] + u_mean[:k_opto]
+        raw_light = np.clip(raw_light, 0, None)
+        log.info(f"Un-zscored light for opsin: range [{raw_light.min():.1f}, {raw_light.max():.1f}] mW/mm²")
+        opto_input = raw_light
+    else:
+        opto_input = opto_UN
+
     data_bundle = _prepare_data_bundle(
-        YN, UN[:, :k_opto], natural_YN, ny, k_opto, cfg, seed,
+        YN, opto_input, natural_YN, ny, k_opto, cfg, seed,
         ZN=ZN, X_fsnn=X_fsnn, y_mean=y_mean, y_std=y_std,
     )
 
@@ -154,7 +185,8 @@ def fit_lds_to_data(
     log.info("Starting USID inline training...")
     result = run_training(
         cfg, data_bundle, save_root,
-        trained_opsin_model=None, no_opsin=True,
+        trained_opsin_model=opsin_model,
+        no_opsin=not use_opsin,
     )
     log.info(f"Training complete: n1={result.n1}, n2={result.n2}")
 
@@ -177,7 +209,9 @@ def fit_lds_to_data(
     # Compute predictions on full sys_id data
     log.info("Computing predictions on sys_id data...")
     y_tensor = torch.tensor(YN, dtype=torch.float32).unsqueeze(0).to(device)
-    u_tensor = torch.tensor(UN[:, :k_opto], dtype=torch.float32).unsqueeze(0).to(device)
+    # Use raw light when opsin is active (model expects raw mW/mm² with no_opsin=False)
+    u_for_pred = raw_light if use_opsin else UN[:, :k_opto]
+    u_tensor = torch.tensor(u_for_pred, dtype=torch.float32).unsqueeze(0).to(device)
 
     with torch.no_grad():
         y_pred = usid_model.forward(y_tensor, u_tensor)
@@ -194,6 +228,15 @@ def fit_lds_to_data(
     Zhat = Xhat[:, :n1] @ Cz1.T + Xhat[:, n1:] @ Cz2.T
 
     subspace_lds.metadata['k_opto'] = k_opto
+
+    if use_opsin:
+        subspace_lds.opsin_model = opsin_model.cpu()
+        subspace_lds.metadata['use_opsin'] = True
+        subspace_lds.metadata['max_light_mWmm2'] = float(
+            config.get('u_max_mWmm2', base_params.get('u_max_mWmm2', 75.0))
+            if isinstance(base_params, dict)
+            else getattr(base_params, 'u_max_mWmm2', 75.0)
+        )
 
     # Note: model_fit.py stamps normalization stats (y_mean, y_std, etc.) and
     # linreg_lds2fsnn onto the returned object after we return. The controller
