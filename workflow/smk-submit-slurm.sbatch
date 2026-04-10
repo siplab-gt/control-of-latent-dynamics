@@ -41,6 +41,6 @@ snakemake \
     --executor slurm \
     --jobs 100 \
     --default-resources slurm_account=gts-crozell3-ece tasks_per_gpu=0 \
+    --envvars LD_LIBRARY_PATH PYTHONPATH USID_REPO_ROOT \
     --rerun-incomplete \
-    --keep-going \
-    --forcerun model_fit
+    --keep-going

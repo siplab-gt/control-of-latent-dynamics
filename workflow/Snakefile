@@ -20,6 +20,7 @@ configfile: "config/config.yaml"
 wildcard_constraints:
     task="|".join(config["manual_sweep_params"]["task"]),
     setting="|".join(config["manual_sweep_params"]["setting"] + ["NA"]),
+    ctrl_type="|".join(config["manual_sweep_params"]["ctrl_type"] + ["NULL"]),
 
 
 rule all:
@@ -355,7 +356,7 @@ if "q1" in config:
                 for ctrl, latency in [("OL", False), ("LQMPC", True)]
             ],
         output:
-            protected("<results>/sufficient_stim_{task}.csv"),
+            "<results>/sufficient_stim_{task}.csv",
         localrule: True
         run:
             dfs = [pd.read_csv(infile) for infile in input]
@@ -404,7 +405,7 @@ if "q2" in config:
                 for k, m in get_q2_kms()
             ],
         output:
-            protected("<results>/optimal_stim_rec_{task}.csv"),
+            "<results>/optimal_stim_rec_{task}.csv",
         localrule: True
         run:
             dfs = [pd.read_csv(infile) for infile in input]
@@ -427,7 +428,7 @@ rule usid_stim_rec_tabulate:
                 seed=config["grid_sweep_params"]["seed"],
                 fill_in_ref=True,
             )
-            for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
+            for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True), ("NLMPC", False), ("NLMPC", True)]
             for k, m in get_usid_kms()
         ],
         [
@@ -446,11 +447,11 @@ rule usid_stim_rec_tabulate:
                 config["star_sweep_params"]
                 | config["star_sweep_params_measurement_only"]
             ).items()
-            for ctrl, latency in [("OL", False), ("LQMPC", True)]
+            for ctrl, latency in [("OL", False), ("LQMPC", True), ("NLMPC", True)]
             for k, m in get_usid_kms()
         ],
     output:
-        protected("<results>/usid_stim_rec_{task}.csv"),
+        "<results>/usid_stim_rec_{task}.csv",
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -532,6 +533,8 @@ rule ctrl_expts:
     conda:
         "envs/main.yaml"
     resources:
+        slurm_partition="gpu-v100",
+        gpu=1,
         mem_mb=4000,
         runtime=15,
     log:

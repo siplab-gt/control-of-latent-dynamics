@@ -135,17 +135,15 @@ def ctrl_expts(
         cond_params.latency
     )
     base_lat = base_params.baseline_latency
-    ctrl_proc: Controller = ControllerType(
+    ctrl_kwargs = dict(
         sim=cleo_prep.sim,
         u_max_mWmm2=u_max,
         lds=lds,
         ref_type=base_params.ref_type,
         add_latency=add_latency,
         baseline_latency=base_lat,
-        # use separate RNG for latency measurement/sampling so trials are same regardless
         latency_rng=np.random.default_rng(seed + 18010630),
         sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor,
-        # in OL, ctrl_horizon is pre-trial control time; horizon includes whole trial
         ctrl_horizon=base_params.ctrl_horizon,
         Qcost=float(base_params.Q_cost),
         Rcost=float(base_params.R_cost),
@@ -157,8 +155,12 @@ def ctrl_expts(
         ),
         signals=cond_params.signals,
     )
+    if ctrl_type == "NLMPC":
+        ctrl_kwargs['nlmpc_iters'] = int(getattr(base_params, 'nlmpc_iters', 10))
+        ctrl_kwargs['nlmpc_lr'] = float(getattr(base_params, 'nlmpc_lr', 0.5))
+    ctrl_proc: Controller = ControllerType(**ctrl_kwargs)
 
-    if ctrl_type != "NULL":
+    if ctrl_type not in ("NULL", "NLMPC"):
         # Test latency for each solver and order them from fastest to slowest
         log.info("Testing all solvers...")
         solver_latencies = []
@@ -200,7 +202,20 @@ def ctrl_expts(
         # Update controller with ordered solvers and fastest solver's latency stats
         ctrl_proc.solvers = ordered_solvers
 
-    if add_latency:
+    if ctrl_type == "NLMPC":
+        # NLMPC uses its own latency measurement (no CVXPY solvers)
+        if add_latency:
+            log.info("Measuring NLMPC latency...")
+            fastest_mean_lat, fastest_std_lat, fastest_nonsolve_lat = ctrl_proc.measure_latency()
+            log.info(f"NLMPC latency: {fastest_mean_lat / b2.ms:.2f} +/- {fastest_std_lat / b2.ms:.2f} ms")
+            ctrl_proc.compute_latency_mean = fastest_mean_lat
+            ctrl_proc.compute_latency_std = fastest_std_lat
+            ctrl_proc.compute_latency_nonsolve = fastest_nonsolve_lat
+        else:
+            ctrl_proc.compute_latency_mean = 0 * b2.ms
+            ctrl_proc.compute_latency_std = 0 * b2.ms
+            ctrl_proc.compute_latency_nonsolve = 0 * b2.ms
+    elif add_latency:
         if ctrl_type == "LQMPC":
             expected_solve_time = fastest_mean_lat - fastest_nonsolve_lat
             if (

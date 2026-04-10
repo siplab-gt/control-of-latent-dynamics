@@ -16,3 +16,4 @@ build/**
 *.nbc
 *.log
 **/__marimo__/
+workflow/resources/cython_cache/
