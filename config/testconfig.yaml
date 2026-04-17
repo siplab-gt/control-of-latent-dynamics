@@ -1,26 +1,22 @@
 # #####################################################################
 # # parameters to sweep, constituting different experimental conditions
 # #####################################################################
-# to automatically sweep all combinations
+# NLMPC horizon/iterations sweep — focused on k=22/m=42, offset=-2
+# Total ctrl_expts: 2 seeds × 1 k/m × (OL + LQMPC + 9 NLMPC) = 22 runs
+# Upstream (prep_fsnn, cleo_prep, model_fit) reuses cached outputs.
 #########################################
 grid_sweep_params:
   seed:
     - 17230616
     - 18051223
-    # - 16320829
-    # - 18060520
-    # - 18220427
 
-# exploratory vars to sweep one at a time in Q1, Q2
-# i.e., explore space in star pattern
-###################################################
+# collapsed to reference values — not sweeping these for this run
+#################################################################
 star_sweep_params:
   n_trials_sys_id:
     - 10
-  # offset to number of PCs used to train fSNN, which is also used as ground-truth n_x
   n_latent_dims_offset:
     - -2
-    - 0
   density_scale:
     - 1
   network_area_scale:
@@ -32,7 +28,6 @@ star_sweep_params:
 
 star_sweep_params_measurement_only:
   signals:
-    # - spikes    # dropped — USID uses LFP only
     - lfp
 
 # don't automatically sweep these, will be handled manually in Snakefile
@@ -50,23 +45,33 @@ manual_sweep_params:
   m: "depends on setting"
   latency:
     - true
+    - false
+  ctrl_horizon_ms:
+    - 100
+    - 200
+    - 300
+  nlmpc_iters:
+    - 2
+    - 5
+    - 10
 
 #################
 reference_params:
   n_trials_sys_id: 10
-  n_latent_dims_offset: 0
+  n_latent_dims_offset: -2
   density_scale: 1
   network_area_scale: 1.44
   beam_width_um: 100
   latency: true
   model_task_inputs: false
   signals: lfp
+  ctrl_horizon_ms: 300
+  nlmpc_iters: 10
 
 # question-specific parameters
 ##############################
 
-q_usid: # optimal stim/rec balance for USID
-  #########################################
+q_usid:
   channel_budget: 64
   num_stim_ratio_levels: 4
 # #########################################
