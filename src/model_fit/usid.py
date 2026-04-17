@@ -143,10 +143,10 @@ def fit_lds_to_data(
     )
 
     # === 2b. Optionally load opsin model ===
-    use_opsin = config.get('use_opsin', False)
+    use_opsin = bool(config['use_opsin'])
     opsin_model = None
     if use_opsin:
-        opsin_path = config.get('opsin_checkpoint_path')
+        opsin_path = config['opsin_checkpoint_path']
         if opsin_path:
             opsin_results_dir = Path(opsin_path)
         else:
@@ -232,11 +232,7 @@ def fit_lds_to_data(
     if use_opsin:
         subspace_lds.opsin_model = opsin_model.cpu()
         subspace_lds.metadata['use_opsin'] = True
-        subspace_lds.metadata['max_light_mWmm2'] = float(
-            config.get('u_max_mWmm2', base_params.get('u_max_mWmm2', 75.0))
-            if isinstance(base_params, dict)
-            else getattr(base_params, 'u_max_mWmm2', 75.0)
-        )
+        subspace_lds.metadata['max_light_mWmm2'] = float(base_params['u_max_mWmm2'])
 
     # Note: model_fit.py stamps normalization stats (y_mean, y_std, etc.) and
     # linreg_lds2fsnn onto the returned object after we return. The controller

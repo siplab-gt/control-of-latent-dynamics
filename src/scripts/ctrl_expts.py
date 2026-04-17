@@ -156,10 +156,10 @@ def ctrl_expts(
         signals=cond_params.signals,
     )
     if ctrl_type == "NLMPC":
-        ctrl_kwargs['nlmpc_iters'] = int(getattr(
-            cond_params, 'nlmpc_iters', getattr(base_params, 'nlmpc_iters', 10)
-        ))
-        ctrl_kwargs['nlmpc_lr'] = float(getattr(base_params, 'nlmpc_lr', 0.5))
+        ctrl_kwargs['nlmpc_iters'] = int(
+            getattr(cond_params, 'nlmpc_iters', base_params.nlmpc_iters)
+        )
+        ctrl_kwargs['nlmpc_lr'] = float(base_params.nlmpc_lr)
     ctrl_proc: Controller = ControllerType(**ctrl_kwargs)
 
     if ctrl_type not in ("NULL", "NLMPC"):
