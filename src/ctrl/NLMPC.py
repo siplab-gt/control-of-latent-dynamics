@@ -11,6 +11,7 @@ Warm-starts from the previous solution (shifted by one step) for fast
 convergence (typically 5-10 iterations).
 """
 import logging
+import time
 
 import brian2.only as b2
 import numpy as np
@@ -80,10 +81,24 @@ class NLMPCController(Controller):
     _u_light_warm: np.ndarray = field(default=None, init=False, repr=False)
     _torch_matrices: dict = field(factory=dict, init=False, repr=False)
     _opsin_model: object = field(default=None, init=False, repr=False)
+    _opsin_hidden: object = field(default=None, init=False, repr=False)
+
+    def sample_latency(self) -> b2.Quantity:
+        """Sample latency without referencing CVXPY solvers."""
+        if self.add_latency:
+            sampled = self.latency_rng.normal(
+                loc=self.compute_latency_mean / b2.ms,
+                scale=self.compute_latency_std / b2.ms,
+            )
+            sampled = max(sampled, 0)
+            return self.baseline_latency + sampled * ms
+        else:
+            return 0 * ms
 
     def reset(self):
         super().reset()
         self._u_light_warm = None
+        self._opsin_hidden = None
         self._setup_torch_matrices()
 
     def _setup_torch_matrices(self):
@@ -116,17 +131,30 @@ class NLMPCController(Controller):
             for p in self._opsin_model.parameters():
                 p.requires_grad_(False)
 
-    def _run_opsin_forward(self, u_light):
+    def _run_opsin_forward(self, u_light, h0=None):
         """Run opsin model: (H, k_opto) light → (H, k_opto) photocurrents.
 
         Processes each channel independently through the GRU, matching
         USIDModel.compute_photocurrents() structure.
+
+        Args:
+            u_light: (H, k_opto) light input tensor.
+            h0: Optional GRU hidden state from previous timestep.
+                Shape: (num_layers, k_opto, hidden_size).
+
+        Returns:
+            photocurrents: (H, k_opto) tensor.
+            h_out: GRU hidden state after processing. None if h0 was None
+                and no stateful tracking is needed (backward compat).
         """
         H, k_opto = u_light.shape
-        # Reshape to (k_opto, H, 1) for per-channel GRU processing
         u_flat = u_light.T.unsqueeze(-1)  # (k_opto, H, 1)
-        p_flat = self._opsin_model(u_flat)  # (k_opto, H)
-        return p_flat.T  # (H, k_opto)
+        if h0 is not None:
+            p_flat, h_out = self._opsin_model.forward_with_hidden(u_flat, h0)
+            return p_flat.T, h_out
+        else:
+            p_flat = self._opsin_model(u_flat)
+            return p_flat.T, None
 
     def compute_control(self, xhat):
         if self.t_now < self.t_ctrl_bounds[0] or self.t_now >= self.t_ctrl_bounds[1]:
@@ -154,11 +182,15 @@ class NLMPCController(Controller):
 
         mat = self._torch_matrices
 
+        # Detach hidden state for MPC planning: all iterations start from the
+        # same opsin state (the real current state), not from each other.
+        h0_planning = self._opsin_hidden.detach() if self._opsin_hidden is not None else None
+
         for i in range(self.nlmpc_iters):
             optimizer.zero_grad()
 
-            # Forward: light → opsin → photocurrents → state rollout
-            photocurrents = self._run_opsin_forward(u_light)
+            # Forward: light → opsin (from current hidden state) → photocurrents → state rollout
+            photocurrents, _ = self._run_opsin_forward(u_light, h0=h0_planning)
 
             tracking_cost = _rollout_state(
                 x0, photocurrents,
@@ -226,16 +258,20 @@ class NLMPCController(Controller):
         u_light = self.compute_control(xhat)
         u_light = np.clip(u_light, 0, self.u_max_mWmm2)
 
-        # Observer update: run opsin on applied light to get photocurrent for B' @ p
+        # Observer update: run opsin on applied light to get photocurrent,
+        # advancing the GRU hidden state by one real timestep.
         if self.state_estimation == "observer":
             n1 = self.lds.n1
             y_zscored = self.zscore(y, "y")
             with torch.no_grad():
                 light_tensor = torch.tensor(
-                    u_light.reshape(1, 1, -1), dtype=torch.float32
+                    u_light.reshape(1, -1), dtype=torch.float32
                 )
-                p_tensor = self._run_opsin_forward(light_tensor.squeeze(0))
-                p_current = p_tensor.squeeze().numpy()
+                p_tensor, h_out = self._run_opsin_forward(
+                    light_tensor, h0=self._opsin_hidden
+                )
+                self._opsin_hidden = h_out
+                p_current = p_tensor[0].numpy()
             x1_next, x2_next = self._observer_step(
                 self.lds, self.xpred[:n1], self.xpred[n1:], y_zscored, p_current,
             )
@@ -255,25 +291,27 @@ class NLMPCController(Controller):
         self._measuring_latency = True
         durations = []
         xpred = np.zeros(self.n)
+        opsin_hidden = None
 
         for i in range(100):
             avg_rate = 20 / b2.second
             y = self.latency_rng.poisson(lam=avg_rate * self.sample_period)
 
-            import time
             start = time.perf_counter()
 
             if self.state_estimation == "observer":
                 xhat = xpred.copy()
+                self._opsin_hidden = opsin_hidden
                 u_light = self.compute_control(xhat)
                 n1 = self.lds.n1
                 y_zscored = self.zscore(y, "y")
                 with torch.no_grad():
                     light_t = torch.tensor(
-                        u_light.reshape(1, 1, -1), dtype=torch.float32
+                        u_light.reshape(1, -1), dtype=torch.float32
                     )
-                    p_t = self._run_opsin_forward(light_t.squeeze(0))
-                    p_np = p_t.squeeze().numpy()
+                    p_t, h_out = self._run_opsin_forward(light_t, h0=opsin_hidden)
+                    opsin_hidden = h_out
+                    p_np = p_t[0].numpy()
                 x1_next, x2_next = self._observer_step(
                     self.lds, xpred[:n1], xpred[n1:], y_zscored, p_np,
                 )
