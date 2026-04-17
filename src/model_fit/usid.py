@@ -123,7 +123,7 @@ def fit_lds_to_data(
     torch.manual_seed(seed)
 
     # === 1. Load USID config and apply COLD overrides ===
-    cfg = _load_usid_config(ny, k_opto, seed)
+    cfg = _load_usid_config(ny, k_opto, seed, config.get("usid_overrides"))
 
     # === 2. Load and normalize natural electrode data ===
     natural_data_path = config.get('natural_data_path')
@@ -250,8 +250,14 @@ def fit_lds_to_data(
 # Config loading
 # ---------------------------------------------------------------------------
 
-def _load_usid_config(ny: int, k_opto: int, seed: int):
-    """Load USID merged config and apply COLD-specific overrides."""
+def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = None):
+    """Load USID merged config and apply COLD-specific overrides.
+
+    cold_overrides is an optional dict (from COLD config's ``usid_overrides``
+    block) that is deep-merged on top of the built-in overrides, letting a COLD
+    config tweak any USID hyperparam (e.g., epochs) without rebuilding the USID
+    merged YAML.
+    """
     merged_yaml_path = Path(USID_REPO_PATH) / "snake" / "build" / "usid_model.merged.yaml"
     if not merged_yaml_path.exists():
         raise FileNotFoundError(
@@ -273,6 +279,8 @@ def _load_usid_config(ny: int, k_opto: int, seed: int):
         "seed": seed,
     }
     merged_dict = _deep_merge(base_dict, overrides)
+    if cold_overrides:
+        merged_dict = _deep_merge(merged_dict, cold_overrides)
     return to_ns(merged_dict)
 
 
