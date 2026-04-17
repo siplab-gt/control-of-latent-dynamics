@@ -270,7 +270,6 @@ def _load_usid_config(ny: int, k_opto: int, seed: int):
             "ny": ny,
             "n_clusters": k_opto,
         },
-        "no_opsin": True,
         "seed": seed,
     }
     merged_dict = _deep_merge(base_dict, overrides)
