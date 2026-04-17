@@ -4,13 +4,13 @@
 #SBATCH --mem-per-cpu=4G                        # Memory for coordinator
 #SBATCH -t1-00:00:00                           # Time limit D-HH:MM:SS
 #SBATCH -ologs/slurm-%j.out                         # Combined output and error messages file
-#SBATCH -A gts-crozell3-ece              # Account
+#SBATCH -A gts-crozell3                  # Account
 #SBATCH --mail-type=END,FAIL                    # Notify when job ends or fails
 #SBATCH --mail-user=jrauf3@gatech.edu       # Replace with your email
 cd $SLURM_SUBMIT_DIR                            # Change to working directory
 
 module load anaconda3                           # Load module dependencies
-module load cuda/12.1.1                         # CUDA for Brian2CUDA (supports sm_70/V100)
+module load cuda/12.6.1                         # CUDA 12.6 required by torch 2.10+cu126
 eval "$(conda shell.bash hook)"
 conda activate ~/r-crozell3-0/envs/USID
 
@@ -40,7 +40,7 @@ snakemake \
     --config cold_batch_label="$COLD_BATCH_LABEL" \
     --executor slurm \
     --jobs 100 \
-    --default-resources slurm_account=gts-crozell3-ece tasks_per_gpu=0 \
+    --default-resources slurm_account=gts-crozell3 tasks_per_gpu=0 \
     --envvars LD_LIBRARY_PATH PYTHONPATH USID_REPO_ROOT \
     --rerun-incomplete \
     --keep-going
