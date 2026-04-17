@@ -73,6 +73,10 @@ manual_sweep_params:
   latency:
     - true
     - false
+  ctrl_horizon_ms:
+    - 300
+  nlmpc_iters:
+    - 10
 
 #################
 reference_params:
@@ -85,6 +89,8 @@ reference_params:
   latency: true
   model_task_inputs: true
   signals: lfp
+  ctrl_horizon_ms: 300
+  nlmpc_iters: 10
 
 ##############################
 # question-specific parameters

@@ -21,6 +21,8 @@ wildcard_constraints:
     task="|".join(config["manual_sweep_params"]["task"]),
     setting="|".join(config["manual_sweep_params"]["setting"] + ["NA"]),
     ctrl_type="|".join(config["manual_sweep_params"]["ctrl_type"] + ["NULL"]),
+    ctrl_horizon_ms=r"\d+",
+    nlmpc_iters=r"\d+",
 
 
 rule all:
@@ -56,7 +58,7 @@ steps_params = {
     ],
     "sys_id_expts": [],
     "model_fit": ["n_trials_sys_id", "model_task_inputs"],
-    "ctrl_expts": ["latency", "ctrl_type"],
+    "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_iters"],
     "analysis": [],
 }
 
@@ -248,7 +250,16 @@ def get_usid_kms():
     )
     kk = np.round(kk).astype(int)
     mm = budget - kk
-    return zip(kk.tolist(), mm.tolist())
+    pairs = list(zip(kk.tolist(), mm.tolist()))
+    # Optional filter: restrict to a single k/m pair by setting q_usid.target_k
+    target_k = config["q_usid"].get("target_k")
+    if target_k is not None:
+        pairs = [(k, m) for (k, m) in pairs if k == int(target_k)]
+        if not pairs:
+            raise ValueError(
+                f"q_usid.target_k={target_k} not found in generated k values {kk.tolist()}"
+            )
+    return iter(pairs)
 
 
 test_usid_k, test_usid_m = list(get_usid_kms())[-1]
@@ -417,6 +428,8 @@ if "q2" in config:
 
 rule usid_stim_rec_tabulate:
     input:
+        # OL and LQMPC use reference horizon/iters; NLMPC sweeps horizon × iters.
+        # ctrl_horizon_ms/nlmpc_iters are resolved by fill_in_ref -> reference_params.
         [
             wildcard_path(
                 file="summary.csv",
@@ -428,7 +441,26 @@ rule usid_stim_rec_tabulate:
                 seed=config["grid_sweep_params"]["seed"],
                 fill_in_ref=True,
             )
-            for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True), ("NLMPC", False), ("NLMPC", True)]
+            for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
+            for k, m in get_usid_kms()
+        ],
+        # NLMPC sweep over horizon × iters (both latencies)
+        [
+            wildcard_path(
+                file="summary.csv",
+                setting="usid_stim_rec",
+                latency=latency,
+                ctrl_type="NLMPC",
+                k=k,
+                m=m,
+                seed=config["grid_sweep_params"]["seed"],
+                ctrl_horizon_ms=horizon,
+                nlmpc_iters=iters,
+                fill_in_ref=True,
+            )
+            for latency in [False, True]
+            for horizon in config["manual_sweep_params"]["ctrl_horizon_ms"]
+            for iters in config["manual_sweep_params"]["nlmpc_iters"]
             for k, m in get_usid_kms()
         ],
         [
@@ -533,7 +565,7 @@ rule ctrl_expts:
     conda:
         "envs/main.yaml"
     resources:
-        slurm_partition="gpu-v100",
+        slurm_partition="gpu-a100",
         gpu=1,
         mem_mb=4000,
         runtime=15,
@@ -639,7 +671,7 @@ def gpu_for_model_fit(wc):
 def slurm_extra_for_model_fit(wc):
     """Return SLURM partition for model fit."""
     if gpu_for_model_fit(wc):
-        return "gpu-v100"
+        return "gpu-a100"
     return "cpu-small"
 
 
@@ -867,7 +899,7 @@ def gpu_for_fsnn_train(wc):
 def slurm_extra_for_fsnn(wc):
     """Return SLURM partition for fSNN simulation."""
     if gpu_for_fsnn_train(wc):
-        return "gpu-v100"
+        return "gpu-a100"
     return "cpu-small"
 
 
