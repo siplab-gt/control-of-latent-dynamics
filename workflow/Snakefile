@@ -680,6 +680,123 @@ def slurm_extra_for_model_fit(wc):
     return "cpu-small"
 
 
+def _voperating_reference_wildcards() -> dict:
+    """Representative wildcard combination used for the voperating measurement.
+
+    fSNN's v-distribution is dominated by intrinsic dynamics (not k/m), so
+    one representative combo is adequate. Kept consistent with testq_usid
+    and the reference_params block so both share the same pinning logic.
+    """
+    try:
+        k_val, m_val = next(get_usid_kms())
+    except (StopIteration, KeyError):
+        k_val, m_val = "NA", "NA"
+    return {
+        "task": config["manual_sweep_params"]["task"][0],
+        "seed": config["grid_sweep_params"]["seed"][0],
+        "setting": "usid_stim_rec",
+        "k": k_val,
+        "m": m_val,
+    }
+
+
+def _voperating_fsnn_input():
+    """Resolve the fsnn_post_train.pkl.gz path for the voperating measurement.
+
+    voperating builds its own CleoPrep inline (forcing proportional_current
+    plant, see D1 in deviations doc); it does NOT route through the main
+    cleo_prep rule. Going through fsnn_post_train.pkl.gz directly breaks
+    the circular dep introduced when cleo_prep depends on calibration.
+    """
+    wc = _voperating_reference_wildcards()
+    return wildcard_path(
+        "fsnn_post_train.pkl.gz",
+        fill_in_ref=True,
+        task=wc["task"],
+        seed=wc["seed"],
+    )
+
+
+def _voperating_cond_params(wildcards):
+    """cond_params dict for the inline CleoPrep construction."""
+    wc = _voperating_reference_wildcards()
+    ref = config.get("reference_params", {})
+    return {
+        **wc,
+        "n_latent_dims_offset": ref.get("n_latent_dims_offset", 0),
+        "density_scale": ref.get("density_scale", 1),
+        "network_area_scale": ref.get("network_area_scale", 1.44),
+        "beam_width_um": ref.get("beam_width_um", 100),
+        "signals": ref.get("signals", "lfp"),
+    }
+
+
+def _voperating_base_params(wildcards):
+    """base_params dict (merged prep_fsnn + task-specific overlay + cleo_prep)
+    for the inline CleoPrep construction. Mirrors step_cfg('prep_fsnn',
+    'cleo_prep') but closed over a fixed task instead of a wildcard."""
+    task = config["manual_sweep_params"]["task"][0]
+    params = dict(config.get("prep_fsnn", {}))
+    params |= config.get(f"prep_fsnn_{task}", {})
+    params |= config.get("cleo_prep", {})
+    return params
+
+
+rule measure_voperating_range:
+    """Measure fSNN's operational voltage range under sys-ID-style drive
+    and emit voperating.json. Prerequisite for rule calibrate_opsin_plant
+    (plan §4.1a, deviations doc D1–D2).
+
+    Takes fsnn_post_train.pkl.gz directly (not a CleoPrep) and builds its
+    own CleoPrep inline with proportional_current plant — avoids the
+    circular dep introduced when the main cleo_prep rule requires a
+    chr2_4s_fsnn calibration file (see D1).
+    """
+    input:
+        fsnn=_voperating_fsnn_input(),
+        script="src/scripts/measure_voperating_range.py",
+        cleo_prep_src="src/scripts/cleo_prep.py",
+    output:
+        json="results/opsin_calibration/voperating.json",
+        png="results/opsin_calibration/voperating.png",
+    params:
+        cond_params=_voperating_cond_params,
+        base_params=_voperating_base_params,
+    log:
+        "logs/measure_voperating_range.log",
+    conda:
+        "envs/main.yaml"
+    resources:
+        mem_mb=16000,
+        runtime=30,
+    script:
+        "../src/scripts/measure_voperating_range.py"
+
+
+rule calibrate_opsin_plant:
+    """Compute (g0, E, v0, v1) from voperating.json via published biophysical
+    ratios + a Brian2 long-pulse reference (plan §4.3). Writes
+    chr2_4s_fsnn_calibration.json with a calibration_hash used as a cache
+    key (plan §4.6) and a provenance fingerprint (plan §4.5)."""
+    input:
+        voperating="results/opsin_calibration/voperating.json",
+        script="src/scripts/calibrate_opsin_plant.py",
+        opsins="src/opsins.py",
+    output:
+        "results/opsin_calibration/chr2_4s_fsnn_calibration.json",
+    log:
+        "logs/calibrate_opsin_plant.log",
+    conda:
+        "envs/main.yaml"
+    resources:
+        mem_mb=8000,
+        runtime=30,
+    shell:
+        "python -m src.scripts.calibrate_opsin_plant "
+        "{input.voperating} {output[0]} "
+        "> {log} 2>&1"
+
+
 rule model_fit:
     input:
         "src/model_fit/__init__.py",
