@@ -72,22 +72,44 @@ def model_fit(
 
     n_x = X.shape[1]  # just assume we know this
 
+    def _safe_std(arr: np.ndarray, axis: int, name: str) -> tuple[np.ndarray, np.ndarray]:
+        """Compute mean + std with defensive guards against degenerate channels.
+
+        Historically only the ``std == 0`` case was guarded (constant channel).
+        Under the v3 chr2_4s_fsnn plant some LFP channels can carry values
+        large enough that ``np.std`` overflows (squared deviations exceed
+        float range), leaving an ``inf`` or ``nan`` in ``std``. That inf then
+        silently contaminates ``y_std`` → corrupts the de-normalization step
+        inside USID diagnostics + analyze_model_fit → NaN Yhat → sklearn
+        rejects → crash. Clamp every non-finite / non-positive std to 1.0
+        and warn loudly so the upstream extreme-value signal isn't lost.
+        """
+        m = np.mean(arr, axis=axis)
+        s = np.std(arr, axis=axis)
+        bad = ~np.isfinite(s) | (s <= 0)
+        if bad.any():
+            n_bad = int(bad.sum())
+            arr_max = float(np.max(np.abs(arr[np.isfinite(arr)]))) if np.any(np.isfinite(arr)) else float("nan")
+            log.warning(
+                f"{name}: {n_bad} channel(s) have non-finite or zero std (likely "
+                f"overflow from extreme values; max |{name}|={arr_max:g}). Clamping "
+                f"their std to 1.0 so de-normalization stays finite. Check upstream "
+                f"data for pathological magnitudes."
+            )
+            s = np.where(bad, 1.0, s)
+        return m, s
+
     # Normalize data (removing the mean is essential before training):
-    y_mean, y_std = np.mean(Y, axis=0), np.std(Y, axis=0)
-    # ensure no zero stds
-    y_std[y_std == 0] = 1.0
-    # YtrainN, YtestN = (Ytrain - yMean) / yStd, (Ytest - yMean) / yStd
+    y_mean, y_std = _safe_std(Y, axis=0, name="Y")
     YN = (Y - y_mean) / y_std
     assert np.all(np.isfinite(YN))
-    z_mean, z_std = np.mean(Z, axis=0), np.std(Z, axis=0)
-    # ZtrainN, ZtestN = (Ztrain - zMean) / zStd, (Ztest - zMean) / zStd
+    z_mean, z_std = _safe_std(Z, axis=0, name="Z")
     ZN = (Z - z_mean) / z_std
     # remember U is normalized, will need to be unnormalized for constraints/costs
-    u_mean, u_std = np.mean(U, axis=0), np.std(U, axis=0)
-    # UtrainN, UtestN = (Utrain - uMean) / uStd, (Utest - uMean) / uStd
+    u_mean, u_std = _safe_std(U, axis=0, name="U")
     UN = (U - u_mean) / u_std
     # normalize X too so origin reflects u_mean, y_mean, z_mean inputs
-    x_mean, x_std = np.mean(X, axis=0), np.std(X, axis=0)
+    x_mean, x_std = _safe_std(X, axis=0, name="X")
     XN = (X - x_mean) / x_std
 
     # Make normalization stats available to fit methods (used by USID inline training)

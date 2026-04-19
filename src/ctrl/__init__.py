@@ -309,8 +309,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     def solve_optimization(self) -> None:
         """Solve the optimization problem with fallback through ordered solvers.
 
-        Raises:
-            RuntimeError: If all solvers fail
+        When every solver fails (ill-posed relaxation for extreme k/m, etc.),
+        fall back to zero control for this horizon rather than raising, so the
+        fSNN simulation can continue and ctrl_data.pkl.gz gets written. The
+        failure is surfaced via per-solver WARNINGs plus a final ERROR log.
         """
         for i, solver in enumerate(self.solvers):
             try:
@@ -340,10 +342,17 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
                     f"Solver {solver.name} failed with error: {e}\n"
                     f"solver_stats = {self.prob.solver_stats}"
                 )
-                if i == len(self.solvers) - 1:
-                    raise
 
-        raise RuntimeError(f"All solvers failed. Last status: {self.prob.status}")
+        log.error(
+            f"All {len(self.solvers)} solvers failed. Last status: {self.prob.status}. "
+            f"Falling back to zero control for this solve."
+        )
+        # Uopt_opto is z-scored; "no light" in raw space is zscore(0).
+        # Uopt_task is a Parameter (inputs), not a Variable — don't touch.
+        self.Uopt_opto.value = self.zscore(
+            np.zeros((self.n_horizon, self.k)), "u"
+        )[:, : self.k_opto]
+        self.Xopt.value = np.zeros((self.n_horizon + 1, self.n))
 
     @abstractmethod
     def compute_control(self, xhat):
