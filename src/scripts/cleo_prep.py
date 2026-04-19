@@ -4,6 +4,7 @@ from typing import Self
 
 import brian2.only as b2
 import cleo
+import numpy as np
 
 from src.data_classes import BaseDataClass
 from src.fsnn import fSNN
@@ -104,23 +105,59 @@ class CleoPrep(BaseDataClass):
         sim = cleo.CLSimulator(fsnn.net)
         sim.inject(light_array, fsnn.ng_main)
 
-        # tune opsin strength relative to input weights
-        # making 5 mW/mm2 at 0.5 mm distance equivalent to a typical task input
-        typical_light_model = cleo.light.fiber473nm()
-        typical_fin_mag = 1
-        typical_task_input = typical_fin_mag * np.mean(np.abs(fsnn.u_in))
-        typical_distance_from_fiber_mm = 0.5
-        typical_transmittance = typical_light_model.transmittance(
-            source_coords=[0, 0, 0] * b2.mm,
-            source_dir_uvec=np.array([0, 0, 1]),
-            target_coords=[0, 0, typical_distance_from_fiber_mm] * b2.mm,
-        ).item()
-        typical_Irr = (
-            base_params.typical_Irr0_mWmm2 * b2.mwatt / b2.mm**2 * typical_transmittance
-        )
-        I_per_Irr = typical_task_input / typical_Irr
-        log.debug(f"{typical_task_input=}, {typical_transmittance=}, {I_per_Irr=}")
-        opsin = cleo.opto.ProportionalCurrentOpsin(I_per_Irr=I_per_Irr)
+        # Opsin dispatch — inlined (not a module-level helper) so it survives
+        # dill/snakemake's tmp-script pickle round-trip without losing
+        # symbol resolution.
+        opsin_class = getattr(base_params, "opsin_plant_class", "proportional_current")
+        if opsin_class == "proportional_current":
+            # tune opsin strength relative to input weights:
+            # 5 mW/mm2 at 0.5 mm distance ≈ typical task input (~0.1 unitless)
+            typical_light_model = cleo.light.fiber473nm()
+            typical_fin_mag = 1
+            typical_task_input = typical_fin_mag * np.mean(np.abs(fsnn.u_in))
+            typical_distance_from_fiber_mm = 0.5
+            typical_transmittance = typical_light_model.transmittance(
+                source_coords=[0, 0, 0] * b2.mm,
+                source_dir_uvec=np.array([0, 0, 1]),
+                target_coords=[0, 0, typical_distance_from_fiber_mm] * b2.mm,
+            ).item()
+            typical_Irr = (
+                base_params.typical_Irr0_mWmm2 * b2.mwatt / b2.mm**2 * typical_transmittance
+            )
+            I_per_Irr = typical_task_input / typical_Irr
+            log.debug(f"{typical_task_input=}, {typical_transmittance=}, {I_per_Irr=}")
+            opsin = cleo.opto.ProportionalCurrentOpsin(I_per_Irr=I_per_Irr)
+        elif opsin_class == "chr2_4s_fsnn":
+            # v3 fSNN-dimensionless chr2_4s (UnitlessChr2FourState). Params
+            # from results/opsin_calibration/chr2_4s_fsnn_calibration.json
+            # produced by rule calibrate_opsin_plant. Imports are local
+            # because CleoPrep.__reduce__ re-invokes build() under dill
+            # from downstream rules, whose __main__ namespace doesn't
+            # re-execute cleo_prep.py's module-level imports.
+            import json
+            from pathlib import Path
+            from src.opsins import UnitlessChr2FourState
+
+            calib_dir = Path(getattr(
+                base_params, "opsin_calibration_dir", "results/opsin_calibration"
+            ))
+            calib_path = calib_dir / "chr2_4s_fsnn_calibration.json"
+            with calib_path.open() as f:
+                calib = json.load(f)
+            opsin = UnitlessChr2FourState(
+                g0=float(calib["g0"]),
+                E=float(calib["E"]),
+                v0=float(calib["v0"]),
+                v1=float(calib["v1"]),
+            )
+            log.info(
+                f"Loaded chr2_4s_fsnn calibration from {calib_path} "
+                f"(hash={calib.get('calibration_hash', '<missing>')}): "
+                f"g0={calib['g0']:.6e}, E={calib['E']:.4f}, "
+                f"v0={calib['v0']:.4f}, v1={calib['v1']:.4f}"
+            )
+        else:
+            raise ValueError(f"Unknown opsin_plant_class: {opsin_class!r}")
         sim.inject(opsin, fsnn.ng_main)
 
         mua = None

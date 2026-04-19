@@ -185,6 +185,8 @@ cleo_prep:
   array_n_per_side: 8
   typical_Irr0_mWmm2: 5
   subsample_factor: 10
+  opsin_plant_class: chr2_4s_fsnn  # v3 biophysical plant (UnitlessChr2FourState); NN opsin reused unchanged from USID-synthetic training.
+  opsin_calibration_dir: results/opsin_calibration
 
 model_fit:
   linear_Cz: true

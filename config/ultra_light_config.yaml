@@ -169,7 +169,7 @@ cleo_prep:
   array_n_per_side: 8
   typical_Irr0_mWmm2: 5
   subsample_factor: 10
-  opsin_plant_class: unitless_four_state
+  opsin_plant_class: chr2_4s_fsnn
   opsin_calibration_dir: results/opsin_calibration
 
 model_fit:

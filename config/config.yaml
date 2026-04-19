@@ -176,6 +176,13 @@ cleo_prep:
   typical_Irr0_mWmm2: 5
   # needed early for LFP
   subsample_factor: 10 # ctrl/sample period relative to fsnn dt
+  # Opsin plant class — selects the cleo opsin injected into fSNN's ng_main.
+  # "proportional_current": instantaneous linear, calibrated via I_per_Irr.
+  # (v3 biophysical class pending — see scratchpad/opsin_v3_cleanup_and_plan.md.)
+  opsin_plant_class: proportional_current
+  # Directory (relative to COLD repo root) for calibration artifacts
+  # consumed when opsin_plant_class != proportional_current.
+  opsin_calibration_dir: results/opsin_calibration
 
 model_fit:
   linear_Cz: true

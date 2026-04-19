@@ -938,6 +938,20 @@ rule plot_cleo:
         "../src/scripts/plot_cleo.py"
 
 
+def _cleo_prep_calibration_input(wildcards):
+    """Declare chr2_4s_fsnn_calibration.json as a rule input when the
+    configured plant class needs it. cleo_prep.py reads this file eagerly
+    inside the chr2_4s_fsnn branch; declaring it as a Snakemake input
+    forces the DAG to run calibrate_opsin_plant first."""
+    plant = config.get("cleo_prep", {}).get("opsin_plant_class", "proportional_current")
+    if plant != "chr2_4s_fsnn":
+        return []
+    calib_dir = config.get("cleo_prep", {}).get(
+        "opsin_calibration_dir", "results/opsin_calibration",
+    )
+    return [f"{calib_dir}/chr2_4s_fsnn_calibration.json"]
+
+
 rule cleo_prep:
     input:
         # use NA for wildcards that were irrelevant before this step
@@ -945,6 +959,10 @@ rule cleo_prep:
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
         "src/interface_array.py",
+        "src/opsins.py",
+        "src/scripts/calibrate_opsin_plant.py",
+        calibration=_cleo_prep_calibration_input,
+        configfiles=configfile_inputs,
     params:
         step_cfg("prep_fsnn", "cleo_prep"),
     output:

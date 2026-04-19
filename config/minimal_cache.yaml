@@ -134,6 +134,8 @@ cleo_prep:
   array_n_per_side: 8
   typical_Irr0_mWmm2: 5
   subsample_factor: 10
+  opsin_plant_class: proportional_current
+  opsin_calibration_dir: results/opsin_calibration
 
 model_fit:
   linear_Cz: true
