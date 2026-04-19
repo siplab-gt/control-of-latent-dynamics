@@ -207,6 +207,17 @@ def step_cfg(*steps: str) -> callable:
     return wc_fn
 
 
+def configfile_inputs(wildcards=None):
+    """Return all configfiles loaded by the workflow.
+
+    Tracking these as rule inputs means any config change (e.g. flipping
+    opsin_plant_class, model_fit_method, etc.) invalidates downstream
+    outputs via mtime. This is more reliable than Snakemake's
+    params-based rerun trigger, which silently misses some cases.
+    """
+    return list(getattr(workflow, "configfiles", []))
+
+
 rule testq1:
     # for easily running one reference condition
     # (doesn't require a super long path with all wildcards)
@@ -558,6 +569,7 @@ rule ctrl_expts:
         "src/ctrl/{ctrl_type}.py",
         cleo_prep=wildcard_path("cleo_prep.pkl.gz"),
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
+        configfiles=configfile_inputs,
     params:
         step_cfg("cleo_prep", "expts", "ctrl_expts"),
     output:
@@ -593,18 +605,6 @@ use rule plot_model_fit_pred as plot_model_fit_pred_default with:
     localrule: True
     output:
         wildcard_path("model_fit_pred_plot.png"),
-
-
-rule analyze_model_fit:
-    input:
-        wildcard_path("model_fit_lds.pkl.gz"),
-        wildcard_path("model_fit_pred_data.pkl.gz"),
-        wildcard_path("sys_id_data.pkl.gz"),
-    output:
-        wildcard_path("model_fit_analysis.csv"),
-    localrule: True
-    script:
-        "../src/scripts/analyze_model_fit.py"
 
 
 # =============================================================================
@@ -646,11 +646,16 @@ def get_usid_dependencies(wildcards):
         f"{usid_repo}/scripts/usid_subspace_interface.py",
         f"{usid_repo}/models/USIDModel.py",
         f"{usid_repo}/models/NaturalModel.py",
+        f"{usid_repo}/models/NNOpsinModel.py",
+        f"{usid_repo}/models/losses.py",
         f"{usid_repo}/models/base_model.py",
         f"{usid_repo}/models/Parameterization.py",
         f"{usid_repo}/scripts/utils/config_io.py",
+        f"{usid_repo}/scripts/utils/checkpoints.py",
         f"{usid_repo}/scripts/usid_data_interface.py",
         f"{usid_repo}/scripts/usid_training_core.py",
+        f"{usid_repo}/scripts/diagnostics.py",
+        f"{usid_repo}/scripts/utils/visualizations.py",
     ]
 
 
@@ -682,12 +687,14 @@ rule model_fit:
         usid_deps=get_usid_dependencies,
         natural_data=get_natural_data_input,
         sys_id_data=wildcard_path("sys_id_data.pkl.gz"),
+        configfiles=configfile_inputs,
     params:
         step_cfg("model_fit"),
         braid_basename=wildcard_path("model_fit_braid"),
     output:
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
         pred_data=wildcard_path("model_fit_pred_data.pkl.gz"),
+        analysis_csv=wildcard_path("model_fit_analysis.csv"),
     threads: lambda wc: max(1, 8 * gpu_for_model_fit(wc))
     resources:
         slurm_partition=slurm_extra_for_model_fit,
@@ -736,6 +743,7 @@ n_trials_sys_id_max = config["star_sweep_params"]["n_trials_sys_id"][-1]
 rule sys_id_expts:
     input:
         wildcard_path("cleo_prep.pkl.gz"),
+        configfiles=configfile_inputs,
     params:
         step_cfg("cleo_prep", "expts", "sys_id_expts"),
         n_trials_sys_id_max=n_trials_sys_id_max,

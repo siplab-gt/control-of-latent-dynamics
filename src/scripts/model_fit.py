@@ -134,6 +134,14 @@ def model_fit(
     log.info(f"Saving model to {outfiles.lds_model}")
     save_pkl_gz(lds, outfiles.lds_model)
 
+    # Write fit-quality analysis atomically with the LDS so the two can't
+    # go out of sync. Keeps the CSV fresh whenever model_fit retrains.
+    from src.scripts.analyze_model_fit import analyze_model_fit
+    log.info(f"Writing fit-quality analysis to {outfiles.analysis_csv}")
+    analyze_model_fit(
+        cond_params, lds, model_fit_pred_data, expt_data, outfiles.analysis_csv,
+    )
+
 
 if __name__ == "__main__" and "snakemake" in locals():
     from snakemake.script import snakemake
