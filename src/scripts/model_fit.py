@@ -96,6 +96,13 @@ def model_fit(
     config['u_mean'] = u_mean
     config['u_std'] = u_std
 
+    # Opsin-fit validation data (only present when sys_id_expts recorded it).
+    # Sliced to the same T window used for YN/UN/ZN so downstream diagnostics
+    # stay aligned with the training/validation split.
+    if expt_data.Iopto_per_neuron is not None:
+        config['Iopto_per_neuron'] = expt_data.Iopto_per_neuron[:T]
+        config['channel_neuron_transmittance'] = expt_data.channel_neuron_transmittance
+
     lds, Zhat, Yhat, Xhat = importlib.import_module(
         method_module_file.replace(".py", "").replace("/", ".")
     ).fit_lds_to_data(YN, ZN, UN, XN, n_x, cond_params, base_params, outfiles, config)

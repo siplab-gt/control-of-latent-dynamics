@@ -151,12 +151,25 @@ def fit_lds_to_data(
             opsin_results_dir = Path(opsin_path)
         else:
             opsin_results_dir = Path(USID_REPO_PATH) / "experiments" / "opsin_results"
+        # v3.2: COLD reuses the USID-synthetic NN opsin unchanged. The v3
+        # `UnitlessChr2FourState` plant shares cleo's stock chr2_4s kinetic
+        # rate constants and equation form; their photocurrents for any
+        # given light input differ only by a per-channel scalar factor
+        # absorbed into USID's learned B'. See plan §4.5 and justification
+        # §4.5 for the compositional argument. load_trained_opsin just
+        # picks the newest timestamp subdirectory — no COLD/USID namespace
+        # separation.
         opsin_model = load_trained_opsin(
-            opsin_results_dir, num_light_channels=1, map_location=device
+            opsin_results_dir,
+            num_light_channels=1,
+            map_location=device,
         )
         if opsin_model is None:
             raise FileNotFoundError(
-                f"use_opsin=True but no trained opsin checkpoint found in {opsin_results_dir}"
+                f"use_opsin=True but no trained opsin checkpoint found in "
+                f"{opsin_results_dir}. Run USID synthetic opsin training "
+                f"(scripts/opsin_model_testing.py) at least once; COLD "
+                f"loads the latest plain-timestamp checkpoint."
             )
         log.info(f"Loaded opsin model (input_scale={opsin_model.input_scale.item():.1f}, "
                  f"output_scale={opsin_model.output_scale.item():.2f})")
@@ -173,9 +186,23 @@ def fit_lds_to_data(
     else:
         opto_input = opto_UN
 
+    # Opsin-fit validation inputs (present only when sys_id_expts recorded Iopto).
+    # The diagnostic runs in raw-light space, so we also need raw light sliced
+    # identically regardless of whether use_opsin is on.
+    Iopto_per_neuron = config.get('Iopto_per_neuron')
+    channel_neuron_transmittance = config.get('channel_neuron_transmittance')
+    if Iopto_per_neuron is not None:
+        raw_light_all = opto_UN * u_std[:k_opto] + u_mean[:k_opto]
+        raw_light_all = np.clip(raw_light_all, 0, None)
+    else:
+        raw_light_all = None
+
     data_bundle = _prepare_data_bundle(
         YN, opto_input, natural_YN, ny, k_opto, cfg, seed,
         ZN=ZN, X_fsnn=X_fsnn, y_mean=y_mean, y_std=y_std,
+        Iopto_per_neuron=Iopto_per_neuron,
+        channel_neuron_transmittance=channel_neuron_transmittance,
+        raw_light_all=raw_light_all,
     )
 
     # === 4. Train ===
@@ -232,7 +259,7 @@ def fit_lds_to_data(
     if use_opsin:
         subspace_lds.opsin_model = opsin_model.cpu()
         subspace_lds.metadata['use_opsin'] = True
-        subspace_lds.metadata['max_light_mWmm2'] = float(base_params['u_max_mWmm2'])
+        subspace_lds.metadata['max_light_mWmm2'] = float(config['expts']['u_max_mWmm2'])
 
     # Note: model_fit.py stamps normalization stats (y_mean, y_std, etc.) and
     # linreg_lds2fsnn onto the returned object after we return. The controller
@@ -325,6 +352,9 @@ def _prepare_data_bundle(
     X_fsnn: np.ndarray = None,
     y_mean: np.ndarray = None,
     y_std: np.ndarray = None,
+    Iopto_per_neuron: np.ndarray = None,
+    channel_neuron_transmittance: np.ndarray = None,
+    raw_light_all: np.ndarray = None,
 ) -> DataBundle:
     """Slice and split normalized data into a DataBundle for run_training."""
     try:
@@ -362,6 +392,14 @@ def _prepare_data_bundle(
     opto_u_seqs = slice_trajectory(opto_UN, usid_seq_len, usid_stride)
     opto_z_seqs = slice_trajectory(ZN, usid_seq_len, usid_stride) if ZN is not None else None
     opto_x_seqs = slice_trajectory(X_fsnn, usid_seq_len, usid_stride) if X_fsnn is not None else None
+    opto_iopto_seqs = (
+        slice_trajectory(Iopto_per_neuron, usid_seq_len, usid_stride)
+        if Iopto_per_neuron is not None else None
+    )
+    opto_light_raw_seqs = (
+        slice_trajectory(raw_light_all, usid_seq_len, usid_stride)
+        if raw_light_all is not None else None
+    )
 
     if len(opto_y_seqs) != len(opto_u_seqs):
         raise ValueError(
@@ -373,12 +411,15 @@ def _prepare_data_bundle(
             f"(seq_len={usid_seq_len}, stride={usid_stride})"
         )
 
-    # Build combined list for splitting (include Z and X_fsnn when available)
+    # Build combined list for splitting (include Z, X_fsnn, Iopto, raw light when available)
+    N = len(opto_y_seqs)
     combined = list(zip(
         opto_y_seqs,
         opto_u_seqs,
-        opto_z_seqs if opto_z_seqs is not None else [None] * len(opto_y_seqs),
-        opto_x_seqs if opto_x_seqs is not None else [None] * len(opto_y_seqs),
+        opto_z_seqs if opto_z_seqs is not None else [None] * N,
+        opto_x_seqs if opto_x_seqs is not None else [None] * N,
+        opto_iopto_seqs if opto_iopto_seqs is not None else [None] * N,
+        opto_light_raw_seqs if opto_light_raw_seqs is not None else [None] * N,
     ))
     train_combined, val_combined, _, _ = split_sequence_list(
         combined, usid_train_ratio, usid_val_ratio, "Opto", seed=seed
@@ -390,6 +431,8 @@ def _prepare_data_bundle(
     val_u_list = [c[1] for c in val_combined]
     val_z_list = [c[2] for c in val_combined] if ZN is not None else None
     val_x_list = [c[3] for c in val_combined] if X_fsnn is not None else None
+    val_iopto_list = [c[4] for c in val_combined] if opto_iopto_seqs is not None else None
+    val_light_raw_list = [c[5] for c in val_combined] if opto_light_raw_seqs is not None else None
 
     y_usid_train = stack_sequences_for_multisample(train_y_list, ny, "USID train Y")
     u_usid_train = stack_sequences_for_multisample(train_u_list, k_opto, "USID train U")
@@ -424,6 +467,9 @@ def _prepare_data_bundle(
         train_source_types=['input_driven'] * len(train_y_list),
         val_z_seqs=val_z_list,
         val_reference_states_seqs=val_x_list,
+        val_biophys_iopto_seqs=val_iopto_list,
+        val_light_raw_seqs=val_light_raw_list,
+        channel_neuron_transmittance=channel_neuron_transmittance,
         metadata=metadata,
     )
 

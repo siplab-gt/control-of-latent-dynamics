@@ -47,6 +47,15 @@ class ExptData(BaseDataClass):
     conditions: list[int]
     """List of condition indices for each trial"""
     cleo_prep_file: str | None
+    Iopto_per_neuron: Float[np.ndarray, "T N"] | None = None
+    """Per-neuron biophysical photocurrent from opsin plant, shape (T, N) array.
+    Subsampled on the same grid as X/Y/Z. Used by USID's opsin-fit diagnostic
+    to compare the NN opsin's light→photocurrent mapping against ground truth.
+    None if the plant opsin didn't expose a readable Iopto variable."""
+    channel_neuron_transmittance: Float[np.ndarray, "k N"] | None = None
+    """Per-channel→per-neuron transmittance matrix, shape (k_opto, N). Static
+    (channel geometry doesn't change during a trial). Multiply by Uopto(t) to
+    reconstruct per-neuron irradiance. None if Iopto_per_neuron is None."""
 
     @property
     def n_trials(self) -> int:
@@ -78,7 +87,8 @@ class ExptData(BaseDataClass):
 
     @classmethod
     def from_cleo_prep(
-        cls, cleo_prep: CleoPrep, spike_counts, t_samp, subsample_factor, cleo_prep_file
+        cls, cleo_prep: CleoPrep, spike_counts, t_samp, subsample_factor, cleo_prep_file,
+        Iopto_per_neuron=None, channel_neuron_transmittance=None,
     ):
         i_trial_bounds = np.array(cleo_prep.fsnn.i_trial_boundaries) / subsample_factor
         i_trial_bounds[:, 0] = i_trial_bounds[:, 0].astype(int)
@@ -106,11 +116,25 @@ class ExptData(BaseDataClass):
             i_trial_boundaries=i_trial_bounds,
             conditions=cleo_prep.fsnn.conditions,
             cleo_prep_file=cleo_prep_file,
+            Iopto_per_neuron=Iopto_per_neuron,
+            channel_neuron_transmittance=channel_neuron_transmittance,
         )
         assert np.all(expt_data.t_ms == expt_data.t_samp_ms)
         assert expt_data.X.shape[0] == expt_data.Y.shape[0] == expt_data.Z.shape[0], (
             f"{expt_data.X.shape}, {expt_data.Y.shape}, {expt_data.Z.shape}"
         )
+        if expt_data.Iopto_per_neuron is not None:
+            assert expt_data.Iopto_per_neuron.shape[0] == expt_data.X.shape[0], (
+                f"Iopto_per_neuron T={expt_data.Iopto_per_neuron.shape[0]} "
+                f"!= X T={expt_data.X.shape[0]}"
+            )
+            assert expt_data.channel_neuron_transmittance is not None, (
+                "channel_neuron_transmittance required when Iopto_per_neuron is provided"
+            )
+            assert expt_data.channel_neuron_transmittance.shape[1] == expt_data.Iopto_per_neuron.shape[1], (
+                f"transmittance N={expt_data.channel_neuron_transmittance.shape[1]} "
+                f"!= Iopto N={expt_data.Iopto_per_neuron.shape[1]}"
+            )
 
         return expt_data
 
@@ -158,6 +182,26 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     cleo_prep.sim.set_io_processor(
         SysIDProcessor(sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor)
     )
+
+    # Record per-neuron biophysical photocurrent for opsin-fit validation.
+    # cleo opsin classes declare Iopto on ng_main via a (summed) synapse
+    # expression, so monitoring ng_main directly gives the final per-neuron
+    # photocurrent regardless of opsin class.
+    ng_main = cleo_prep.fsnn.ng_main
+    iopto_mon = b2.StateMonitor(ng_main, "Iopto", record=True, name="opsin_iopto_mon")
+    cleo_prep.fsnn.net.add(iopto_mon)
+
+    # Static channel→neuron transmittance (T[c,n] = sum of per-source
+    # transmittances for sources in group c). Multiplying by Uopto(t) gives
+    # per-neuron irradiance, which the NN opsin is trained to map to Iopto.
+    neuron_coords = cleo.coords.coords_from_ng(ng_main)
+    trans_per_source = cleo_prep.light.transmittance(neuron_coords)  # (n_sources, N)
+    k_channels = cleo_prep.light.n_groups
+    N = ng_main.N
+    channel_neuron_transmittance = np.zeros((k_channels, N), dtype=np.float32)
+    for c, group in enumerate(cleo_prep.light.groups):
+        channel_neuron_transmittance[c] = trans_per_source[group].sum(axis=0)
+
     log.info(f"running {n_trials} sys ID trials")
     cleo_prep.fsnn.run_trials(
         n_trials,
@@ -181,12 +225,29 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     assert np.all(
         cleo_prep.light.t[1:] == cleo_prep.fsnn.y_mon.t[:: base_params.subsample_factor]
     )
+
+    # Subsample Iopto onto the same grid as X/Y/Z. StateMonitor shape is
+    # (N_neurons, T_brian); transpose + subsample → (T, N). Iopto may be
+    # dimensionless (UnitlessChr2FourState on fSNN's dimensionless ng_main)
+    # or ampere-typed (ProportionalCurrentOpsin). Convert amp-typed to nA
+    # explicitly so the stored scale matches what USID's NN opsin was
+    # trained against (synthetic_opsin_data.py emits nA for amp-typed
+    # Iopto). Using get_best_unit() here was non-deterministic across runs.
+    iopto_raw = iopto_mon.Iopto
+    if isinstance(iopto_raw, b2.Quantity):
+        iopto_raw = iopto_raw / b2.namp
+    Iopto_per_neuron = np.asarray(iopto_raw).T[
+        :: base_params.subsample_factor
+    ].astype(np.float32)
+
     expt_data = ExptData.from_cleo_prep(
         cleo_prep,
         spike_count_array,
         cleo_prep.sim.io_processor.t_samp,
         base_params.subsample_factor,
         cleo_prep_file,
+        Iopto_per_neuron=Iopto_per_neuron,
+        channel_neuron_transmittance=channel_neuron_transmittance,
     )
     expt_data.save(outfile)
 
