@@ -209,9 +209,11 @@ def fit_lds_to_data(
         nat_zero_u_ref = (-u_mean[:k_opto] / u_std[:k_opto]).astype(np.float32)
 
     # Opsin-fit validation inputs (present only when sys_id_expts recorded Iopto).
-    # The diagnostic always runs in raw-channel-light space + transmittance —
-    # this lets it score per-neuron irradiance vs bio at representative neurons
-    # regardless of whether USID training uses cluster-irradiance or per-channel.
+    # raw_light_all and channel_neuron_transmittance are handed to the USID-side
+    # diagnostic; transmittance is used there ONLY for rep-neuron selection
+    # (argmax dominance), not to synthesize NN input. See
+    # scripts/diagnostics.py::_run_opsin_fit_diagnostic for the scoring method
+    # and the scratchpad/opsin_v4_plan.md §5.3 framing note.
     Iopto_per_neuron = config.get('Iopto_per_neuron')
     if Iopto_per_neuron is not None:
         raw_light_all = opto_UN * u_std[:k_opto] + u_mean[:k_opto]
