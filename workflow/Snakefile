@@ -460,6 +460,20 @@ rule aggregate_dependence_analysis:
         "../src/scripts/aggregate_dependence_analysis.py"
 
 
+rule stats_table:
+    input:
+        "<results>/{setting}_{task}_dependence/control.pkl.gz",
+        "<results>/{setting}_{task}_dependence/key.pkl.gz",
+    output:
+        "<results>/{setting}_{task}_dependence/stats-table.csv",
+        "<results>/{setting}_{task}_dependence/stats-table.tex",
+    localrule: True
+    params:
+        subcfg("analysis"),
+    script:
+        "../src/scripts/stats_table.py"
+
+
 rule analyze_ctrl_data:
     input:
         ctrl_data=wildcard_path("ctrl_data.pkl.gz"),

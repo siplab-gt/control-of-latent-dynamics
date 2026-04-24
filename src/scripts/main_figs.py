@@ -23,6 +23,7 @@ _r = dict(
     Q_track_Xref_X_fsnn=r"$Q_{\text{track}}(X_{\text{ref}}, X_{\text{fSNN}})$",
     Q_track_Zref_Z=r"$Q_{\text{track}}(Z_{\text{ref}}, Z)$",
     optimal_alpha_stim=r"$\alpha_\text{stim}^*$",
+    k_knee=r"$k_{\text{knee}}$",
     k=r"$k$",
     m=r"$m$",
     n_trials_sys_id=r"$n_{\text{sys ID trials}}$",
@@ -57,7 +58,7 @@ def main(
 ):
     expl_params = cfg["star_sweep_params"] | cfg[f"star_sweep_params_{setting}"]
     ctrl_metric = base_params.ctrl_metric
-    key_metric = base_params.key_metric
+    key_metric = base_params.key_metrics[0]
     if setting == "sufficient_stim":
         colorbar_label = r"$Q_\text{track}\left(X_\text{ref}, X\right)$"
         main_fig_plot_type = "lineplots"
@@ -727,6 +728,7 @@ if __name__ == "__main__" and "snakemake" not in locals():
 
     main(
         base_params=preprocess_params(cfg[f"analysis_{setting}"]),
+        cfg=cfg,
         setting=setting,
         results_csv=args.results_csv,
         key_metrics_csv=key_metrics_csv,

@@ -130,7 +130,7 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
     rng = np.random.default_rng(SEED)
 
     if analysis == "key":
-        metric_name = base_params.key_metric
+        metric_name = base_params.key_metrics[0]
         conditioning_vars = ["seed"]
     else:
         metric_name = base_params.ctrl_metric
@@ -170,7 +170,10 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
         x_gid = x[group_ids == gid]
         assert np.var(x_gid) > 0, f"x should vary within groups for {ep}. {x_gid=}"
         y_gid = y[group_ids == gid]
-        if metric_name not in ["optimal_alpha_stim"]:  # likely to repeat exact values
+        if metric_name not in [
+            "optimal_alpha_stim",
+            "k_knee",
+        ]:  # likely to repeat exact values
             assert np.var(y_gid) > 0, f"y should vary within groups for {ep}. {y_gid=}"
 
     # we will treat categorical variables as discrete unordered but

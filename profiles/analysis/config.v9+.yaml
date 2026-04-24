@@ -2,9 +2,9 @@
 # do analysis and plotting without fear of triggering giant re-runs
 consider-ancient:
   main_figs: 0
-  diagnostic_figs: csvs 
-  key_metrics_table: 0
-  dependence_analysis: 0
+  diagnostic_figs: csvs
+  # key_metrics_table: 0
+  # dependence_analysis: 0
 
 allowed-rules:
   - dependence_analysis
@@ -13,3 +13,5 @@ allowed-rules:
   - key_metrics_table
   - main_figs
   - diagnostic_figs
+  - diagnostic_figs_combined
+  - stats_table

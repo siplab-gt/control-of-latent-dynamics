@@ -1,7 +1,9 @@
 import os
+from functools import reduce
 
 import numpy as np
 import pandas as pd
+from kneed import KneeLocator
 from scipy.interpolate import make_interp_spline
 
 from src.helpers import preprocess_params, setup_debugger
@@ -73,18 +75,69 @@ def compute_k_suff(subset_df, ep, metric, cfg=None):
     )
 
 
+def compute_alpha_centroid(subset_df, ep, metric, **kwargs):
+    total_channel_budget = subset_df.m + subset_df.k
+    assert (total_channel_budget.diff().fillna(0) == 0).all(), (
+        "Expected constant total channel budget across rows"
+    )
+    total_channel_budget = total_channel_budget.iloc[0]
+
+    def _(group):
+        k = group["k"].to_numpy()
+        Q = group[metric].to_numpy()
+        Q *= Q > 0
+        alpha = k / total_channel_budget
+        i_sort = np.argsort(alpha)
+        alpha = alpha[i_sort]
+        Q = Q[i_sort]
+        return pd.Series(
+            {"alpha_centroid": np.trapezoid(alpha * Q, alpha) / np.trapezoid(Q, alpha)}
+        )
+
+    out = (
+        subset_df.groupby([ep, "ctrl_latency", "seed"])
+        .apply(_, include_groups=False)
+        .reset_index()
+    )
+    assert out["alpha_centroid"].between(0, 1).all(), (
+        "alpha centroid must be between 0 and 1"
+    )
+    return out
+
+
+def compute_k_knee(subset_df, ep, metric, **kwargs):
+    def _(group):
+        k = group["k"].to_numpy()
+        Q = group[metric].to_numpy()
+        Q *= Q > 0
+        i_sort = np.argsort(k)
+        k = k[i_sort]
+        Q = Q[i_sort]
+        kl = KneeLocator(
+            k, Q, curve="concave", direction="increasing", interp_method="interp1d"
+        )
+        return pd.Series({"k_knee": kl.knee, f"{metric}_knee": kl.knee_y})
+
+    out = (
+        subset_df.groupby([ep, "ctrl_latency", "seed"])
+        .apply(_, include_groups=False)
+        .reset_index()
+    )
+    return out
+
+
+km_funcs = dict(
+    k_knee=compute_k_knee,
+    optimal_alpha_stim=compute_optimal_alpha_stim,
+    alpha_centroid=compute_alpha_centroid,
+)
+km_funcs["k_0.9"] = compute_k_suff
+
+
 def build_key_metrics_table(cfg, base_params, results_csv, wildcards):
     expl_params = (
         cfg["star_sweep_params"].copy() | cfg[f"star_sweep_params_{wildcards.setting}"]
     )
-
-    ctrl_metric = base_params.ctrl_metric
-    key_metric = base_params.key_metric
-    if key_metric == "k_0.9":
-        key_metric_func = compute_k_suff
-    else:
-        assert key_metric == "optimal_alpha_stim", f"Unknown key metric: {key_metric}"
-        key_metric_func = compute_optimal_alpha_stim
 
     df = pd.read_csv(results_csv)
     df["alpha_stim"] = df.k / (df.m + df.k)
@@ -109,7 +162,13 @@ def build_key_metrics_table(cfg, base_params, results_csv, wildcards):
         if subset.empty:
             continue
 
-        metric_df = key_metric_func(subset, ep, ctrl_metric, cfg=cfg)
+        metric_df = reduce(
+            lambda x, y: pd.merge(x, y, on=[ep, "ctrl_latency", "seed"], how="inner"),
+            [
+                km_funcs[km](subset, ep, base_params.ctrl_metric, cfg=cfg)
+                for km in base_params.key_metrics
+            ],
+        )
 
         metric_df["ep"] = ep
         metric_df["ep_value"] = metric_df[ep]
@@ -124,23 +183,12 @@ def build_key_metrics_table(cfg, base_params, results_csv, wildcards):
                     "ep_value",
                     "seed",
                     "ctrl_latency",
-                    key_metric,
+                    *base_params.key_metrics,
                 ]
             ]
         )
 
-    if not rows:
-        return pd.DataFrame(
-            columns=[
-                "setting",
-                "task",
-                "ep",
-                "ep_value",
-                "seed",
-                "ctrl_latency",
-                key_metric,
-            ]
-        )
+    assert len(rows) > 0
 
     return pd.concat(rows, ignore_index=True)
 
