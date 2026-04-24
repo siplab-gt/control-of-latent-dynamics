@@ -563,6 +563,23 @@ def runtime_min(n_trials, n_train_trials=0, multiplier=1):
     return f
 
 
+def _ctrl_expts_runtime(wildcards):
+    """Empirical wall-time allocation for ctrl_expts, in minutes.
+
+    Observed per-trial wall (NLMPC, 100 trials) from run 6679539 fits
+    ~7 + H*N/150 seconds. Total ≈ 100 * per_trial + 1 min setup, scaled
+    by 1.5 for safety margin, rounded up to the next 5-min bin. NULL and
+    OL complete in ≤ ~15 min regardless of H/N.
+    """
+    if wildcards.ctrl_type in ("NULL", "OL"):
+        return 20
+    H = int(wildcards.ctrl_horizon_ms)
+    N = int(wildcards.nlmpc_iters)
+    per_trial_s = 7 + H * N / 150
+    total_min = (100 * per_trial_s + 60) / 60 * 1.5
+    return max(25, 5 * (int(total_min // 5) + 1))
+
+
 rule ctrl_expts:
     input:
         "src/ctrl/__init__.py",
@@ -580,7 +597,7 @@ rule ctrl_expts:
         slurm_partition="gpu-a100",
         gpu=1,
         mem_mb=4000,
-        runtime=15,
+        runtime=_ctrl_expts_runtime,
     log:
         wildcard_path("ctrl_expts.log"),
     retries: 1
@@ -777,11 +794,18 @@ rule calibrate_opsin_plant:
     """Compute (g0, E, v0, v1) from voperating.json via published biophysical
     ratios + a Brian2 long-pulse reference (plan §4.3). Writes
     chr2_4s_fsnn_calibration.json with a calibration_hash used as a cache
-    key (plan §4.6) and a provenance fingerprint (plan §4.5)."""
+    key (plan §4.6) and a provenance fingerprint (plan §4.5).
+
+    target_iopto is read from COLD config (`calibrate_opsin_plant.target_iopto`)
+    so the calibration tracks config changes. The script requires an explicit
+    value — no default — because the calibrated gain has shifted repeatedly
+    (0.1 → 0.05 → 0.036) and silent fallbacks would mask stale values."""
     input:
         voperating="results/opsin_calibration/voperating.json",
         script="src/scripts/calibrate_opsin_plant.py",
         opsins="src/opsins.py",
+    params:
+        target_iopto=lambda wc: config["calibrate_opsin_plant"]["target_iopto"],
     output:
         "results/opsin_calibration/chr2_4s_fsnn_calibration.json",
     log:
@@ -794,6 +818,7 @@ rule calibrate_opsin_plant:
     shell:
         "python -m src.scripts.calibrate_opsin_plant "
         "{input.voperating} {output[0]} "
+        "--target-iopto {params.target_iopto} "
         "> {log} 2>&1"
 
 

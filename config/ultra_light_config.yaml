@@ -1,18 +1,25 @@
-# #####################################################################
-# # Ultra-light config: absolute bare minimum that still exercises every
-# # stage of the COLD pipeline end-to-end (prep_fsnn → cleo_prep →
-# # sys_id_expts + natural_electrode_expts → model_fit → ctrl_expts →
-# # tabulate → figures). Target wall-clock <10 min (modulo SLURM queue).
-# #
-# # Reductions vs testconfig.yaml:
-# #   - 1 seed (was 2)
-# #   - 1 k/m pair via num_stim_ratio_levels=1 (was 4)
-# #   - 1 ctrl_horizon_ms and 1 nlmpc_iters (was 3×3=9 NLMPC combos)
-# #   - prep_fsnn_{demean,train,test} trial counts cut to minimum
-# #   - n_trials_sys_id=5, n_trials_natural=3, n_trials_ctrl=2
-# #   - usid_overrides drops natural + USID training to 2 epochs each
-# #     (bypasses whatever grid built snake/build/usid_model.merged.yaml)
-# #####################################################################
+# =============================================================================
+# ultra_light_config.yaml — absolute-minimum smoke test.
+#
+# Role: used to be called "ultra-light". Now serves as the bare-minimum
+# wiring-check config (<15 min end-to-end). Fits are intentionally useless
+# (too few trials, too few epochs) but every DAG rule fires, catching import
+# / shape / unit bugs that `snakemake -n` + unit tests can't.
+#
+# Reductions vs testconfig.yaml (which is now full-length, low-sweep):
+#   - 1 seed (was 2)
+#   - 1 k/m pair via num_stim_ratio_levels=1 (was 4)
+#   - 1 ctrl_horizon_ms + 1 nlmpc_iters (was 3×3=9 NLMPC combos)
+#   - prep_fsnn_{demean,train,test} trial counts cut to minimum (2/3/1 etc.)
+#   - n_trials_sys_id=5, n_trials_natural=3, n_trials_ctrl=2
+#   - usid_overrides drops natural + USID training to 2 epochs each
+#     (bypasses whatever grid built snake/build/usid_model.merged.yaml —
+#     kept here because testconfig does NOT use usid_overrides anymore; a
+#     future independent COLD-side USID config will take over that role)
+#
+# Do NOT use for quality evaluation. Use testconfig.yaml or config.yaml for
+# that.
+# =============================================================================
 
 grid_sweep_params:
   seed:
@@ -129,7 +136,14 @@ prep_fsnn_reaching:
   g: 3
 
 model_fit_usid_stim_rec:
-  foo: bar
+  # Placeholder block injected by Snakemake's step_cfg("model_fit", "usid_stim_rec")
+  # lookup. These keys are NOT consumed by USID training — USID reads epochs
+  # from config/cold_usid.yaml (natural_hyperparams.epochs / usid_hyperparams.epochs).
+  # For ultralight, actual shortening is done by `usid_overrides:` below
+  # (natural_hyperparams.epochs / usid_hyperparams.epochs → 2 each) — that's the
+  # live mechanism, while this block is a step_cfg stub.
+  epochs: 2500
+  steps_ahead_model_code: ""
 
 ctrl_expts:
   Q_cost: 1
@@ -171,6 +185,10 @@ cleo_prep:
   subsample_factor: 10
   opsin_plant_class: chr2_4s_fsnn
   opsin_calibration_dir: results/opsin_calibration
+
+calibrate_opsin_plant:
+  # Required; no default. See config.yaml's block for rationale.
+  target_iopto: 0.036
 
 model_fit:
   linear_Cz: true

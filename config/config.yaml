@@ -1,3 +1,34 @@
+# =============================================================================
+# config.yaml — production COLD pipeline config (full-length values, full sweep).
+#
+# Full-length quality-determining params (values here are the peer-validated
+# reference that delivers fSNN R²(X)/R²(Z) ≈ 0.6-1.0 and supports the full
+# v3 opsin pipeline):
+#
+#   block                                 keys                                  value(s)
+#   ------------------------------------- ------------------------------------- -----------
+#   prep_fsnn_demean                      n_init_trials/n_main/n_settle         20 / 100 / 20
+#   prep_fsnn_train                       n_main_trials / n_settle_trials       250 / 20
+#   prep_fsnn_test                        n_main_trials                         50
+#   prep_fsnn_reaching                    n_trials_pca                          100
+#   prep_fsnn (base)                      dt, densities, tau_*, vth/vr, g, …    unchanged across configs
+#   natural_electrode_expts               n_trials_natural                      50
+#   ctrl_expts                            n_trials_ctrl                         100
+#   expts                                 u_max_mWmm2                           75
+#   model_fit_usid_stim_rec               epochs                                2500
+#   cleo_prep (geometry)                  array_side/_n_per_side, typical_Irr0  unchanged
+#
+# Architectural switches (v3 pipeline wiring):
+#   model_fit_method: usid
+#   use_opsin: true
+#   cleo_prep.opsin_plant_class: chr2_4s_fsnn
+#   opsin_checkpoint_path: null (latest USID-synthetic checkpoint)
+#
+# Sweep cardinalities (below): everything in grid_sweep / star_sweep /
+# manual_sweep / q_usid. Trim these to reduce wall-clock without degrading
+# per-cell quality. See testconfig.yaml for a minimal-sweep analog.
+# =============================================================================
+
 #####################################################################
 # parameters to sweep, constituting different experimental conditions
 #####################################################################
@@ -87,7 +118,11 @@ reference_params:
   network_area_scale: 1.44
   beam_width_um: 100
   latency: true
-  model_task_inputs: true
+  # USID raises NotImplementedError on model_task_inputs=true
+  # (src/model_fit/usid.py guards with assert). The star_sweep still
+  # includes [false, true] for future work; reference_params must be
+  # `false` so the sweep's reference cell runs end-to-end today.
+  model_task_inputs: false
   signals: lfp
   ctrl_horizon_ms: 300
   nlmpc_iters: 10
@@ -177,12 +212,21 @@ cleo_prep:
   # needed early for LFP
   subsample_factor: 10 # ctrl/sample period relative to fsnn dt
   # Opsin plant class — selects the cleo opsin injected into fSNN's ng_main.
-  # "proportional_current": instantaneous linear, calibrated via I_per_Irr.
-  # (v3 biophysical class pending — see scratchpad/opsin_v3_cleanup_and_plan.md.)
-  opsin_plant_class: proportional_current
+  #   "proportional_current": instantaneous linear, calibrated via I_per_Irr (v1).
+  #   "chr2_4s_fsnn":         v3 biophysical UnitlessChr2FourState, calibrated via
+  #                           calibrate_opsin_plant rule → chr2_4s_fsnn_calibration.json.
+  opsin_plant_class: chr2_4s_fsnn
   # Directory (relative to COLD repo root) for calibration artifacts
   # consumed when opsin_plant_class != proportional_current.
   opsin_calibration_dir: results/opsin_calibration
+
+calibrate_opsin_plant:
+  # Steady-state Iopto the opsin should produce under target_light_mWmm2
+  # (hard-coded 5 mW/mm² in calibrate_opsin_plant.py). Consumed only when
+  # opsin_plant_class: chr2_4s_fsnn. Required; no default. Current value
+  # (0.036) is v2-match per D8 in scratchpad/v3_opsin_deviations.md —
+  # chosen because higher gains destabilize fSNN vinf at high-k.
+  target_iopto: 0.036
 
 model_fit:
   linear_Cz: true
@@ -193,12 +237,25 @@ model_fit:
 # (snake/config/base/trainer.yaml, snake/config/overlays/*.yaml)
 model_fit_method: "usid"
 # When true, load trained opsin model and use it during USID training
-# (no_opsin=False). Requires ctrl_type=NLMPC for control experiments.
-use_opsin: false
+# (no_opsin=False). Controller interaction:
+#   - NLMPC: uses the NN opsin in its gradient-based forward model (opsin-aware).
+#   - LQMPC: treats the SubspaceLDS `B` as a linear light→state map; under
+#     use_opsin=true, B' was trained to map photocurrents (not raw light) to
+#     state, so LQMPC's predictions are inaccurate by a linearization of the
+#     opsin. Still runs — the LQMPC vs NLMPC contrast is the intended
+#     ablation and shows the cost of ignoring opsin nonlinearity.
+#   - OL: ignores the LDS entirely (replays precomputed light commands).
+use_opsin: true
 opsin_checkpoint_path: null  # null = use latest from USID_REPO_ROOT/experiments/opsin_results
 
 model_fit_usid_stim_rec:
-  foo: bar
+  # Placeholder block injected by Snakemake's step_cfg("model_fit", "usid_stim_rec")
+  # lookup. These keys are NOT consumed by USID training — USID reads epochs
+  # from config/cold_usid.yaml (natural_hyperparams.epochs / usid_hyperparams.epochs).
+  # `steps_ahead_model_code` is a BRAID-legacy field (src/model_fit/braid.py).
+  # Kept here because step_cfg expects a dict; values are ignored for USID path.
+  epochs: 2500
+  steps_ahead_model_code: ""
 
 expts: # common to sys ID and ctrl expts
   u_max_mWmm2: 75

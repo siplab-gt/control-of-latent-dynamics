@@ -134,8 +134,8 @@ class NLMPCController(Controller):
     def _run_opsin_forward(self, u_light, h0=None):
         """Run opsin model: (H, k_opto) light → (H, k_opto) photocurrents.
 
-        Processes each channel independently through the GRU, matching
-        USIDModel.compute_photocurrents() structure.
+        u_light enters the NN per-channel; B' (learned at model_fit time)
+        maps the per-channel photocurrent output back into state.
 
         Args:
             u_light: (H, k_opto) light input tensor.
@@ -147,7 +147,6 @@ class NLMPCController(Controller):
             h_out: GRU hidden state after processing. None if h0 was None
                 and no stateful tracking is needed (backward compat).
         """
-        H, k_opto = u_light.shape
         u_flat = u_light.T.unsqueeze(-1)  # (k_opto, H, 1)
         if h0 is not None:
             p_flat, h_out = self._opsin_model.forward_with_hidden(u_flat, h0)
