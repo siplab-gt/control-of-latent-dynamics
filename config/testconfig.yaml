@@ -50,7 +50,7 @@ grid_sweep_params:
 #################################################################
 star_sweep_params:
   n_trials_sys_id:
-    - 10
+    - 100
   n_latent_dims_offset:
     - -2
   density_scale:
@@ -93,7 +93,7 @@ manual_sweep_params:
 
 #################
 reference_params:
-  n_trials_sys_id: 10
+  n_trials_sys_id: 100
   n_latent_dims_offset: -2
   density_scale: 1
   network_area_scale: 1.44
