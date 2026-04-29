@@ -201,7 +201,15 @@ natural_hyperparams:
 
 usid_hyperparams:
   epochs: 100
-  lr: 5e-2                 # Aggressive — lower to 1e-2 if training diverges.
+  lr: 1e-2                 # Lowered from 5e-2 (2026-04-29). At 5e-2,
+                           # rank-1-input cells (k=1, m=63) diverge after
+                           # ~3 USID-phase steps via K=32 rollout
+                           # amplification despite Adam + grad clipping.
+                           # With Adam, per-step weight magnitude ≈ lr
+                           # regardless of grad clip; lr IS the step-size
+                           # knob. Multi-channel cells (k=22+) survived at
+                           # 5e-2; this lower lr should keep them stable
+                           # too with no expected accuracy cost.
   rollout:
     K: 32
     W: 16

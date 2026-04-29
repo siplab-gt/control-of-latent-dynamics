@@ -648,7 +648,12 @@ def get_model_fit_method(wildcards):
 def get_usid_dependencies(wildcards):
     """
     Return USID repo files as dependencies when model_fit_method=usid.
-    This ensures Snakemake reruns model_fit if any USID integration code changes.
+    This ensures Snakemake reruns model_fit if any USID integration code
+    changes. Also includes config/cold_usid.yaml — USID's training
+    hyperparams (lr, epochs, rollout, loss_weights) live there and aren't
+    otherwise tracked by Snakemake's configfile mechanism, so editing the
+    yaml without listing it here would silently leave model_fit outputs
+    stale.
     """
     if wildcards.setting == "sufficient_stim":
         return []
@@ -660,6 +665,7 @@ def get_usid_dependencies(wildcards):
             "USID_REPO_ROOT not set. Export it to the siplab-gt/usid repo root."
         )
     return [
+        "config/cold_usid.yaml",
         f"{usid_repo}/scripts/usid_subspace_interface.py",
         f"{usid_repo}/models/USIDModel.py",
         f"{usid_repo}/models/NaturalModel.py",
