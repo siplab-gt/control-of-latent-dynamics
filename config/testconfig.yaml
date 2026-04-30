@@ -58,7 +58,7 @@ grid_sweep_params:
 #################################################################
 star_sweep_params:
   n_trials_sys_id:
-    - 100
+    - 10
   # n_latent_dims_offset: number of state dims relative to fSNN's
   # ground-truth task-factor count (8 for testconfig reaching). offset=0
   # → n_x = 8 (matched capacity); offset=-2 → n_x = 6 (under-parameterized,
@@ -109,7 +109,7 @@ manual_sweep_params:
 
 #################
 reference_params:
-  n_trials_sys_id: 100
+  n_trials_sys_id: 10
   n_latent_dims_offset: -2
   density_scale: 1
   network_area_scale: 1.44
