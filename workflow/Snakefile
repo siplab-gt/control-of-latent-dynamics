@@ -14,13 +14,43 @@ import warnings
 # in particular regarding the standardized folder structure mentioned there.
 
 
-configfile: "config/config.yaml"
+# NOTE: configfiles must be supplied on the CLI via two `--configfile` flags
+# (one for params, one for sweeps). They are NOT defaulted at the top of this
+# Snakefile because Snakemake's `--configfile` performs a deep merge with any
+# defaults declared here, which would leak production sweep axes into
+# lightweight runs (e.g. testconfig / ultra_light) and explode the DAG.
+#
+# The smk-submit-slurm.sbatch wrapper enforces both flags; for direct
+# invocation use:
+#     snakemake --configfile config/<name>_params.yaml \
+#               --configfile config/<name>_sweeps.yaml ...
+if "params" not in config or "sweeps" not in config:
+    raise ValueError(
+        "Snakefile requires both `params:` and `sweeps:` blocks in the merged "
+        "config. Pass two --configfile flags: <name>_params.yaml and "
+        "<name>_sweeps.yaml. See smk-submit-slurm.sbatch for an example."
+    )
+
+
+def _sweep_or_default(key):
+    """Return the list of values for `key` from config['sweeps'], or a
+    single-element list containing the default from config['params']."""
+    if key in config.get("sweeps", {}):
+        return list(config["sweeps"][key])
+    return [config["params"][key]]
+
+
+def _wc_constraint(key, extras=()):
+    """Build a wildcard regex constraint from sweeps + extra alternatives.
+    Single-value (default-only) keys still produce a valid regex."""
+    vals = [str(v) for v in _sweep_or_default(key)] + list(extras)
+    return "|".join(vals)
 
 
 wildcard_constraints:
-    task="|".join(config["manual_sweep_params"]["task"]),
-    setting="|".join(config["manual_sweep_params"]["setting"] + ["NA"]),
-    ctrl_type="|".join(config["manual_sweep_params"]["ctrl_type"] + ["NULL"]),
+    task=_wc_constraint("task"),
+    setting=_wc_constraint("setting", extras=("NA",)),
+    ctrl_type=_wc_constraint("ctrl_type", extras=("NULL",)),
     ctrl_horizon_ms=r"\d+",
     nlmpc_iters=r"\d+",
 
@@ -29,14 +59,14 @@ rule all:
     input:
         expand(
             "<results>/figs/{setting}_{task}.pdf",
-            task=config["manual_sweep_params"]["task"],
-            setting=config["manual_sweep_params"]["setting"],
+            task=_sweep_or_default("task"),
+            setting=_sweep_or_default("setting"),
         ),
         "<results>/figs/diagnostics.pdf",
         expand(
             "<results>/figs/{setting}_{task}_diagnostics.pdf",
-            task=config["manual_sweep_params"]["task"],
-            setting=config["manual_sweep_params"]["setting"],
+            task=_sweep_or_default("task"),
+            setting=_sweep_or_default("setting"),
         ),
     localrule: True
 
@@ -67,20 +97,22 @@ all_cond_params = []
 for p in steps_params.values():
     all_cond_params.extend(p)
 
-_cond_params_in_cfg = [
-    param
-    for param_type in [
-        "manual_sweep_params",
-        "grid_sweep_params",
-        "star_sweep_params",
-        "star_sweep_params_measurement_only",
-    ]
-    for param in config[param_type].keys()
-]
-for p in _cond_params_in_cfg:
-    assert p in all_cond_params
+# Validate every sweep axis is a recognized condition param.
+for p in config.get("sweeps", {}).keys():
+    assert p in all_cond_params, (
+        f"sweep key {p!r} is not a recognized condition param; "
+        f"valid keys: {sorted(all_cond_params)}"
+    )
+# Validate every condition param has a default in `params`.
 for p in all_cond_params:
-    assert p in _cond_params_in_cfg
+    if p in ("k", "m"):
+        # k/m are generated from q_usid (channel_budget × num_stim_ratio_levels);
+        # defaults exist for testq_usid convenience only.
+        continue
+    assert p in config["params"], (
+        f"params block missing default for {p!r}; every condition param "
+        "must have a single default value in the params file."
+    )
 
 
 def step_from_filename(filename: str) -> str:
@@ -114,9 +146,9 @@ def cond_params_for_step(step: str) -> list[str]:
     return params
 
 
-def wildcard_path(file: str, fill_in_ref=False, **kwargs) -> str:
+def wildcard_path(file: str, fill_in_defaults=False, **kwargs) -> str:
     step = step_from_filename(file)
-    params = config["reference_params"].copy() if fill_in_ref else {}
+    params = config["params"].copy() if fill_in_defaults else {}
     params |= kwargs
     wildcards = set(all_cond_params) - params.keys()
 
@@ -223,7 +255,7 @@ rule testq1:
     # (doesn't require a super long path with all wildcards)
     input:
         lambda wc: wildcard_path(
-            fill_in_ref=True,
+            fill_in_defaults=True,
             file=wc.file,
             setting="sufficient_stim",
             task="reaching",
@@ -279,7 +311,7 @@ test_usid_k, test_usid_m = list(get_usid_kms())[-1]
 rule testq_usid:
     input:
         lambda wc: wildcard_path(
-            fill_in_ref=True,
+            fill_in_defaults=True,
             file=wc.file,
             setting="usid_stim_rec",
             task="reaching",
@@ -287,7 +319,7 @@ rule testq_usid:
             latency=False,
             k=test_usid_k,
             m=test_usid_m,
-            seed=config["grid_sweep_params"]["seed"][0],
+            seed=_sweep_or_default("seed")[0],
         ),
     output:
         "<results>/testq_usid/{file}",
@@ -332,8 +364,8 @@ rule diagnostic_figs_combined:
         "src/plot_style.py",
         csvs=expand(
             "<results>/{setting}_{task}.csv",
-            setting=config["manual_sweep_params"]["setting"],
-            task=config["manual_sweep_params"]["task"],
+            setting=_sweep_or_default("setting"),
+            task=_sweep_or_default("task"),
         ),
     output:
         multiext("<results>/figs/diagnostics", *fig_exts),
@@ -342,40 +374,46 @@ rule diagnostic_figs_combined:
         "../src/scripts/diagnostic_figs.py"
 
 
+def get_sweep_combinations():
+    """Yield dicts of one full cell's wildcards from the Cartesian product
+    of `config['sweeps']`. Keys not present in sweeps fall back to
+    `config['params']` defaults via `wildcard_path(fill_in_defaults=True)`."""
+    sweeps = config.get("sweeps", {})
+    if not sweeps:
+        yield {}
+        return
+    keys = list(sweeps.keys())
+    values = [list(sweeps[k]) for k in keys]
+    for combo in itertools.product(*values):
+        yield dict(zip(keys, combo))
+
+
+def _setting_combos_for(rule_setting):
+    """Iterate sweep combinations restricted to a single setting (the rule's
+    output filename pins setting). Strips `setting` and `task` from each combo
+    — `task` is bound via the rule's `{task}` wildcard, `setting` is fixed."""
+    for combo in get_sweep_combinations():
+        sweep_setting = combo.get("setting", config["params"]["setting"])
+        if sweep_setting != rule_setting:
+            continue
+        c = {k: v for k, v in combo.items() if k not in ("setting", "task")}
+        yield c
+
+
 if "q1" in config:
     rule sufficient_stim_tabulate:
         input:
-            # to get main fig
             [
                 wildcard_path(
                     file="summary.csv",
                     setting="sufficient_stim",
-                    latency=latency,
-                    ctrl_type=ctrl,
                     m=NA,
                     k=config["q1"]["k"],
-                    seed=config["grid_sweep_params"]["seed"],
                     signals=NA,
-                    fill_in_ref=True,
+                    **combo,
+                    fill_in_defaults=True,
                 )
-                for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
-            ],
-            # exploratory variables
-            [
-                wildcard_path(
-                    file="summary.csv",
-                    setting="sufficient_stim",
-                    latency=latency,
-                    ctrl_type=ctrl,
-                    k=config["q1"]["k"],
-                    m=NA,
-                    seed=config["grid_sweep_params"]["seed"],
-                    signals=NA,
-                    **{var: config["star_sweep_params"][var]},
-                    fill_in_ref=True,
-                )
-                for var in config["star_sweep_params"]
-                for ctrl, latency in [("OL", False), ("LQMPC", True)]
+                for combo in _setting_combos_for("sufficient_stim")
             ],
         output:
             "<results>/sufficient_stim_{task}.csv",
@@ -391,39 +429,16 @@ if "q1" in config:
 if "q2" in config:
     rule optimal_stim_rec_tabulate:
         input:
-            # to get main fig
             [
                 wildcard_path(
                     file="summary.csv",
                     setting="optimal_stim_rec",
-                    latency=latency,
-                    ctrl_type=ctrl,
                     k=k,
                     m=m,
-                    seed=config["grid_sweep_params"]["seed"],
-                    fill_in_ref=True,
+                    **combo,
+                    fill_in_defaults=True,
                 )
-                for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
-                for k, m in get_q2_kms()
-            ],
-            # exploratory variables
-            [
-                wildcard_path(
-                    file="summary.csv",
-                    setting="optimal_stim_rec",
-                    latency=latency,
-                    ctrl_type=ctrl,
-                    k=k,
-                    m=m,
-                    seed=config["grid_sweep_params"]["seed"],
-                    **{var: values},
-                    fill_in_ref=True,
-                )
-                for var, values in (
-                    config["star_sweep_params"]
-                    | config["star_sweep_params_measurement_only"]
-                ).items()
-                for ctrl, latency in [("OL", False), ("LQMPC", True)]
+                for combo in _setting_combos_for("optimal_stim_rec")
                 for k, m in get_q2_kms()
             ],
         output:
@@ -439,58 +454,20 @@ if "q2" in config:
 
 rule usid_stim_rec_tabulate:
     input:
-        # OL and LQMPC use reference horizon/iters; NLMPC sweeps horizon × iters.
-        # ctrl_horizon_ms/nlmpc_iters are resolved by fill_in_ref -> reference_params.
+        # Single Cartesian-product loop. Every cell in config['sweeps'] ×
+        # q_usid (k, m) pairs is a rule input. Params not in sweeps fall back
+        # to defaults via fill_in_defaults=True. `task` is bound by the rule's
+        # output wildcard; `setting` is pinned to usid_stim_rec.
         [
             wildcard_path(
                 file="summary.csv",
                 setting="usid_stim_rec",
-                latency=latency,
-                ctrl_type=ctrl,
                 k=k,
                 m=m,
-                seed=config["grid_sweep_params"]["seed"],
-                fill_in_ref=True,
+                **combo,
+                fill_in_defaults=True,
             )
-            for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
-            for k, m in get_usid_kms()
-        ],
-        # NLMPC sweep over horizon × iters (both latencies)
-        [
-            wildcard_path(
-                file="summary.csv",
-                setting="usid_stim_rec",
-                latency=latency,
-                ctrl_type="NLMPC",
-                k=k,
-                m=m,
-                seed=config["grid_sweep_params"]["seed"],
-                ctrl_horizon_ms=horizon,
-                nlmpc_iters=iters,
-                fill_in_ref=True,
-            )
-            for latency in [False, True]
-            for horizon in config["manual_sweep_params"]["ctrl_horizon_ms"]
-            for iters in config["manual_sweep_params"]["nlmpc_iters"]
-            for k, m in get_usid_kms()
-        ],
-        [
-            wildcard_path(
-                file="summary.csv",
-                setting="usid_stim_rec",
-                latency=latency,
-                ctrl_type=ctrl,
-                k=k,
-                m=m,
-                seed=config["grid_sweep_params"]["seed"],
-                **{var: values},
-                fill_in_ref=True,
-            )
-            for var, values in (
-                config["star_sweep_params"]
-                | config["star_sweep_params_measurement_only"]
-            ).items()
-            for ctrl, latency in [("OL", False), ("LQMPC", True), ("NLMPC", True)]
+            for combo in _setting_combos_for("usid_stim_rec")
             for k, m in get_usid_kms()
         ],
     output:
@@ -721,16 +698,16 @@ def _voperating_reference_wildcards() -> dict:
     """Representative wildcard combination used for the voperating measurement.
 
     fSNN's v-distribution is dominated by intrinsic dynamics (not k/m), so
-    one representative combo is adequate. Kept consistent with testq_usid
-    and the reference_params block so both share the same pinning logic.
+    one representative combo is adequate. Pulls task/seed from config['params']
+    defaults so this stays consistent regardless of which axes are being swept.
     """
     try:
         k_val, m_val = next(get_usid_kms())
     except (StopIteration, KeyError):
         k_val, m_val = "NA", "NA"
     return {
-        "task": config["manual_sweep_params"]["task"][0],
-        "seed": config["grid_sweep_params"]["seed"][0],
+        "task": config["params"]["task"],
+        "seed": config["params"]["seed"],
         "setting": "usid_stim_rec",
         "k": k_val,
         "m": m_val,
@@ -748,7 +725,7 @@ def _voperating_fsnn_input():
     wc = _voperating_reference_wildcards()
     return wildcard_path(
         "fsnn_post_train.pkl.gz",
-        fill_in_ref=True,
+        fill_in_defaults=True,
         task=wc["task"],
         seed=wc["seed"],
     )
@@ -757,14 +734,14 @@ def _voperating_fsnn_input():
 def _voperating_cond_params(wildcards):
     """cond_params dict for the inline CleoPrep construction."""
     wc = _voperating_reference_wildcards()
-    ref = config.get("reference_params", {})
+    params = config["params"]
     return {
         **wc,
-        "n_latent_dims_offset": ref.get("n_latent_dims_offset", 0),
-        "density_scale": ref.get("density_scale", 1),
-        "network_area_scale": ref.get("network_area_scale", 1.44),
-        "beam_width_um": ref.get("beam_width_um", 100),
-        "signals": ref.get("signals", "lfp"),
+        "n_latent_dims_offset": params["n_latent_dims_offset"],
+        "density_scale": params["density_scale"],
+        "network_area_scale": params["network_area_scale"],
+        "beam_width_um": params["beam_width_um"],
+        "signals": params["signals"],
     }
 
 
@@ -772,7 +749,7 @@ def _voperating_base_params(wildcards):
     """base_params dict (merged prep_fsnn + task-specific overlay + cleo_prep)
     for the inline CleoPrep construction. Mirrors step_cfg('prep_fsnn',
     'cleo_prep') but closed over a fixed task instead of a wildcard."""
-    task = config["manual_sweep_params"]["task"][0]
+    task = config["params"]["task"]
     params = dict(config.get("prep_fsnn", {}))
     params |= config.get(f"prep_fsnn_{task}", {})
     params |= config.get("cleo_prep", {})
@@ -899,7 +876,7 @@ use rule plot_sys_id_data_wide as plot_sys_id_data_wide_default with:
         wildcard_path("sys_id_wide_plot.{ext}"),
 
 
-n_trials_sys_id_max = config["star_sweep_params"]["n_trials_sys_id"][-1]
+n_trials_sys_id_max = max(_sweep_or_default("n_trials_sys_id"))
 
 
 rule sys_id_expts:
