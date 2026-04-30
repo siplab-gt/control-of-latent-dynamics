@@ -18,9 +18,13 @@ conda activate ~/r-crozell3-0/envs/USID
 export USID_REPO_ROOT="/storage/project/r-crozell3-0/zbeddingfield3/projects/usid"
 export PYTHONPATH="${PYTHONPATH}:${USID_REPO_ROOT}"
 
-# Config file selection (default to testconfig for faster runs)
-CONFIG_FILE="${1:-../config/testconfig.yaml}"
-echo "Using config: $CONFIG_FILE"
+# Config file selection (default to testconfig for faster runs).
+# Two configfiles: one for params (defaults + rule blocks), one for sweeps
+# (Cartesian-product axes). Both are merged by Snakemake.
+CONFIG_PARAMS="${1:-../config/testconfig_params.yaml}"
+CONFIG_SWEEPS="${2:-../config/testconfig_sweeps.yaml}"
+echo "Using params: $CONFIG_PARAMS"
+echo "Using sweeps: $CONFIG_SWEEPS"
 
 mkdir -p "$(readlink -f results 2>/dev/null || echo results)" logs
 
@@ -36,7 +40,7 @@ COLD_BATCH_LABEL="$(date +%Y%m%d)-${SLURM_JOB_ID:-local}"
 # NOTE: Removed sdm=conda due to PACE conda version (24.1.2) not meeting
 # Snakemake 8.x requirement (24.7.1+). Using already-activated USID env instead.
 snakemake \
-    --configfile "$CONFIG_FILE" \
+    --configfiles "$CONFIG_PARAMS" "$CONFIG_SWEEPS" \
     --config cold_batch_label="$COLD_BATCH_LABEL" \
     --executor slurm \
     --jobs 100 \

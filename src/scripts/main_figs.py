@@ -74,7 +74,10 @@ def main(
     outfiles,
     setting,
 ):
-    expl_params = cfg["star_sweep_params"]
+    # Exploration axes for the sweep figures are the swept axes from the
+    # config's `sweeps` block. Axes not present in `sweeps` (i.e. flat at
+    # default) are excluded — they have no variation to plot.
+    expl_params = dict(cfg.get("sweeps", {}))
     if setting == "sufficient_stim":
         metric = "Q_track_Xref_X_fsnn"
         colorbar_label = r"$Q_\text{track}\left(X_\text{ref}, X\right)$"
@@ -88,7 +91,6 @@ def main(
         key_metric_name = "optimal_p_stim"
         key_metric_func = compute_optimal_p_stim
         main_fig_plot_type = "lineplots"
-        expl_params |= cfg["star_sweep_params_measurement_only"]
         plots_per_row = 4
 
     psty.style_plots()
@@ -123,7 +125,26 @@ def main(
         ax.remove()
     axs_grid = main_axs[1:]
 
-    ref_condition = cfg["reference_params"]
+    # Reference condition for "fix everything else, vary one axis" plots.
+    # Pulls every condition param's default from the params block. Fields
+    # not relevant to the figure (e.g. setting/task) are simply ignored by
+    # the downstream query construction.
+    ref_condition = {
+        k: cfg["params"][k]
+        for k in (
+            "n_trials_sys_id",
+            "n_latent_dims_offset",
+            "density_scale",
+            "network_area_scale",
+            "beam_width_um",
+            "latency",
+            "model_task_inputs",
+            "signals",
+            "ctrl_horizon_ms",
+            "nlmpc_iters",
+        )
+        if k in cfg["params"]
+    }
 
     # top plot
     ref_cond_except_latency = ref_condition.copy()
@@ -326,6 +347,9 @@ if __name__ == "__main__" and "snakemake" not in locals():
     )
     print(f"{outfiles=}")
 
-    cfg = snakemake.common.configfile._load_configfile("./config/config.yaml")
+    # Load both params and sweeps configfiles and merge; mirrors what the
+    # Snakefile does via two `configfile:` directives.
+    cfg = snakemake.common.configfile._load_configfile("./config/config_params.yaml")
+    cfg |= snakemake.common.configfile._load_configfile("./config/config_sweeps.yaml")
 
     main(cfg, args.results_csv, outfiles, setting=setting)
