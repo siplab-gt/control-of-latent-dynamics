@@ -568,16 +568,30 @@ def _ctrl_expts_runtime(wildcards):
 
     Observed per-trial wall (NLMPC, 100 trials) from run 6679539 fits
     ~7 + H*N/150 seconds. Total ≈ 100 * per_trial + 1 min setup, scaled
-    by 1.5 for safety margin, rounded up to the next 5-min bin. NULL and
-    OL complete in ≤ ~15 min regardless of H/N.
+    by SAFETY_MARGIN, rounded up to the next 5-min bin.
+
+    FLOOR_MIN: All controllers get at least 60 min. Originally NULL/OL
+    used a flat 30 min on the assumption they're "fast" (no controller
+    compute). But the dominant cost for ALL controllers is Brian2 sim
+    of the cleo_prep network, which scales with chr2 synapse count
+    (= k*m). For dense geometries like (k=22, m=42) → 924 synapses,
+    Brian2 sim alone takes ~32 min per cell, busting NULL's 30-min
+    cap. The floor covers worst-case Brian2 sim across (k, m) for the
+    cheap controllers; the formula still kicks in for NLMPC/LQMPC
+    when their solver compute pushes the total above 60 min.
+
+    SAFETY_MARGIN was 1.5; bumped to 2.25 (=1.5×1.5) on 2026-04-28
+    after the prior testconfig run hit ~14 NLMPC TIMEOUTs.
     """
+    SAFETY_MARGIN = 2.25
+    FLOOR_MIN = 60
     if wildcards.ctrl_type in ("NULL", "OL"):
-        return 20
+        return FLOOR_MIN
     H = int(wildcards.ctrl_horizon_ms)
     N = int(wildcards.nlmpc_iters)
     per_trial_s = 7 + H * N / 150
-    total_min = (100 * per_trial_s + 60) / 60 * 1.5
-    return max(25, 5 * (int(total_min // 5) + 1))
+    total_min = (100 * per_trial_s + 60) / 60 * SAFETY_MARGIN
+    return max(FLOOR_MIN, 5 * (int(total_min // 5) + 1))
 
 
 rule ctrl_expts:
@@ -594,7 +608,7 @@ rule ctrl_expts:
     conda:
         "envs/main.yaml"
     resources:
-        slurm_partition="gpu-a100",
+        slurm_partition="gpu-rtx6000",
         gpu=1,
         mem_mb=4000,
         runtime=_ctrl_expts_runtime,
@@ -699,7 +713,7 @@ def gpu_for_model_fit(wc):
 def slurm_extra_for_model_fit(wc):
     """Return SLURM partition for model fit."""
     if gpu_for_model_fit(wc):
-        return "gpu-a100"
+        return "gpu-rtx6000"
     return "cpu-small"
 
 
@@ -1073,7 +1087,7 @@ def gpu_for_fsnn_train(wc):
 def slurm_extra_for_fsnn(wc):
     """Return SLURM partition for fSNN simulation."""
     if gpu_for_fsnn_train(wc):
-        return "gpu-a100"
+        return "gpu-rtx6000"
     return "cpu-small"
 
 
