@@ -583,7 +583,7 @@ def _ctrl_expts_runtime(wildcards):
     SAFETY_MARGIN was 1.5; bumped to 2.25 (=1.5×1.5) on 2026-04-28
     after the prior testconfig run hit ~14 NLMPC TIMEOUTs.
     """
-    SAFETY_MARGIN = 2.25
+    SAFETY_MARGIN = 3.0
     FLOOR_MIN = 60
     if wildcards.ctrl_type in ("NULL", "OL"):
         return FLOOR_MIN
