@@ -916,7 +916,16 @@ rule sys_id_expts:
     conda:
         "envs/main.yaml"
     resources:
-        mem_mb=4000,
+        # Bumped 4000 → 16000 on 2026-04-30 after the n_trials_sys_id 10 → 100
+        # bump (commit c21b964) caused all 40 sys_id cells to OOM-kill (exit
+        # 137) at ~9 min into the Brian2 simulation. Brian2's StateMonitor on
+        # ng_main.Iopto stores the full per-neuron trace in RAM:
+        # ~1152 neurons × 32k samples × 8 bytes ≈ 280 MB just for that monitor,
+        # on top of LFP/X/Y/Z monitors and Brian2's per-neuron state buffers.
+        # 4 GB was sufficient at n_trials=10 but not at 100. 16 GB gives
+        # headroom for variation in (k, m) plant configurations and any
+        # transient peak during pickling.
+        mem_mb=16000,
         runtime=60,
     retries: 1  # since there can be conflicts hitting the cython cache
     script:
