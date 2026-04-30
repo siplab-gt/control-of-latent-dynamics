@@ -227,14 +227,27 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     )
 
     # Subsample Iopto onto the same grid as X/Y/Z. StateMonitor shape is
-    # (N_neurons, T_brian); transpose + subsample → (T, N). Iopto may be
-    # dimensionless (UnitlessChr2FourState on fSNN's dimensionless ng_main)
-    # or ampere-typed (ProportionalCurrentOpsin). Convert amp-typed to nA
-    # explicitly so the stored scale matches what USID's NN opsin was
-    # trained against (synthetic_opsin_data.py emits nA for amp-typed
-    # Iopto). Using get_best_unit() here was non-deterministic across runs.
+    # (N_neurons, T_brian); transpose + subsample → (T, N).
+    #
+    # Iopto can be:
+    #   * ampere-typed (ProportionalCurrentOpsin on fSNN) — convert to nA
+    #     to match the scale USID's NN opsin was trained against
+    #     (synthetic_opsin_data.py emits nA for amp-typed Iopto).
+    #   * dimensionless (UnitlessChr2FourState on fSNN's `Iopto : 1`) —
+    #     pass through unchanged; dividing by b2.namp would be a
+    #     DimensionMismatchError.
+    # Dimension-pattern-match instead of isinstance() so an empty-dim
+    # Quantity doesn't silently trip the amp branch.
+    #
+    # NOTE to future maintainers: the check uses `b2.amp` (broad ampere
+    # family) while the divisor is `b2.namp` (nanoampere). These look
+    # inconsistent but both are amp-dimension units; `have_same_dimensions`
+    # checks dimensions not scale. If you change the divisor to `b2.amp`
+    # to "match the check," you'll silently shift the stored scale by
+    # 1e9 — downstream USID diagnostics expect the nA scale because
+    # synthetic_opsin_data.py emits nA.
     iopto_raw = iopto_mon.Iopto
-    if isinstance(iopto_raw, b2.Quantity):
+    if b2.have_same_dimensions(iopto_raw, b2.amp):
         iopto_raw = iopto_raw / b2.namp
     Iopto_per_neuron = np.asarray(iopto_raw).T[
         :: base_params.subsample_factor
