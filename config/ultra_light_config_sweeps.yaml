@@ -1,0 +1,22 @@
+# =============================================================================
+# ultra_light_config_sweeps.yaml — sweep-axes companion to
+# ultra_light_config_params.yaml.
+#
+# Bare-minimum smoke test: only ctrl_type + latency are swept so all three
+# controllers fire (DAG-coverage). Everything else is pinned at default.
+# Cartesian product is small by design.
+# =============================================================================
+
+sweeps:
+  ctrl_type:
+    - OL
+    - LQMPC
+    - NLMPC
+  latency:
+    - true
+    - false
+
+# (k, m) pair generation — Cartesian-multiplied with `sweeps:` above.
+q_usid:
+  channel_budget: 64
+  num_stim_ratio_levels: 1

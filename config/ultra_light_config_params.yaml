@@ -1,0 +1,173 @@
+# =============================================================================
+# ultra_light_config_params.yaml — absolute-minimum smoke test (params block).
+#
+# Bare-minimum wiring-check config (<15 min end-to-end). Fits are
+# intentionally useless (too few trials, too few epochs) but every DAG rule
+# fires, catching import / shape / unit bugs that `snakemake -n` + unit
+# tests can't.
+#
+# Companion ultra_light_config_sweeps.yaml provides Cartesian-product axes;
+# any axis not listed there is held at its default value below.
+#
+# Reductions vs testconfig_params.yaml:
+#   - 1 seed (was 5)
+#   - 1 k/m pair via num_stim_ratio_levels=1 (was 4)
+#   - prep_fsnn_{demean,train,test} trial counts cut to minimum
+#   - n_trials_sys_id=5, n_trials_natural=3, n_trials_ctrl=2
+#   - usid_overrides drops natural + USID training to 2 epochs each
+#
+# Do NOT use for quality evaluation.
+# =============================================================================
+
+# Parameter defaults — used when a param is not present in the sweeps file.
+params:
+  task: reaching
+  seed: 17230616
+  n_latent_dims_offset: -2
+  density_scale: 1
+  network_area_scale: 1.44
+  setting: usid_stim_rec
+  beam_width_um: 100
+  signals: lfp
+  n_trials_sys_id: 5
+  model_task_inputs: false
+  latency: false
+  ctrl_type: LQMPC
+  ctrl_horizon_ms: 300
+  nlmpc_iters: 2
+  k: 22
+  m: 42
+
+# Top-level architectural switches
+power_per_neuron_uW: 1
+model_fit_method: "usid"
+use_opsin: true
+opsin_checkpoint_path: null
+report_period_s: 60
+train_device: cuda
+model_fit_device: gpu
+log_level: DEBUG
+auto_plot: true
+debug: false
+
+# Deep-merged onto the USID merged config by src/model_fit/usid.py.
+usid_overrides:
+  natural_hyperparams:
+    epochs: 2
+  usid_hyperparams:
+    epochs: 2
+
+# Rule-specific blocks (copied verbatim from previous ultra_light_config.yaml).
+prep_fsnn:
+  dt_ms: 1
+  base_neuron_density: 125
+  layer_density_ratios:
+    - 1.231
+    - 1.539
+    - 1
+  layer_boundaries_um:
+    - 150
+    - 550
+    - 900
+    - 1450
+  connection_distance_penalty_max: 1
+  connection_layer_penalty_max: 0.1
+  n_init_trials: 0
+  n_main_trials: 0
+  n_settle_trials: 0
+  dtrls: 2
+  tau_v_ms: 10
+  tau_s_ms: 100
+  tau_f_ms: 5
+  vth: 1e-16
+  vr: -10
+  g: 6
+  muf: -0.3
+  gs: 0.11
+  gf: 0.13
+  default_float_dtype: float32
+
+prep_fsnn_demean:
+  n_init_trials: 2
+  n_main_trials: 3
+  n_settle_trials: 1
+prep_fsnn_train:
+  n_main_trials: 2
+  n_settle_trials: 1
+prep_fsnn_test:
+  n_main_trials: 3
+
+prep_fsnn_cycling:
+  iti_min_s: 0
+  iti_lambda_s: 0
+  t_event_s: [0.5, 1.95]
+  muf: -0.5
+
+prep_fsnn_reaching:
+  iti_min_s: .4
+  iti_lambda_s: 2
+  t_event_s: [0.35, 0.15, 0.31]
+  n_rate_neurons: 200
+  n_trials_pca: 20
+  g: 3
+
+model_fit_usid_stim_rec:
+  # Placeholder block injected by Snakemake's step_cfg("model_fit", "usid_stim_rec")
+  # lookup. Actual epoch reduction is via usid_overrides above.
+  epochs: 2500
+  steps_ahead_model_code: ""
+
+ctrl_expts:
+  Q_cost: 1
+  R_cost: 1e-3
+  ctrl_horizon_ms: 300
+  n_trials_ctrl: 2
+  baseline_latency_ms: 1
+  solvers: ["osqp", "clarabel", "scs"]
+  nlmpc_iters: 2
+  nlmpc_lr: 0.5
+
+ctrl_expts_OL:
+  time_limit_ms: 2000
+  solver_args:
+    max_iter: 1e8
+    eps_infeas: 1e-8
+    verbose: true
+    ignore_dpp: true
+
+ctrl_expts_LQMPC:
+  time_limit_ms: 20
+  solver_args:
+    max_iter: 1e8
+    eps_infeas: 1e-8
+    warm_start: true
+    enforce_dpp: true
+
+ctrl_expts_NLMPC: {}
+
+ctrl_expts_usid_stim_rec:
+  ref_type: Z
+
+cleo_prep:
+  array_side_length_mm: 4
+  array_n_per_side: 8
+  typical_Irr0_mWmm2: 5
+  subsample_factor: 10
+  opsin_plant_class: chr2_4s_fsnn
+  opsin_calibration_dir: results/opsin_calibration
+
+calibrate_opsin_plant:
+  target_iopto: 0.05
+
+model_fit:
+  linear_Cz: true
+
+expts:
+  u_max_mWmm2: 75
+
+sys_id_expts:
+  foo: bar
+
+natural_electrode_expts:
+  natural_only: true
+  n_trials_natural: 3

@@ -1,0 +1,64 @@
+# =============================================================================
+# config_sweeps.yaml — sweep-axes companion to config_params.yaml.
+#
+# The cell budget is the FULL CARTESIAN PRODUCT of the axes listed in
+# `sweeps:` below × the (k, m) pairs from `q_usid:`. Any axis NOT listed
+# here is held at its default value from config_params.yaml.
+#
+# WARNING: this is the production sweep — Cartesian product is large.
+# Estimate cells before running. To reduce wall-clock without degrading
+# per-cell quality, comment out axes (their defaults from
+# config_params.yaml will then apply).
+# =============================================================================
+
+sweeps:
+  seed:
+    - 17230616
+    - 18051223
+    - 16320829
+    - 18060520
+    - 18220427
+  n_trials_sys_id:
+    - 1
+    - 2
+    - 5
+    - 10
+    - 50
+    - 100
+  n_latent_dims_offset:
+    - -2
+    - -1
+    - 0
+    - 1
+    - 5
+    - 10
+  density_scale:
+    - 1
+    - 1.33
+    - 1.67
+    - 2
+  network_area_scale:
+    - 1.44
+    - 2
+    - 3
+  beam_width_um:
+    - 10
+    - 50
+    - 100
+    - 200
+    - 400
+  model_task_inputs:
+    - false
+    - true
+  ctrl_type:
+    - OL
+    - LQMPC
+    - NLMPC
+  latency:
+    - true
+    - false
+
+# (k, m) pair generation — Cartesian-multiplied with `sweeps:` above.
+q_usid:
+  channel_budget: 64
+  num_stim_ratio_levels: 7

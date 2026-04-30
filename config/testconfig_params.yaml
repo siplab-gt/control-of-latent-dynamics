@@ -1,0 +1,170 @@
+# =============================================================================
+# testconfig_params.yaml — full-length quality, low sweep (params block).
+#
+# Single source of truth for parameter defaults + rule-specific config blocks.
+# The companion testconfig_sweeps.yaml contains the explicit Cartesian-product
+# sweep axes; any axis not listed there falls back to its default below.
+#
+# Role: what used to be called "lightweight-full". Same peer-validated
+# full-length trial counts / epochs as config.yaml.
+#
+# Matches config.yaml on:
+#   - prep_fsnn_* (20/100/20, 250/20, 50 trials)
+#   - prep_fsnn_reaching.n_trials_pca (100)
+#   - natural_electrode_expts.n_trials_natural (50)
+#   - ctrl_expts.n_trials_ctrl (100)
+#   - architectural switches (use_opsin: true, opsin_plant_class: chr2_4s_fsnn)
+#   - calibrate_opsin_plant.target_iopto (0.05)
+#
+# DIVERGES from config.yaml on:
+#   - prep_fsnn_reaching.n_rate_neurons: 200 (prod: 800).
+#   - model_fit_usid_stim_rec.epochs: 2500 (placeholder, NOT consumed by USID).
+# =============================================================================
+
+# Parameter defaults — used when a param is not present in the sweeps file.
+# Every recognized condition param MUST have a default here.
+params:
+  task: reaching
+  seed: 17230616
+  n_latent_dims_offset: 0
+  density_scale: 1
+  network_area_scale: 1.44
+  setting: usid_stim_rec
+  beam_width_um: 100
+  signals: lfp
+  n_trials_sys_id: 10
+  model_task_inputs: false
+  latency: false
+  ctrl_type: LQMPC
+  ctrl_horizon_ms: 200
+  nlmpc_iters: 5
+  k: 22
+  m: 42
+
+# Top-level architectural switches
+power_per_neuron_uW: 1
+model_fit_method: "usid"
+use_opsin: true
+opsin_checkpoint_path: null
+report_period_s: 60
+train_device: cuda
+model_fit_device: gpu
+log_level: DEBUG
+auto_plot: true
+debug: false
+
+# Rule-specific blocks (copied verbatim from previous testconfig.yaml).
+prep_fsnn:
+  dt_ms: 1
+  base_neuron_density: 125
+  layer_density_ratios:
+    - 1.231
+    - 1.539
+    - 1
+  layer_boundaries_um:
+    - 150
+    - 550
+    - 900
+    - 1450
+  connection_distance_penalty_max: 1
+  connection_layer_penalty_max: 0.1
+  n_init_trials: 0
+  n_main_trials: 0
+  n_settle_trials: 0
+  dtrls: 2
+  tau_v_ms: 10
+  tau_s_ms: 100
+  tau_f_ms: 5
+  vth: 1e-16
+  vr: -10
+  g: 6
+  muf: -0.3
+  gs: 0.11
+  gf: 0.13
+  default_float_dtype: float32
+
+prep_fsnn_demean:
+  n_init_trials: 20
+  n_main_trials: 100
+  n_settle_trials: 20
+prep_fsnn_train:
+  n_main_trials: 250
+  n_settle_trials: 20
+prep_fsnn_test:
+  n_main_trials: 50
+
+prep_fsnn_cycling:
+  iti_min_s: 0
+  iti_lambda_s: 0
+  t_event_s: [0.5, 1.95]
+  muf: -0.5
+
+prep_fsnn_reaching:
+  iti_min_s: .4
+  iti_lambda_s: 2
+  t_event_s: [0.35, 0.15, 0.31]
+  n_rate_neurons: 200
+  n_trials_pca: 100
+  g: 3
+
+model_fit_usid_stim_rec:
+  # Placeholder block injected by Snakemake's step_cfg("model_fit", "usid_stim_rec")
+  # lookup. These keys are NOT consumed by USID training — USID reads epochs
+  # from config/cold_usid.yaml.
+  epochs: 2500
+  steps_ahead_model_code: ""
+
+ctrl_expts:
+  Q_cost: 1
+  R_cost: 1e-3
+  ctrl_horizon_ms: 300
+  n_trials_ctrl: 100
+  baseline_latency_ms: 1
+  solvers: ["osqp", "clarabel", "scs"]
+  nlmpc_iters: 10
+  nlmpc_lr: 0.5
+
+ctrl_expts_OL:
+  time_limit_ms: 2000
+  solver_args:
+    max_iter: 1e8
+    eps_infeas: 1e-8
+    verbose: true
+    ignore_dpp: true
+
+ctrl_expts_LQMPC:
+  time_limit_ms: 20
+  solver_args:
+    max_iter: 1e8
+    eps_infeas: 1e-8
+    warm_start: true
+    enforce_dpp: true
+
+ctrl_expts_NLMPC: {}
+
+ctrl_expts_usid_stim_rec:
+  ref_type: Z
+
+cleo_prep:
+  array_side_length_mm: 4
+  array_n_per_side: 8
+  typical_Irr0_mWmm2: 5
+  subsample_factor: 10
+  opsin_plant_class: chr2_4s_fsnn
+  opsin_calibration_dir: results/opsin_calibration
+
+calibrate_opsin_plant:
+  target_iopto: 0.05
+
+model_fit:
+  linear_Cz: true
+
+expts:
+  u_max_mWmm2: 75
+
+sys_id_expts:
+  foo: bar
+
+natural_electrode_expts:
+  natural_only: true
+  n_trials_natural: 50

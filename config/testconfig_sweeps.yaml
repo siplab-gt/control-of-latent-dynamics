@@ -1,0 +1,30 @@
+# =============================================================================
+# testconfig_sweeps.yaml — sweep-axes companion to testconfig_params.yaml.
+#
+# The cell budget for this run is the FULL CARTESIAN PRODUCT of the axes
+# listed in `sweeps:` below × the (k, m) pairs from `q_usid:`. Any axis
+# that does NOT appear in `sweeps:` is held at its default value from
+# testconfig_params.yaml.
+#
+# Cell count (current axes):
+#   seeds (5) × ctrl_type (3) × k/m pairs (4) = 60 ctrl_expts cells.
+#   Other params (task, setting, n_trials_sys_id, n_latent_dims_offset,
+#   latency, ctrl_horizon_ms, nlmpc_iters) flat at default.
+# =============================================================================
+
+sweeps:
+  seed:
+    - 17230616
+    - 18051223
+    - 16320829
+    - 18060520
+    - 18220427
+  ctrl_type:
+    - OL
+    - LQMPC
+    - NLMPC
+
+# (k, m) pair generation — Cartesian-multiplied with `sweeps:` above.
+q_usid:
+  channel_budget: 64
+  num_stim_ratio_levels: 4
