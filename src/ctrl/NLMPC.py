@@ -137,6 +137,14 @@ class NLMPCController(Controller):
         u_light enters the NN per-channel; B' (learned at model_fit time)
         maps the per-channel photocurrent output back into state.
 
+        Always uses the stateful path (`forward_with_hidden`) so the GRU
+        hidden state bootstraps on first call (passing `h0=None` lets
+        `nn.GRU` initialise to zeros internally and return a valid `h_out`
+        the caller can persist). The earlier non-stateful fallback dropped
+        `h_out`, which silently kept `_opsin_hidden = None` forever — the
+        controller's opsin model then ran without memory of the
+        photocurrent decaying in tissue.
+
         Args:
             u_light: (H, k_opto) light input tensor.
             h0: Optional GRU hidden state from previous timestep.
@@ -144,16 +152,11 @@ class NLMPCController(Controller):
 
         Returns:
             photocurrents: (H, k_opto) tensor.
-            h_out: GRU hidden state after processing. None if h0 was None
-                and no stateful tracking is needed (backward compat).
+            h_out: GRU hidden state after processing.
         """
         u_flat = u_light.T.unsqueeze(-1)  # (k_opto, H, 1)
-        if h0 is not None:
-            p_flat, h_out = self._opsin_model.forward_with_hidden(u_flat, h0)
-            return p_flat.T, h_out
-        else:
-            p_flat = self._opsin_model(u_flat)
-            return p_flat.T, None
+        p_flat, h_out = self._opsin_model.forward_with_hidden(u_flat, h0)
+        return p_flat.T, h_out
 
     def compute_control(self, xhat):
         if self.t_now < self.t_ctrl_bounds[0] or self.t_now >= self.t_ctrl_bounds[1]:
@@ -227,6 +230,16 @@ class NLMPCController(Controller):
                 assert t_samp < self.t_ctrl_bounds[1], (
                     f"{t_samp=} not less than {self.t_ctrl_bounds[1]=} after incrementing trial"
                 )
+                # Trial boundary: clear NLMPC per-trial state so warm-start
+                # light and opsin GRU memory don't leak into the next trial.
+                # Each trial has a different reference and starts with the
+                # opsin in tissue at rest (whatever ITI decay produced).
+                # This branch fires exactly once per trial transition (the
+                # outer `t_samp >= t_ctrl_bounds[1]` check requires t_samp
+                # to have just crossed the prior trial's window end), so
+                # within-trial control steps keep their warm-start intact.
+                self._u_light_warm = None
+                self._opsin_hidden = None
             else:
                 assert self.i_current_trial == n_trials - 1
 
@@ -276,12 +289,28 @@ class NLMPCController(Controller):
             )
             self.xpred = np.concatenate([x1_next, x2_next])
         elif self.state_estimation == "kalman":
-            # For Kalman, we'd need to handle the nonlinear input mapping.
-            # For now, fall back to raw light z-scored (approximate).
-            u_zscored = self.zscore(
-                np.concatenate([u_light, self.u_task(t_samp)]), "u"
-            )
-            self.xpred, self.Ppred = self.predict_state(xhat, u_zscored, P)
+            # Mirror observer-mode's opsin pipeline: convert applied light
+            # to photocurrent via the NN opsin (threading the GRU state)
+            # so B' (which the NLMPC observer rollout treats as
+            # photocurrent → state) sees the right units. The earlier
+            # fallback z-scored the raw light and passed that to
+            # predict_state, which produced a unit-mismatched state
+            # update. Task input is concatenated raw — predict_state's
+            # docstring still claims "u is z-scored", but this NLMPC path
+            # deliberately deviates to stay consistent with the
+            # observer-mode pipeline above; the base-class convention is
+            # the LQMPC mismatch we're tracking separately.
+            with torch.no_grad():
+                light_tensor = torch.tensor(
+                    u_light.reshape(1, -1), dtype=torch.float32
+                )
+                p_tensor, h_out = self._run_opsin_forward(
+                    light_tensor, h0=self._opsin_hidden
+                )
+                self._opsin_hidden = h_out
+                p_current = p_tensor[0].numpy()
+            u_combined = np.concatenate([p_current, self.u_task(t_samp)])
+            self.xpred, self.Ppred = self.predict_state(xhat, u_combined, P)
 
         return {"light array": u_light * mwatt / mm2}, t_samp + self.sample_latency()
 
