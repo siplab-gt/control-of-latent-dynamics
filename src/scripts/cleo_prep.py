@@ -160,6 +160,29 @@ class CleoPrep(BaseDataClass):
             raise ValueError(f"Unknown opsin_plant_class: {opsin_class!r}")
         sim.inject(opsin, fsnn.ng_main)
 
+        # Force exponential_euler integration on Markov-based opsins (chr2_4s
+        # and friends). Cleo's `Synapses(...)` call passes no `method=` arg →
+        # Brian2's `'auto'` falls back to forward Euler for the time-varying-
+        # coefficient 4-state Markov system. Forward Euler is unconditionally
+        # unstable under bright light: with k1·Hp ~ 1.5/ms and dt=1ms,
+        # dt·Ga1 > 1 produces a 2-cycle oscillation that drives C1 negative
+        # on the very first integration step, fphi sign-flips after ~50
+        # steps, and the whole opto-driven simulation diverges to NaN.
+        # exponential_euler is exact for the linear-in-state ODE that chr2's
+        # Markov is, regardless of dt, so it eliminates the artifact entirely.
+        # Diagnostic in tmp/stability_sweep/diagnose_chr2_state.py confirms
+        # the failure mode under default integration.
+        # ProportionalCurrentOpsin has no Markov state — its synapse has no
+        # state_updater — so we gate on `MarkovOpsin` to avoid AttributeError.
+        from cleo.opto.opsins import MarkovOpsin
+        if isinstance(opsin, MarkovOpsin):
+            opsin_syn = opsin.synapses[fsnn.ng_main.name]
+            opsin_syn.state_updater.method_choice = "exponential_euler"
+            log.info(
+                f"Set {opsin_syn.name} integrator to exponential_euler "
+                "(Markov ODE is unstable under default 'euler' for bright light)"
+            )
+
         mua = None
         lfp = None
         if probe_coords is not None:
