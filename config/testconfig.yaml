@@ -11,7 +11,7 @@
 #   - natural_electrode_expts.n_trials_natural (50)
 #   - ctrl_expts.n_trials_ctrl (100)
 #   - architectural switches (use_opsin: true, opsin_plant_class: chr2_4s_fsnn)
-#   - calibrate_opsin_plant.target_iopto (0.036)
+#   - calibrate_opsin_plant.target_iopto (0.05)
 #
 # DIVERGES from config.yaml on:
 #   - prep_fsnn_reaching.n_rate_neurons: 200 (prod: 800). Known acknowledged
@@ -21,21 +21,26 @@
 #     see BRAID-legacy annotation on that block).
 #
 # Sweep trims (vs config.yaml full sweep):
-#   - grid_sweep_params.seed: 2 seeds (prod: 5)
-#   - star_sweep_params.*: collapsed to reference values (1-element lists)
+#   - star_sweep_params.*: collapsed to reference values (1-element
+#     lists); n_latent_dims_offset pinned to [0] (matched-capacity).
+#     Restore [-2, 0] for production scientific comparisons.
 #   - q_usid.num_stim_ratio_levels: 4 k/m pairs (prod: 7)
+#   - ctrl_horizon_ms: pinned to 200 (center of [100, 200, 300]); sweep all
+#     three in a follow-up run once baseline is established
+#   - nlmpc_iters: pinned to 5 (center of [2, 5, 10]); sweep all three in a
+#     follow-up run once baseline is established
+#
+# Matched to prod (after Apr 2026 chr2-fix baseline run):
+#   - grid_sweep_params.seed: 5 seeds
 #
 # Preserved sweeps (matching config.yaml's manual_sweep_params philosophy —
 # user-flagged as "always keep, tuning target"):
 #   - ctrl_type: [OL, LQMPC, NLMPC]
 #   - latency: [True, False]
-#   - ctrl_horizon_ms: [100, 200, 300]   (testconfig explores; prod pins 300)
-#   - nlmpc_iters: [2, 5, 10]            (testconfig explores; prod pins 10)
 #
-# Cell count (accurate, not aspirational): 8 model_fit cells (2 seeds × 4 k/m)
-# and 168 ctrl_expts cells (8 OL + 16 LQMPC + 144 NLMPC). Wall clock at
-# full-length with parallelism: 3-6 hours typical, longer if GPU-A100 queue
-# is saturated or opsin-plant instability triggers retries.
+# Cell count: 40 model_fit cells (5 seeds × 4 k/m × 2 offsets) and ~200
+# ctrl_expts cells (40 OL + 80 LQMPC + 80 NLMPC). Wall clock at full-length
+# with parallelism: ~4-8 hours typical, longer if GPU queue is saturated.
 #
 # For an even smaller smoke test with reduced full-length values, see
 # ultra_light_config.yaml (does NOT produce usable fits — wiring check only).
@@ -45,14 +50,25 @@ grid_sweep_params:
   seed:
     - 17230616
     - 18051223
+    - 16320829
+    - 18060520
+    - 18220427
 
 # collapsed to reference values — not sweeping these for this run
 #################################################################
 star_sweep_params:
   n_trials_sys_id:
     - 100
+  # n_latent_dims_offset: number of state dims relative to fSNN's
+  # ground-truth task-factor count (8 for testconfig reaching). offset=0
+  # → n_x = 8 (matched capacity); offset=-2 → n_x = 6 (under-parameterized,
+  # the more realistic "you don't know true rank" regime). Sweeping both
+  # tests USID's robustness to misspecification but DOUBLES every
+  # downstream cell from sys_id onward (~50% of pipeline cost). Single
+  # value (=0) is fine for smoke-testing the pipeline; restore [-2, 0]
+  # for production scientific runs that need the robustness story.
   n_latent_dims_offset:
-    - -2
+    - 0
   density_scale:
     - 1
   network_area_scale:
@@ -82,14 +98,14 @@ manual_sweep_params:
   latency:
     - true
     - false
+  # Collapsed to center values for now to keep this baseline run focused on
+  # validating the chr2 fix end-to-end. Sweep [100, 200, 300] for horizon
+  # and [2, 5, 10] for nlmpc_iters in a follow-up run once the baseline is
+  # established.
   ctrl_horizon_ms:
-    - 100
     - 200
-    - 300
   nlmpc_iters:
-    - 2
     - 5
-    - 10
 
 #################
 reference_params:
@@ -231,7 +247,8 @@ cleo_prep:
 
 calibrate_opsin_plant:
   # Required; no default. See config.yaml's block for rationale.
-  target_iopto: 0.036
+  # Consider raising to 0.10 once baseline is established (better control authority).
+  target_iopto: 0.05
 
 model_fit:
   linear_Cz: true
