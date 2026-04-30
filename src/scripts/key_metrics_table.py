@@ -114,9 +114,39 @@ def compute_k_knee(subset_df, ep, metric, **kwargs):
         k = k[i_sort]
         Q = Q[i_sort]
         kl = KneeLocator(
-            k, Q, curve="concave", direction="increasing", interp_method="interp1d"
+            k,
+            Q,
+            curve="concave",
+            direction="increasing",
+            interp_method="interp1d",
+            online=True,
         )
-        return pd.Series({"k_knee": kl.knee, f"{metric}_knee": kl.knee_y})
+        all_knees_k = list(sorted(kl.all_knees))
+        all_knees_Q = kl.all_knees_y
+        all_knees_ydiff = [
+            kl.y_difference[np.argwhere(knee_k == kl.x)[0]] for knee_k in all_knees_k
+        ]
+        i_knee = np.argmax(all_knees_ydiff)
+        k_knee = all_knees_k[i_knee]
+        Q_knee = all_knees_Q[i_knee]
+
+        # for visualizing knees
+        # plt.clf()
+        # plt.plot(k, Q)
+        # for kk in all_knees_k:
+        #     plt.axvline(kk, c="k", ls="--")
+        # plt.axvline(k_knee, c="g", ls="--")
+        # seed = group.name[2]
+        # plt.savefig(f"results/testknee/k_knee_{ep}_{seed}.png")
+        # plt.close()
+
+        return pd.Series(
+            {
+                "k_knee": k_knee,
+                f"{metric}_knee": Q_knee,
+                f"{metric}_knee_pctmax": Q_knee / Q.max(),
+            }
+        )
 
     out = (
         subset_df.groupby([ep, "ctrl_latency", "seed"])
@@ -170,6 +200,9 @@ def build_key_metrics_table(cfg, base_params, results_csv, wildcards):
             ],
         )
 
+        all_cols = metric_df.columns.tolist()
+        km_cols = all_cols[all_cols.index(base_params.key_metrics[0]) :]
+
         metric_df["ep"] = ep
         metric_df["ep_value"] = metric_df[ep]
         metric_df["setting"] = wildcards.setting
@@ -183,7 +216,7 @@ def build_key_metrics_table(cfg, base_params, results_csv, wildcards):
                     "ep_value",
                     "seed",
                     "ctrl_latency",
-                    *base_params.key_metrics,
+                    *km_cols,
                 ]
             ]
         )

@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -137,6 +138,21 @@ def main(
 
     main_fig, ax_top, axs_key, axs_ctrl, axs_dependence = grid_subplots_main()
     main_fig.get_layout_engine().set(wspace=0.0, w_pad=0.015)
+
+    # add panel labels
+    for i, ax in enumerate(
+        [ax_top, axs_key.flat[0], axs_ctrl.flat[0], axs_dependence.flat[0]]
+    ):
+        ax.text(
+            0.015,
+            1.1,
+            f"{chr(ord('A') + i)}",
+            transform=mtransforms.blended_transform_factory(
+                main_fig.transFigure, ax.transAxes
+            ),
+            fontsize=plt.rcParams["figure.titlesize"],
+            fontweight="bold",
+        )
 
     ref_condition = cfg["reference_params"]
     ref_condition |= cfg[f"reference_params_{setting}"]
@@ -569,7 +585,7 @@ def main(
             ax.spines["bottom"].set_visible(False)
             ax.set_xticks([])
             if ax == dependence_axs.flat[0]:
-                ax.set_ylabel("Null-corrected CMI (bits)")
+                ax.set_ylabel("Null-corrected\nCMI (bits)")
             else:
                 ax.set_ylabel("")
             # Or keep them? Space is tight.
@@ -643,20 +659,20 @@ def main(
             ax.spines["left"].set_visible(False)
             ax.tick_params(axis="y", which="both", length=0)
 
-    fig_lp, axs_lp = grid_subplots()
-    plot_lineplots(axs_lp, key_metric)
+    # fig_lp, axs_lp = grid_subplots()
+    # plot_lineplots(axs_lp, key_metric)
 
-    fig_hm_mean, axs_hm_mean = grid_subplots()
-    plot_heatmaps(fig_hm_mean, axs_hm_mean, "mean")
+    # fig_hm_mean, axs_hm_mean = grid_subplots()
+    # plot_heatmaps(fig_hm_mean, axs_hm_mean, "mean")
 
-    fig_hm_std, axs_hm_std = grid_subplots()
-    plot_heatmaps(fig_hm_std, axs_hm_std, "std")
+    # fig_hm_std, axs_hm_std = grid_subplots()
+    # plot_heatmaps(fig_hm_std, axs_hm_std, "std")
 
     for fig, files in [
         (main_fig, outfiles.main),
-        (fig_lp, outfiles.lineplots),
-        (fig_hm_mean, outfiles.heatmaps_mean),
-        (fig_hm_std, outfiles.heatmaps_std),
+        # (fig_lp, outfiles.lineplots),
+        # (fig_hm_mean, outfiles.heatmaps_mean),
+        # (fig_hm_std, outfiles.heatmaps_std),
     ]:
         for f in files:
             fig.savefig(f)

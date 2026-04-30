@@ -267,11 +267,11 @@ rule main_figs:
         dependence_control="<results>/{setting}_{task}_dependence/control.pkl.gz",
     output:
         main=multiext("<results>/figs/{setting}_{task}", *fig_exts),
-        lineplots=multiext("<results>/figs/{setting}_{task}_lineplots", *fig_exts),
-        heatmaps_mean=multiext(
-            "<results>/figs/{setting}_{task}_heatmaps_mean", *fig_exts
-        ),
-        heatmaps_std=multiext("<results>/figs/{setting}_{task}_heatmaps_std", *fig_exts),
+        # lineplots=multiext("<results>/figs/{setting}_{task}_lineplots", *fig_exts),
+        # heatmaps_mean=multiext(
+        #     "<results>/figs/{setting}_{task}_heatmaps_mean", *fig_exts
+        # ),
+        # heatmaps_std=multiext("<results>/figs/{setting}_{task}_heatmaps_std", *fig_exts),
     params:
         subcfg("analysis"),
     localrule: True

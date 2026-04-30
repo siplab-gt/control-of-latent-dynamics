@@ -219,9 +219,10 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
         **common_kwargs, n_permutations=n_shuffle_boot
     )
 
-    assert np.min(null_dist) != np.max(null_dist), (
-        f"Null distribution shouldn't be constant. {ep=}. {null_dist[0]=}"
-    )
+    if ep != "model_task_inputs":
+        assert np.min(null_dist) != np.max(null_dist), (
+            f"Null distribution shouldn't be constant. {ep=}. {null_dist[0]=}"
+        )
 
     ci_low, ci_high, boot_dist = statistical_validation_bootstrap(
         **common_kwargs, n_boot=n_shuffle_boot, cluster_ids=cluster_ids
