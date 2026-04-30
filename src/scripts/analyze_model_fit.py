@@ -37,6 +37,17 @@ def analyze_model_fit(
         else np.nan,
     }
     metrics["largest_eigval"] = np.max(np.abs(np.linalg.eigvals(lds.A)))
+
+    # Sanitize clip counts from the normalization pipeline. A non-zero
+    # `n_sanitize_clipped_{Y,Z,U,X,Natural_YN}` column flags a pathological
+    # row: ±1e6 clipping kicked in during `sanitize_normalized` after
+    # float32 cast would have overflowed, which typically means v3 plant
+    # divergence. The clipped channel's contribution is meaningless even
+    # though the array is finite — summary aggregation should filter.
+    clip_counts = getattr(lds, "sanitize_clip_counts", {}) or {}
+    for key in ("Y", "Z", "U", "X", "Natural_YN"):
+        metrics[f"n_sanitize_clipped_{key}"] = int(clip_counts.get(key, 0))
+
     print(metrics)
     print(f"Saving R2 values to {outfile}")
     pd.DataFrame([metrics]).to_csv(outfile, index=False)

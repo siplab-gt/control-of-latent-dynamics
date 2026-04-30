@@ -13,6 +13,104 @@ from jaxtyping import UInt
 from src.log_redirector import setup_permanent_logging
 
 
+_NORMALIZED_CLIP_DEFAULT = 1e6
+"""Default ±sigma clip bound for `sanitize_normalized`. 1e6 sigmas is absurdly
+permissive for real neural signals (which live within ~±10 sigma); anything
+beyond it is upstream pathology (e.g. v3 plant fSNN `vinf` runaway at high-k
+producing LFP values that overflow float64 post-normalization). The clip
+keeps the downstream `.astype(np.float32)` from producing ±inf → NaN loss,
+at the cost of that channel's contribution being meaningless."""
+
+
+def safe_std_compute(arr: np.ndarray, axis: int, name: str, log=None):
+    """Compute mean + std with degenerate-channel fallback.
+
+    Clamps any `std == 0` (constant channel), `std == inf/nan` (overflow),
+    or non-finite `mean` to safe values (1.0 / 0.0 respectively). Warns when
+    either triggers. Does NOT post-process the normalized array — see
+    `sanitize_normalized` for that (separate concern).
+
+    Args:
+        arr: Input array (T, D) or similar.
+        axis: Axis to reduce.
+        name: Diagnostic label for warning messages.
+        log: Optional logger. If None, prints to stderr.
+    Returns:
+        (mean, std) with guaranteed `std > 0` and finite mean.
+    """
+    m = np.mean(arr, axis=axis)
+    s = np.std(arr, axis=axis)
+
+    bad_std = ~np.isfinite(s) | (s <= 0)
+    bad_mean = ~np.isfinite(m)
+    if bad_std.any() or bad_mean.any():
+        n_std = int(bad_std.sum())
+        n_mean = int(bad_mean.sum())
+        arr_max = (
+            float(np.max(np.abs(arr[np.isfinite(arr)])))
+            if np.any(np.isfinite(arr)) else float("nan")
+        )
+        msg = (
+            f"{name}: {n_std} channel(s) with non-finite/zero std, "
+            f"{n_mean} with non-finite mean (likely overflow from extreme "
+            f"values; max |{name}|={arr_max:g}). Clamping std→1.0, mean→0.0 "
+            f"on those channels so de-normalization stays finite. Check "
+            f"upstream data for pathological magnitudes."
+        )
+        if log is not None:
+            log.warning(msg)
+        else:
+            print(f"[WARN] {msg}", file=sys.stderr)
+        s = np.where(bad_std, 1.0, s)
+        m = np.where(bad_mean, 0.0, m)
+    return m, s
+
+
+def sanitize_normalized(
+    arr_norm: np.ndarray,
+    name: str,
+    bound: float = _NORMALIZED_CLIP_DEFAULT,
+    log=None,
+) -> tuple[np.ndarray, int]:
+    """Clip a normalized array to ±`bound` sigmas to survive float32 cast.
+
+    Even after `safe_std_compute` clamps bad std to 1.0, the raw `(arr - mean)`
+    term can carry astronomical magnitudes from upstream pathology (e.g., v3
+    plant `vinf` runaway). Casting those to float32 produces ±inf → NaN loss.
+    This helper replaces non-finite values with ±bound / 0 and clips the rest
+    to [-bound, +bound], warning if anything was touched.
+
+    Both sys_id-phase normalization (`model_fit.py`) and natural-electrode
+    normalization (`src/model_fit/usid.py::_load_and_normalize_natural_data`)
+    call this to keep the sanitization logic single-sourced.
+
+    Returns:
+        Tuple of (sanitized array, count of clipped/non-finite elements).
+        `n_clipped > 0` is a pathology flag surfaced to summary.csv as
+        `n_sanitize_clipped_*` so aggregation can exclude affected rows —
+        a clipped channel's contribution is meaningless even though the
+        array is finite.
+    """
+    overflow = ~np.isfinite(arr_norm) | (np.abs(arr_norm) > bound)
+    n_clipped = int(overflow.sum())
+    if n_clipped > 0:
+        msg = (
+            f"{name}: {n_clipped} normalized sample(s) exceed ±{bound:g} or "
+            f"non-finite. Clipping in place so downstream float32 cast "
+            f"doesn't overflow into NaN training loss. This typically flags "
+            f"an unusable configuration (e.g., v3 plant × extreme k/m where "
+            f"LFP blows up); the fit will proceed but the affected channel's "
+            f"score is meaningless."
+        )
+        if log is not None:
+            log.warning(msg)
+        else:
+            print(f"[WARN] {msg}", file=sys.stderr)
+        arr_norm = np.nan_to_num(arr_norm, nan=0.0, posinf=bound, neginf=-bound)
+        arr_norm = np.clip(arr_norm, -bound, bound)
+    return arr_norm, n_clipped
+
+
 class PassthroughIOProcessor(cleo.LatencyIOProcessor):
     """Minimal IOProcessor that provides sample_period but no control.
 

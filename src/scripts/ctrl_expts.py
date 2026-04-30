@@ -46,15 +46,39 @@ class CtrlData(ExptData):
         for k, v in kwargs.items():
             setattr(self, k, v)
 
+    @staticmethod
+    def _predict_fsnn_tolerating_nan(
+        model, X: np.ndarray
+    ) -> np.ndarray:
+        """Run linreg prediction; preserve NaN rows instead of crashing.
+
+        Under pathological plant configs (e.g., fSNN destabilization at
+        high-k under v3 plant, see D6 in v3_opsin_deviations.md), the USID
+        closed-loop observer can diverge and leave NaN in Xhat_lds / Xref_lds.
+        sklearn's LinearRegression.predict() refuses to ingest NaN and
+        crashes analyze_ctrl_data. We do the predict only on the finite rows
+        and slot NaN back in for the rest, so downstream R² computation can
+        proceed and surface the pathology as NaN metrics rather than a
+        pipeline crash.
+        """
+        X = np.asarray(X)
+        if X.ndim == 1:
+            X = X[:, None]
+        out = np.full((X.shape[0], model.coef_.shape[0]), np.nan)
+        finite_rows = np.isfinite(X).all(axis=1)
+        if finite_rows.any():
+            out[finite_rows] = model.predict(X[finite_rows])
+        return out
+
     @property
     def Xref_fsnn(self) -> Float[np.ndarray, "T n"]:
         if self.Xref_lds is None or np.size(self.Xref_lds) == 0:
             return None
-        return self.linreg_lds2fsnn.predict(self.Xref_lds)
+        return self._predict_fsnn_tolerating_nan(self.linreg_lds2fsnn, self.Xref_lds)
 
     @property
     def Xhat_fsnn(self) -> Float[np.ndarray, "T n"]:
-        return self.linreg_lds2fsnn.predict(self.Xhat_lds)
+        return self._predict_fsnn_tolerating_nan(self.linreg_lds2fsnn, self.Xhat_lds)
 
     @property
     def Yhat(self) -> Float[np.ndarray, "T m"]:

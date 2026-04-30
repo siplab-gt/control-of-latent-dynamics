@@ -6,7 +6,15 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 
 from src.data_classes import BaseDataClass
-from src.helpers import preprocess_params, save_pkl_gz, setup_debugger, setup_logging, str2bool
+from src.helpers import (
+    preprocess_params,
+    safe_std_compute,
+    sanitize_normalized,
+    save_pkl_gz,
+    setup_debugger,
+    setup_logging,
+    str2bool,
+)
 from src.log_redirector import redirect_output_to_file
 from src.model_fit import LDS
 from src.scripts.sys_id_expts import ExptData
@@ -72,45 +80,30 @@ def model_fit(
 
     n_x = X.shape[1]  # just assume we know this
 
-    def _safe_std(arr: np.ndarray, axis: int, name: str) -> tuple[np.ndarray, np.ndarray]:
-        """Compute mean + std with defensive guards against degenerate channels.
+    # Normalize data (mean+std with channel-degenerate guard, then post-cast
+    # overflow sanitizer). Uses shared helpers from src.helpers so the same
+    # logic runs on the natural-electrode normalization in
+    # src/model_fit/usid.py::_load_and_normalize_natural_data.
+    #
+    # Clip counts are accumulated into sanitize_clip_counts and stashed on
+    # the fitted lds so analyze_model_fit can surface them as summary.csv
+    # columns (n_sanitize_clipped_*). A non-zero count on any channel means
+    # upstream pathology — typically v3 plant divergence at extreme k/m —
+    # and the row should be filtered from scientific comparisons.
+    sanitize_clip_counts = {}
+    def _normalize(arr, name):
+        m, s = safe_std_compute(arr, axis=0, name=name, log=log)
+        normalized, n_clipped = sanitize_normalized((arr - m) / s, name, log=log)
+        sanitize_clip_counts[name] = n_clipped
+        return m, s, normalized
 
-        Historically only the ``std == 0`` case was guarded (constant channel).
-        Under the v3 chr2_4s_fsnn plant some LFP channels can carry values
-        large enough that ``np.std`` overflows (squared deviations exceed
-        float range), leaving an ``inf`` or ``nan`` in ``std``. That inf then
-        silently contaminates ``y_std`` → corrupts the de-normalization step
-        inside USID diagnostics + analyze_model_fit → NaN Yhat → sklearn
-        rejects → crash. Clamp every non-finite / non-positive std to 1.0
-        and warn loudly so the upstream extreme-value signal isn't lost.
-        """
-        m = np.mean(arr, axis=axis)
-        s = np.std(arr, axis=axis)
-        bad = ~np.isfinite(s) | (s <= 0)
-        if bad.any():
-            n_bad = int(bad.sum())
-            arr_max = float(np.max(np.abs(arr[np.isfinite(arr)]))) if np.any(np.isfinite(arr)) else float("nan")
-            log.warning(
-                f"{name}: {n_bad} channel(s) have non-finite or zero std (likely "
-                f"overflow from extreme values; max |{name}|={arr_max:g}). Clamping "
-                f"their std to 1.0 so de-normalization stays finite. Check upstream "
-                f"data for pathological magnitudes."
-            )
-            s = np.where(bad, 1.0, s)
-        return m, s
-
-    # Normalize data (removing the mean is essential before training):
-    y_mean, y_std = _safe_std(Y, axis=0, name="Y")
-    YN = (Y - y_mean) / y_std
+    y_mean, y_std, YN = _normalize(Y, "Y")
     assert np.all(np.isfinite(YN))
-    z_mean, z_std = _safe_std(Z, axis=0, name="Z")
-    ZN = (Z - z_mean) / z_std
+    z_mean, z_std, ZN = _normalize(Z, "Z")
     # remember U is normalized, will need to be unnormalized for constraints/costs
-    u_mean, u_std = _safe_std(U, axis=0, name="U")
-    UN = (U - u_mean) / u_std
+    u_mean, u_std, UN = _normalize(U, "U")
     # normalize X too so origin reflects u_mean, y_mean, z_mean inputs
-    x_mean, x_std = _safe_std(X, axis=0, name="X")
-    XN = (X - x_mean) / x_std
+    x_mean, x_std, XN = _normalize(X, "X")
 
     # Make normalization stats available to fit methods (used by USID inline training)
     config['y_mean'] = y_mean
@@ -143,6 +136,12 @@ def model_fit(
         lds.x_mean,
         lds.x_std,
     ) = y_mean, y_std, z_mean, z_std, u_mean, u_std, x_mean, x_std
+
+    # Merge sys_id normalization clip counts with any counts the fit method
+    # accumulated (e.g., usid.py adds "Natural_YN" after loading natural
+    # electrode data). Dict union; fit-method keys don't collide with Y/Z/U/X.
+    fit_counts = getattr(lds, "sanitize_clip_counts", {}) or {}
+    lds.sanitize_clip_counts = {**sanitize_clip_counts, **fit_counts}
 
     assert len(XN) == len(Xhat)
 

@@ -46,15 +46,66 @@ def analyze_ctrl_data(
     )
     assert np.all(ctrl_data.i_trial_boundaries == null_ctrl_data.i_trial_boundaries)
 
+    # Pathology flags FIRST, before any r2/q computation. If a row has NaN,
+    # sklearn's r2_score raises ValueError by default and would kill the
+    # whole rule — then summary.csv would be missing the row entirely and
+    # the n_nonfinite_* counts would never be written. So: count first,
+    # then wrap each metric in try/except → np.nan. Non-zero n_nonfinite_*
+    # flags a pathological row; downstream aggregation should filter.
+    #
+    # NOTE: Yhat/Yref/Zhat/Zref are NOT currently counted — ignored for
+    # now. They can also carry NaN under v3 plant divergence, but in
+    # practice NaN propagation starts in the state estimates (Xhat/Xref)
+    # and leaks outward, so the X counts are the primary signal.
+    def _count_nonfinite(arr):
+        if arr is None or np.size(arr) == 0:
+            return 0
+        return int(np.sum(~np.isfinite(np.asarray(arr))))
+    results["n_nonfinite_Xhat_lds"] = _count_nonfinite(ctrl_data.Xhat_lds)
+    results["n_nonfinite_Xref_lds"] = _count_nonfinite(ctrl_data.Xref_lds)
+    results["n_nonfinite_Xhat_fsnn"] = _count_nonfinite(ctrl_data.Xhat_fsnn)
+    results["n_nonfinite_Xref_fsnn"] = _count_nonfinite(ctrl_data.Xref_fsnn)
+
     def r2_score_masked(y_true, y_pred):
         if is_empty(y_true) or is_empty(y_pred):
             return np.nan
-        return r2_score(y_true[eval_mask], y_pred[eval_mask])
+        try:
+            # multioutput="raw_values" + force_finite=False so per-dim R²
+            # comes back as -Inf when the true series is constant
+            # (zero-variance denominator). The reaching task has a
+            # constant 3rd output dim (`output_2`) — under sklearn's
+            # default `force_finite=True` + `multioutput="uniform_average"`,
+            # that dim's R² collapses to 0.0 or 1.0 depending on prediction
+            # match and silently shifts the average. Mirroring
+            # `analyze_fsnn_data.py`'s convention (mean-over-finite)
+            # excludes the constant dim cleanly.
+            per_dim = r2_score(
+                y_true[eval_mask], y_pred[eval_mask],
+                multioutput="raw_values", force_finite=False,
+            )
+            finite = np.isfinite(per_dim)
+            if not finite.any():
+                return np.nan
+            return float(np.mean(per_dim, where=finite))
+        except ValueError:
+            # sklearn's r2_score rejects NaN/inf by default. Return NaN
+            # so the summary row still writes; the n_nonfinite_* flags
+            # above mark this row as pathological.
+            return np.nan
 
     def q_track_masked(ref, achieved, baseline):
         if is_empty(ref) or is_empty(achieved) or is_empty(baseline):
             return np.nan
-        return 1 - nrmse(ref[eval_mask], achieved[eval_mask], baseline[eval_mask])
+        try:
+            r = ref[eval_mask]
+            a = achieved[eval_mask]
+            b = baseline[eval_mask]
+            if not (np.all(np.isfinite(r)) and np.all(np.isfinite(a))
+                    and np.all(np.isfinite(b))):
+                return np.nan
+            return 1 - nrmse(r, a, b)
+        except (ValueError, ZeroDivisionError):
+            return np.nan
 
     # R2
     results["R2_track_Zref_Z"] = r2_score_masked(ctrl_data.Zref, ctrl_data.Z)
@@ -147,11 +198,24 @@ def analyze_ctrl_data(
         )
         return acc, classifier.predict(outputs.reshape((len(outputs), -1)))
 
-    if Xref is not None:
-        acc_X, pred_conds_X = acc_pred_cond(Xref, ref_conds, Xtrials)
-        acc_X
-    acc_Z, pred_conds_Z = acc_pred_cond(Zref, ref_conds, Ztrials)
-    results["acc_pred_cond_X"] = acc_X if Xref is not None else np.nan
+    # KNN classification — also vulnerable to NaN in Xref / Xtrials via
+    # sklearn's check_array. Skip gracefully when pathological so the row
+    # still writes.
+    if Xref is not None and np.all(np.isfinite(Xref)) and np.all(np.isfinite(Xtrials)):
+        try:
+            acc_X, pred_conds_X = acc_pred_cond(Xref, ref_conds, Xtrials)
+        except ValueError:
+            acc_X = np.nan
+    else:
+        acc_X = np.nan
+    if np.all(np.isfinite(Zref)) and np.all(np.isfinite(Ztrials)):
+        try:
+            acc_Z, pred_conds_Z = acc_pred_cond(Zref, ref_conds, Ztrials)
+        except ValueError:
+            acc_Z = np.nan
+    else:
+        acc_Z = np.nan
+    results["acc_pred_cond_X"] = acc_X
     results["acc_pred_cond_Z"] = acc_Z
 
     results["ctrl_compute_latency_mean_ms"] = ctrl_data.compute_latency_mean_ms
