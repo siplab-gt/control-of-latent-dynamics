@@ -125,7 +125,7 @@ def _calibration_hash(core: dict) -> str:
 
 def calibrate(
     voperating: dict,
-    target_iopto: float = 0.1,
+    target_iopto: float,
     target_light_mWmm2: float = 5.0,
     saturation_light_mWmm2: float = 75.0,
     pulse_duration_ms: float = DEFAULT_PULSE_DURATION_MS,
@@ -288,8 +288,15 @@ def main():
                         help="Path to voperating.json from measure_voperating_range.")
     parser.add_argument("out_json", type=str,
                         help="Path to write calibration JSON.")
-    parser.add_argument("--target-iopto", type=float, default=0.1,
-                        help="Desired steady-state Iopto at target light.")
+    parser.add_argument("--target-iopto", type=float, required=True,
+                        help="Desired steady-state Iopto at target light. REQUIRED — "
+                             "no default because the value has shifted repeatedly "
+                             "(0.1 → 0.05 → 0.036) and is likely to shift again as "
+                             "fSNN-stability calibration tightens. See D7/D8 in "
+                             "scratchpad/v3_opsin_deviations.md for the rationale "
+                             "behind the current value (0.036, v2-match). Snakemake "
+                             "rule `calibrate_opsin_plant` passes this from "
+                             "workflow config.")
     parser.add_argument("--target-light", type=float, default=5.0,
                         help="Target light intensity in mW/mm².")
     parser.add_argument("--saturation-light", type=float, default=75.0,

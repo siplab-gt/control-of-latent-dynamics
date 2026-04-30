@@ -188,7 +188,8 @@ cleo_prep:
 
 calibrate_opsin_plant:
   # Required; no default. See config.yaml's block for rationale.
-  target_iopto: 0.036
+  # Consider raising to 0.10 once baseline is established (better control authority).
+  target_iopto: 0.05
 
 model_fit:
   linear_Cz: true

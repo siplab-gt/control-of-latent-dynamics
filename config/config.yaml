@@ -223,10 +223,20 @@ cleo_prep:
 calibrate_opsin_plant:
   # Steady-state Iopto the opsin should produce under target_light_mWmm2
   # (hard-coded 5 mW/mm² in calibrate_opsin_plant.py). Consumed only when
-  # opsin_plant_class: chr2_4s_fsnn. Required; no default. Current value
-  # (0.036) is v2-match per D8 in scratchpad/v3_opsin_deviations.md —
-  # chosen because higher gains destabilize fSNN vinf at high-k.
-  target_iopto: 0.036
+  # opsin_plant_class: chr2_4s_fsnn. Required; no default.
+  #
+  # 0.05 picked from the post-chr2-fix iopto-gain sweep (Apr 2026, see
+  # scratchpad/fSNN_stability_fix.md). At 0.05: rate inflation is 5-17%
+  # depending on (k, m) geometry — solidly above the floor (~5% inflation
+  # for sys-id signal) and well below the 50% inflation ceiling. Production
+  # value pre-fix was 0.036, picked to stay below the (broken) chr2 runaway
+  # threshold; that constraint is gone now.
+  #
+  # Consider raising to 0.10 once a baseline is established and we want
+  # stronger control authority — at 0.10 inflation is 10-25% across (k, m),
+  # still safely inside the trained operating regime, with more headroom
+  # for the controller to drive the system to targets.
+  target_iopto: 0.05
 
 model_fit:
   linear_Cz: true
