@@ -187,7 +187,11 @@ def main(
         """Plot lineplots showing key metric vs exploration parameter."""
         for ep, ax in zip(expl_params, lp_axs.flatten()):
             conds2keep = ref_condition.copy()
-            del conds2keep[ep], conds2keep["latency"]
+            # `ep` may be a sweep-only axis (e.g., seed, ctrl_type) that's
+            # not in ref_condition; pop both defensively. `latency` may
+            # equal `ep`, in which case the second pop is a no-op.
+            conds2keep.pop(ep, None)
+            conds2keep.pop("latency", None)
             query_str = " and ".join(
                 [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
             )
@@ -232,7 +236,9 @@ def main(
         )[mean_or_std]
         for ep, ax in zip(expl_params, hm_axs.flatten()):
             conds2keep = ref_condition.copy()
-            del conds2keep[ep]
+            # `ep` may be a sweep-only axis (e.g., seed, ctrl_type) that's
+            # not in ref_condition; pop defensively.
+            conds2keep.pop(ep, None)
             query_str = " and ".join(
                 [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
             )

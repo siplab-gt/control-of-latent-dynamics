@@ -250,6 +250,25 @@ def configfile_inputs(wildcards=None):
     return list(getattr(workflow, "configfiles", []))
 
 
+def configfile_inputs_excluding_sweeps(wildcards=None):
+    """Per-cell rule variant that excludes `*_sweeps.yaml` from the
+    tracked input set. Editing sweep axes (adding/removing seeds,
+    controllers, etc.) only changes which cells the AGGREGATOR demands;
+    each per-cell computation is independent of the sweep specification,
+    so its cached output should NOT be invalidated by a sweep edit.
+
+    Use this for per-cell rules (cleo_prep, sys_id_expts, model_fit,
+    ctrl_expts). The aggregator rule's input list inherently depends on
+    the sweep keys, so the aggregator does not need this helper —
+    Snakemake's missing-output detection handles re-aggregation when
+    sweeps add new cells.
+    """
+    return [
+        c for c in getattr(workflow, "configfiles", [])
+        if "_sweeps" not in os.path.basename(c)
+    ]
+
+
 rule testq1:
     # for easily running one reference condition
     # (doesn't require a super long path with all wildcards)
@@ -577,7 +596,7 @@ rule ctrl_expts:
         "src/ctrl/{ctrl_type}.py",
         cleo_prep=wildcard_path("cleo_prep.pkl.gz"),
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
-        configfiles=configfile_inputs,
+        configfiles=configfile_inputs_excluding_sweeps,
     params:
         step_cfg("cleo_prep", "expts", "ctrl_expts"),
     output:
@@ -826,7 +845,7 @@ rule model_fit:
         usid_deps=get_usid_dependencies,
         natural_data=get_natural_data_input,
         sys_id_data=wildcard_path("sys_id_data.pkl.gz"),
-        configfiles=configfile_inputs,
+        configfiles=configfile_inputs_excluding_sweeps,
     params:
         step_cfg("model_fit"),
         braid_basename=wildcard_path("model_fit_braid"),
@@ -882,7 +901,7 @@ n_trials_sys_id_max = max(_sweep_or_default("n_trials_sys_id"))
 rule sys_id_expts:
     input:
         wildcard_path("cleo_prep.pkl.gz"),
-        configfiles=configfile_inputs,
+        configfiles=configfile_inputs_excluding_sweeps,
     params:
         step_cfg("cleo_prep", "expts", "sys_id_expts"),
         n_trials_sys_id_max=n_trials_sys_id_max,
@@ -984,7 +1003,7 @@ rule cleo_prep:
         "src/opsins.py",
         "src/scripts/calibrate_opsin_plant.py",
         calibration=_cleo_prep_calibration_input,
-        configfiles=configfile_inputs,
+        configfiles=configfile_inputs_excluding_sweeps,
     params:
         step_cfg("prep_fsnn", "cleo_prep"),
     output:
