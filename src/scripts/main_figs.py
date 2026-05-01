@@ -20,9 +20,12 @@ mean_line_lw = 1.5
 
 # rename dict for various columns for improved display
 _r = dict(
-    Q_track_Xref_Xhat_lds=r"$Q_{\text{track}}(X_{\text{ref}}, \widehat{X}_{\text{LDS}})$",
-    Q_track_Xref_X_fsnn=r"$Q_{\text{track}}(X_{\text{ref}}, X_{\text{fSNN}})$",
-    Q_track_Zref_Z=r"$Q_{\text{track}}(Z_{\text{ref}}, Z)$",
+    # Q_track_Xref_Xhat_lds=r"$Q_{\text{track}}(X_{\text{ref}}, \widehat{X}_{\text{LDS}})$",
+    Q_track_Xref_Xhat_lds=r"$Q_{\text{track}}(\widehat{x}_{\text{LDS}})$",
+    # Q_track_Xref_X_fsnn=r"$Q_{\text{track}}(X_{\text{ref}}, X_{\text{fSNN}})$",
+    Q_track_Xref_X_fsnn=r"$Q_{\text{track}}(x_{\text{fSNN}})$",
+    # Q_track_Zref_Z=r"$Q_{\text{track}}(Z_{\text{ref}}, Z)$",
+    Q_track_Zref_Z=r"$Q_{\text{track}}(z)$",
     optimal_alpha_stim=r"$\alpha_\text{stim}^*$",
     k_knee=r"$k_{\text{knee}}$",
     k=r"$k$",
@@ -55,18 +58,18 @@ def main(
     key_metrics_csv,
     dependence_key_file,
     dependence_control_file,
+    key_ref_stats_csv,
     outfiles,
 ):
     expl_params = cfg["star_sweep_params"] | cfg[f"star_sweep_params_{setting}"]
     ctrl_metric = base_params.ctrl_metric
     key_metric = base_params.key_metrics[0]
+    colorbar_label = r(ctrl_metric)
     if setting == "sufficient_stim":
-        colorbar_label = r"$Q_\text{track}\left(X_\text{ref}, X\right)$"
         main_fig_plot_type = "lineplots"
         plots_per_row = 6
     else:  # optimal_stim_rec
         assert setting == "optimal_stim_rec", f"Unknown setting: {setting}"
-        colorbar_label = r"$Q_\text{track}\left(Z_\text{ref}, Z\right)$"
         main_fig_plot_type = "lineplots"
         plots_per_row = 7
 
@@ -81,9 +84,6 @@ def main(
         {"OLFalse": "OL", "LQMPCFalse": "MPC", "LQMPCTrue": "MPC with latency"}
     )
     rows = int(np.ceil(len(expl_params) / plots_per_row))
-
-    rdf = prettify_column_names(df)
-    r_key_metrics_df = prettify_column_names(key_metrics_df)
 
     def grid_subplots(extra_row=False):
         n_rows = rows + 1 if extra_row else rows
@@ -108,7 +108,7 @@ def main(
             n_rows,
             plots_per_row,
             figsize=(psty.double_col_width, sum(height_ratios)),
-            layout="compressed",
+            layout="constrained",
             sharex=False,
             sharey="row",
             gridspec_kw={"height_ratios": height_ratios},
@@ -137,7 +137,9 @@ def main(
         return fig, ax_top, axs_key, axs_ctrl, axs_dependence
 
     main_fig, ax_top, axs_key, axs_ctrl, axs_dependence = grid_subplots_main()
-    main_fig.get_layout_engine().set(wspace=0.0, w_pad=0.015)
+    # remove inter-column space so it gets squashed to the minimum permitted by
+    # text labels like True/False
+    main_fig.get_layout_engine().set(wspace=0, w_pad=0.000)
 
     # add panel labels
     for i, ax in enumerate(
@@ -227,6 +229,30 @@ def main(
 
     ax_top.set(ylim=(ybot, 1))
     ax_top.axhline(0, color="black", lw=0.5, linestyle="--")
+
+    key_ref_stats = pd.read_csv(key_ref_stats_csv)
+    for row in key_ref_stats.itertuples(index=False):
+        if row.key_metric == key_metric:
+            break
+
+    if key_metric == "k_knee":
+        k_key = row.mean
+        label_val = k_key
+    elif key_metric == "optimal_alpha_stim":
+        k_key = row.mean * ref_data["k"].max()
+        label_val = row.mean
+    assert np.isfinite(k_key), k_key
+
+    ax_top.axvline(x=k_key, color=psty.c["key"], lw=1.0, linestyle="--")
+    ax_top.text(
+        x=k_key + ax_top.get_xlim()[1] * 0.005,
+        y=0.51,
+        s=f"avg. {r(key_metric)} = {label_val:.3g}",
+        transform=ax_top.get_xaxis_transform(),
+        color=psty.c["key"],
+        ha="left",
+        va="bottom",
+    )
 
     def plot_lineplots(lp_axs, key_metric_name):
         """Plot lineplots showing key metric vs exploration parameter."""
@@ -692,6 +718,7 @@ if __name__ == "__main__" and "snakemake" in locals():
         snakemake.input[1],
         snakemake.input.dependence_key,
         snakemake.input.dependence_control,
+        snakemake.input.key_ref_stats,
         snakemake.output,
     )
 

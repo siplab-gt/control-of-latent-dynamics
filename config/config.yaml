@@ -296,7 +296,7 @@ analysis_optimal_stim_rec:
     - alpha_centroid
 
 dependence_analysis:
-  n_shuffle_boot: 100
+  n_shuffle_boot: 1000
   significance_threshold: 0.05
   estimator_type: kernel
 

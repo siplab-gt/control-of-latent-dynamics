@@ -204,7 +204,8 @@ def build_key_metrics_table(cfg, base_params, results_csv, wildcards):
         km_cols = all_cols[all_cols.index(base_params.key_metrics[0]) :]
 
         metric_df["ep"] = ep
-        metric_df["ep_value"] = metric_df[ep]
+        # enforce object dtype so bool doesn't get converted to 0/1
+        metric_df["ep_value"] = metric_df[ep].astype("object")
         metric_df["setting"] = wildcards.setting
         metric_df["task"] = wildcards.task
         rows.append(

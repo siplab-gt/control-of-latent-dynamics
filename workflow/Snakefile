@@ -265,6 +265,7 @@ rule main_figs:
         "src/plot_style.py",
         dependence_key="<results>/{setting}_{task}_dependence/key.pkl.gz",
         dependence_control="<results>/{setting}_{task}_dependence/control.pkl.gz",
+        key_ref_stats="<results>/{setting}_{task}_key_ref_stats.csv",
     output:
         main=multiext("<results>/figs/{setting}_{task}", *fig_exts),
         # lineplots=multiext("<results>/figs/{setting}_{task}_lineplots", *fig_exts),
@@ -272,9 +273,9 @@ rule main_figs:
         #     "<results>/figs/{setting}_{task}_heatmaps_mean", *fig_exts
         # ),
         # heatmaps_std=multiext("<results>/figs/{setting}_{task}_heatmaps_std", *fig_exts),
+    localrule: True
     params:
         subcfg("analysis"),
-    localrule: True
     script:
         "../src/scripts/main_figs.py"
 
@@ -398,11 +399,22 @@ rule key_metrics_table:
         "<results>/{setting}_{task}.csv",
     output:
         "<results>/{setting}_{task}_key_metrics.csv",
+    localrule: True
     params:
         lookup(dpath="analysis_{setting}", within=config),
-    localrule: True
     script:
         "../src/scripts/key_metrics_table.py"
+
+
+rule key_ref_stats_table:
+    input:
+        "<results>/{setting}_{task}_key_metrics.csv",
+    output:
+        "<results>/{setting}_{task}_key_ref_stats.csv",
+    params:
+        subcfg("analysis"),
+    script:
+        "../src/scripts/key_ref_stats_table.py"
 
 
 est_type = config["dependence_analysis"]["estimator_type"]
@@ -418,8 +430,6 @@ rule dependence_analysis:
         "src/cmi_estimation.py",
     output:
         "<results>/{setting}_{task}_dependence/{ep}_{analysis}_{estimator_type}.pkl.gz",
-    params:
-        subcfg("dependence_analysis", "analysis"),
     log:
         "<logs>/{setting}_{task}_dependence/{ep}_{analysis}_{estimator_type}.log",
     conda:
@@ -427,6 +437,8 @@ rule dependence_analysis:
     resources:
         mem_mb=4000,
         runtime=10,
+    params:
+        subcfg("dependence_analysis", "analysis"),
     script:
         "../src/scripts/dependence_analysis.py"
 
@@ -451,11 +463,11 @@ rule aggregate_dependence_analysis:
             ),
             estimator_type=est_type,
         ),
-    params:
-        subcfg("dependence_analysis", "analysis"),
     output:
         "<results>/{setting}_{task}_dependence/{analysis}.pkl.gz",
     localrule: True
+    params:
+        subcfg("dependence_analysis", "analysis"),
     script:
         "../src/scripts/aggregate_dependence_analysis.py"
 
@@ -544,18 +556,18 @@ rule ctrl_expts:
         "src/ctrl/{ctrl_type}.py",
         cleo_prep=wildcard_path("cleo_prep.pkl.gz"),
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
-    params:
-        subcfg("cleo_prep", "expts", "ctrl_expts"),
     output:
         data=wildcard_path("ctrl_data.pkl.gz"),
+    log:
+        wildcard_path("ctrl_expts.log"),
+    retries: 1
     conda:
         "cold"
     resources:
         mem_mb=lambda wc: fsnn_mem_required(wc) * 1.5,
         runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=8),
-    log:
-        wildcard_path("ctrl_expts.log"),
-    retries: 1
+    params:
+        subcfg("cleo_prep", "expts", "ctrl_expts"),
     script:
         "../src/scripts/ctrl_expts.py"
 
@@ -574,9 +586,9 @@ rule plot_model_fit_pred:
 
 
 use rule plot_model_fit_pred as plot_model_fit_pred_default with:
-    localrule: True
     output:
         wildcard_path("model_fit_pred_plot.png"),
+    localrule: True
 
 
 rule analyze_model_fit:
@@ -629,12 +641,14 @@ rule model_fit:
             otherwise="src/model_fit/braid.py",
         ),
         sys_id_data=wildcard_path("sys_id_data.pkl.gz"),
-    params:
-        subcfg("model_fit"),
-        braid_basename=wildcard_path("model_fit_braid"),
     output:
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
         pred_data=wildcard_path("model_fit_pred_data.pkl.gz"),
+    log:
+        wildcard_path("model_fit.log"),
+    retries: 1
+    conda:
+        "cold"
     threads: lambda wc: max(1, 8 * gpu_for_model_fit(wc))
     resources:
         gpu=gpu_for_model_fit,
@@ -643,11 +657,9 @@ rule model_fit:
         # since slurm executor sets to 1, which breaks
         tasks_per_gpu=0,
         runtime=lambda wc: 120 if wc.setting != "sufficient_stim" else 10,
-    retries: 1
-    conda:
-        "cold"
-    log:
-        wildcard_path("model_fit.log"),
+    params:
+        subcfg("model_fit"),
+        braid_basename=wildcard_path("model_fit_braid"),
     script:
         "../src/scripts/model_fit.py"
 
@@ -685,19 +697,19 @@ n_trials_sys_id_max = config["star_sweep_params"]["n_trials_sys_id"][-1]
 rule sys_id_expts:
     input:
         wildcard_path("cleo_prep.pkl.gz"),
-    params:
-        subcfg("cleo_prep", "expts", "sys_id_expts"),
-        n_trials_sys_id_max=n_trials_sys_id_max,
     output:
         wildcard_path("sys_id_data.pkl.gz"),
     log:
         wildcard_path("sys_id_expts.log"),
+    retries: 1  # since there can be conflicts hitting the cython cache
     conda:
         "cold"
     resources:
         mem_mb=fsnn_mem_required,
         runtime=runtime_min(n_trials_sys_id_max, multiplier=2),
-    retries: 1  # since there can be conflicts hitting the cython cache
+    params:
+        subcfg("cleo_prep", "expts", "sys_id_expts"),
+        n_trials_sys_id_max=n_trials_sys_id_max,
     script:
         "../src/scripts/sys_id_expts.py"
 
@@ -705,12 +717,12 @@ rule sys_id_expts:
 rule impulse_responses:
     input:
         wildcard_path("cleo_prep.pkl.gz"),
-    params:
-        subcfg("expts"),
     output:
         wildcard_path("impulse_responses_wide_plot.png"),
         wildcard_path("impulse_responses_trials_plot.png"),
     localrule: True
+    params:
+        subcfg("expts"),
     script:
         "../src/scripts/impulse_responses.py"
 
@@ -746,10 +758,10 @@ rule plot_cleo:
         "src/plot_style.py",
     output:
         wildcard_path("cleo_plot.{ext}"),
+    localrule: True
     params:
         fsnn_params,
         subcfg("cleo_prep"),
-    localrule: True
     script:
         "../src/scripts/plot_cleo.py"
 
@@ -761,13 +773,13 @@ rule cleo_prep:
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
         "src/interface_array.py",
-    params:
-        subcfg("prep_fsnn", "cleo_prep"),
     output:
         wildcard_path("cleo_prep.pkl.gz"),
     log:
         wildcard_path("cleo_prep.log"),
     localrule: True
+    params:
+        subcfg("prep_fsnn", "cleo_prep"),
     script:
         "../src/scripts/cleo_prep.py"
 
@@ -848,10 +860,11 @@ def fsnn_runtime(wc):
 rule _prep_fsnn:
     input:
         unpack(fsnn_inputs),
-    params:
-        fsnn_params,
     log:
         wildcard_path("prep_fsnn_{mode}.log"),
+    retries: 1
+    conda:
+        "cold"
     # only use 2 threads; more requires a lot of memory for parallel compilation
     threads: lambda wc: max(1, 4 * gpu_for_fsnn_train(wc))
     resources:
@@ -859,9 +872,8 @@ rule _prep_fsnn:
         gpu_jobs=gpu_for_fsnn_train,
         runtime=fsnn_runtime,
         mem_mb=lambda wc: fsnn_mem_required(wc) if wc["mode"] != "train" else 64000,
-    retries: 1
-    conda:
-        "cold"
+    params:
+        fsnn_params,
     script:
         "../src/scripts/prep_fsnn.py"
 
@@ -893,8 +905,8 @@ rule plot_schematic:
     output:
         top=wildcard_path("cleo_prep_top_schematic.{ext}"),
         side=wildcard_path("cleo_prep_side_schematic.{ext}"),
+    localrule: True
     params:
         subcfg("prep_fsnn", "cleo_prep"),
-    localrule: True
     script:
         "../src/scripts/plot_schematic.py"
