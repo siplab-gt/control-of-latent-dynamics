@@ -7,9 +7,17 @@
 # testconfig_params.yaml.
 #
 # Cell count (current axes):
-#   seeds (5) × ctrl_type (3) × k/m pairs (4) = 60 ctrl_expts cells.
-#   Other params (task, setting, n_trials_sys_id, n_latent_dims_offset,
-#   latency, ctrl_horizon_ms, nlmpc_iters) flat at default.
+#   seeds (5) × ctrl_type (3) × setting (3) × k/m pairs (1) = 45 ctrl_expts cells
+#   plus 5 × 3 × 1 = 15 NULL baselines = 60 total ctrl_expts cells.
+#   Other params (task, n_trials_sys_id, n_latent_dims_offset, latency,
+#   ctrl_horizon_ms, nlmpc_iters) flat at default.
+#
+# Settings axis decomposes the model-fit / opsin-loop choice:
+#   - usid_stim_rec            : USID method, NN opsin in light→photocurrent loop
+#   - usid_stim_rec_no_opsin   : USID method, no opsin (B' eats z-scored light)
+#   - braid_stim_rec           : BRAID method, no opsin (unified A·x + B_opto·u_z)
+# Per-setting overrides live in testconfig_params.yaml as model_fit_<setting>
+# blocks (model_fit_method, use_opsin).
 # =============================================================================
 
 sweeps:
@@ -23,8 +31,19 @@ sweeps:
     - OL
     - LQMPC
     - NLMPC
+  setting:
+    # Targeted run 2026-05-03 evening: USID-no-opsin smoke test on the
+    # OLD proportional_current plant. Mirror of the BRAID smoke test
+    # methodology — confirms (or refutes) that linear-LDS methods recover
+    # under a linear plant when chr2's nonlinearity is removed. Revert to
+    # all 3 settings after completion.
+    - usid_stim_rec_no_opsin
 
 # (k, m) pair generation — Cartesian-multiplied with `sweeps:` above.
+# linspace(1, 63, 3) = [1, 32, 63] rounded to ints; target_k=32 filters to
+# the middle pair (k=32, m=64-32=32) — a single balanced stim/rec split for
+# this model-comparison sweep.
 q_usid:
   channel_budget: 64
-  num_stim_ratio_levels: 4
+  num_stim_ratio_levels: 3
+  target_k: 32

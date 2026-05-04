@@ -85,7 +85,12 @@ def main(
         key_metric_func = compute_k_suff
         main_fig_plot_type = "lineplots"
         plots_per_row = 3
-    elif setting in ("optimal_stim_rec", "usid_stim_rec"):
+    elif setting in (
+        "optimal_stim_rec",
+        "usid_stim_rec",
+        "usid_stim_rec_no_opsin",
+        "braid_stim_rec",
+    ):
         metric = "Q_track_Zref_Z"
         colorbar_label = r"$Q_\text{track}\left(Z_\text{ref}, Z\right)$"
         key_metric_name = "optimal_p_stim"
@@ -106,12 +111,19 @@ def main(
 
     def grid_subplots(extra_row=False):
         n_rows = rows + 1 if extra_row else rows
+        # squeeze=False forces a 2D axes array even when n_rows == 1 (or
+        # plots_per_row == 1). Without this, plt.subplots collapses
+        # singleton dims and the downstream `axs[:, 1:]`, `axs[0, 0]`,
+        # `axs[1:]` indexing crashes with IndexError. Hits whenever the
+        # post-refactor sweeps include ≤ plots_per_row axes (e.g.
+        # testconfig: only seed, ctrl_type → 2 ≤ 4).
         fig, axs = plt.subplots(
             n_rows,
             plots_per_row,
             figsize=(psty.double_col_width, 2 * n_rows),
             layout="compressed",
             sharey=True,
+            squeeze=False,
         )
         for i in range(len(expl_params), len(axs.flatten())):
             axs.flatten()[i].axis("off")

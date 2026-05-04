@@ -34,7 +34,11 @@ def main(cond_params, base_params, outfiles):
         from src.cleo_prep_sufficient_stim import light_and_probe_coords
     elif cond_params["setting"] in ("optimal_stim_rec", "optimal-stim-rec"):
         from src.cleo_prep_optimal_stim_rec import light_and_probe_coords
-    elif cond_params["setting"] == "usid_stim_rec":
+    elif cond_params["setting"] in (
+        "usid_stim_rec",
+        "usid_stim_rec_no_opsin",
+        "braid_stim_rec",
+    ):
         from src.cleo_prep_usid_stim_rec import light_and_probe_coords
 
     light_coords, light_groups, probe_coords = light_and_probe_coords(

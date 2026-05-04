@@ -183,6 +183,24 @@ if __name__ == "__main__" and "snakemake" in locals():
     if natural_data:
         config_dict['natural_data_path'] = str(natural_data)
 
+    # Per-setting overlay: keys placed in config[f"model_fit_{setting}"]
+    # override their top-level counterparts. Lets `setting` sweep choose
+    # use_opsin / model_fit_method / etc. without globally toggling them.
+    # Logs every clobber at INFO so a future user can see what the active
+    # setting silently changed (drift hazard: e.g. use_opsin lives both
+    # top-level and per-setting in some configs).
+    setting = getattr(snakemake.wildcards, "setting", None)
+    if setting:
+        overlay = snakemake.config.get(f"model_fit_{setting}", {}) or {}
+        for k, v in overlay.items():
+            old = config_dict.get(k, "<unset>")
+            if old != v:
+                log.info(
+                    f"[setting={setting}] model_fit overlay: "
+                    f"{k}={old!r} -> {v!r}"
+                )
+            config_dict[k] = v
+
     model_fit(
         preprocess_params(snakemake.wildcards),
         preprocess_params(snakemake.params),

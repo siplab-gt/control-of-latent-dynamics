@@ -41,10 +41,12 @@ params:
   k: 22
   m: 42
 
-# Top-level architectural switches
+# Top-level architectural switches.
+# `model_fit_method` and `use_opsin` are intentionally NOT defaulted here:
+# every setting in this run's sweep specifies them via its own
+# model_fit_<setting> overlay, so a top-level value would be dead. (They
+# remain top-level in production configs that don't sweep `setting`.)
 power_per_neuron_uW: 1
-model_fit_method: "usid"
-use_opsin: true
 opsin_checkpoint_path: null
 report_period_s: 60
 train_device: cuda
@@ -113,6 +115,38 @@ model_fit_usid_stim_rec:
   # from config/cold_usid.yaml.
   epochs: 2500
   steps_ahead_model_code: ""
+  # Per-setting overrides (consumed by src/scripts/model_fit.py overlay
+  # injection — keys here clobber the matching top-level config_dict entries
+  # before fit_lds_to_data is called).
+  model_fit_method: usid
+  use_opsin: true
+
+model_fit_usid_stim_rec_no_opsin:
+  # USID with the NN opsin disabled. B' is trained against z-scored light
+  # directly; LDS recurrence stays subspace (A11/A22/K1/K2/Cz1/Cz2). No
+  # natural-electrode handoff overhead change vs usid_stim_rec.
+  epochs: 2500
+  steps_ahead_model_code: ""
+  model_fit_method: usid
+  use_opsin: false
+
+model_fit_braid_stim_rec:
+  # BRAID method: unified A/B_opto/Cz, no subspace, no opsin. The Snakefile's
+  # get_usid_dependencies / get_natural_data_input dispatch returns []
+  # because _resolve_model_fit_method(braid_stim_rec) → "braid", so no
+  # natural electrode data is consumed.
+  model_fit_method: braid
+  use_opsin: false
+  # BRAID-specific hyperparams consumed in src/model_fit/braid.py:
+  #   line 39: methodCode = f"BRAID_{Cz_code}_{steps_ahead_model_code}"
+  #   line 43: args["epochs"] = epochs
+  # 200 mirrors the natural-model training budget in cold_usid.yaml; the
+  # only on-record working BRAID baseline (commit 1179c0a) used 100. Earlier
+  # 2500 was a copy from the dead `model_fit_usid_stim_rec.epochs` placeholder
+  # and likely caused overfitting (in-sample R² 0.96 vs forced-response −2.33
+  # per math-forensics agent on 2026-05-03).
+  epochs: 200
+  steps_ahead_model_code: ""
 
 ctrl_expts:
   Q_cost: 1
@@ -123,6 +157,9 @@ ctrl_expts:
   solvers: ["osqp", "clarabel", "scs"]
   nlmpc_iters: 10
   nlmpc_lr: 0.5
+  # All current stim-rec settings track Z; was previously specified per-setting
+  # in identical ctrl_expts_<setting>.ref_type: Z blocks.
+  ref_type: Z
 
 ctrl_expts_OL:
   time_limit_ms: 2000
@@ -141,9 +178,6 @@ ctrl_expts_LQMPC:
     enforce_dpp: true
 
 ctrl_expts_NLMPC: {}
-
-ctrl_expts_usid_stim_rec:
-  ref_type: Z
 
 cleo_prep:
   array_side_length_mm: 4

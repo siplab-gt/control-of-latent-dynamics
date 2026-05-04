@@ -471,33 +471,43 @@ if "q2" in config:
             print(f"wrote optimal stim rec results to {output[0]}")
 
 
-rule usid_stim_rec_tabulate:
+def _stim_rec_tabulate_inputs(wildcards):
+    """Materialize the Cartesian product of sweep combos × q_usid (k, m) for
+    a single stim-rec setting. `task` is stripped from each combo and rebound
+    at rule-eval time via the output's {task} wildcard; `setting` is bound by
+    the rule's `{setting}` wildcard."""
+    return [
+        wildcard_path(
+            file="summary.csv",
+            setting=wildcards.setting,
+            k=k,
+            m=m,
+            **combo,
+            fill_in_defaults=True,
+        )
+        for combo in _setting_combos_for(wildcards.setting)
+        for k, m in get_usid_kms()
+    ]
+
+
+# Stim-rec tabulator: one rule for usid_stim_rec / usid_stim_rec_no_opsin /
+# braid_stim_rec. The setting wildcard is constrained to those three names so
+# this rule doesn't shadow `sufficient_stim_tabulate` /
+# `optimal_stim_rec_tabulate`, which use different (k, m) grids.
+rule stim_rec_tabulate:
     input:
-        # Single Cartesian-product loop. Every cell in config['sweeps'] ×
-        # q_usid (k, m) pairs is a rule input. Params not in sweeps fall back
-        # to defaults via fill_in_defaults=True. `task` is bound by the rule's
-        # output wildcard; `setting` is pinned to usid_stim_rec.
-        [
-            wildcard_path(
-                file="summary.csv",
-                setting="usid_stim_rec",
-                k=k,
-                m=m,
-                **combo,
-                fill_in_defaults=True,
-            )
-            for combo in _setting_combos_for("usid_stim_rec")
-            for k, m in get_usid_kms()
-        ],
+        _stim_rec_tabulate_inputs,
     output:
-        "<results>/usid_stim_rec_{task}.csv",
+        "<results>/{setting}_{task}.csv",
+    wildcard_constraints:
+        setting="usid_stim_rec|usid_stim_rec_no_opsin|braid_stim_rec",
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
         df = pd.concat(dfs, ignore_index=True)
-        print("concatenated USID stim rec DFs")
+        print(f"concatenated {wildcards.setting} DFs")
         df.to_csv(output[0], index=False)
-        print(f"wrote USID stim rec results to {output[0]}")
+        print(f"wrote {wildcards.setting} results to {output[0]}")
 
 
 rule analyze_ctrl_data:
@@ -638,6 +648,19 @@ use rule plot_model_fit_pred as plot_model_fit_pred_default with:
 # Model Fit (BRAID, USID, or Known Factors)
 # =============================================================================
 
+# Resolve model_fit_method for a given setting wildcard. Looks up in the
+# per-setting overlay (config[f"model_fit_{setting}"]) first, then falls
+# back to top-level config["model_fit_method"], then to "braid". Lets the
+# `setting` wildcard sweep over USID-with-opsin / USID-no-opsin / BRAID by
+# putting the right `model_fit_method` (and `use_opsin`) in each per-
+# setting `model_fit_<setting>` block.
+def _resolve_model_fit_method(setting):
+    per_setting = config.get(f"model_fit_{setting}", {}) or {}
+    return per_setting.get(
+        "model_fit_method", config.get("model_fit_method", "braid")
+    )
+
+
 # Model fit method selection based on config and wildcards
 def get_model_fit_method(wildcards):
     """
@@ -645,11 +668,13 @@ def get_model_fit_method(wildcards):
 
     Priority:
     1. sufficient_stim setting always uses known_factors
-    2. config["model_fit_method"] selects between "braid" (default) and "usid"
+    2. config[f"model_fit_{setting}"]["model_fit_method"] (per-setting override)
+    3. config["model_fit_method"] (top-level default)
+    4. "braid" (final fallback)
     """
     if wildcards.setting == "sufficient_stim":
         return "src/model_fit/known_factors.py"
-    method = config.get("model_fit_method", "braid")
+    method = _resolve_model_fit_method(wildcards.setting)
     if method == "usid":
         return "src/model_fit/usid.py"
     return "src/model_fit/braid.py"
@@ -667,7 +692,7 @@ def get_usid_dependencies(wildcards):
     """
     if wildcards.setting == "sufficient_stim":
         return []
-    if config.get("model_fit_method", "braid") != "usid":
+    if _resolve_model_fit_method(wildcards.setting) != "usid":
         return []
     usid_repo = os.environ.get("USID_REPO_ROOT", "")
     if not usid_repo:
@@ -696,7 +721,7 @@ def get_natural_data_input(wildcards):
     """Return natural electrode data path when method=usid, empty list otherwise."""
     if wildcards.setting == "sufficient_stim":
         return []
-    if config.get("model_fit_method", "braid") != "usid":
+    if _resolve_model_fit_method(wildcards.setting) != "usid":
         return []
     return wildcard_path("natural_electrode_data.pkl.gz")
 
@@ -979,6 +1004,25 @@ rule plot_cleo:
         "../src/scripts/plot_cleo.py"
 
 
+# Mirror of the alias dict in src/scripts/cleo_prep.py — keeps the rule's
+# Python-source dependency in sync with what the script actually imports
+# at runtime. Multiple settings (e.g. braid_stim_rec, usid_stim_rec_no_opsin)
+# share a single cleo_prep module since only the array layout depends on
+# `setting`, not the model-fit method.
+_CLEO_PREP_MODULE_FOR_SETTING = {
+    "sufficient_stim": "sufficient_stim",
+    "optimal_stim_rec": "optimal_stim_rec",
+    "usid_stim_rec": "usid_stim_rec",
+    "usid_stim_rec_no_opsin": "usid_stim_rec",
+    "braid_stim_rec": "usid_stim_rec",
+}
+
+
+def _cleo_prep_module_input(wildcards):
+    """Resolve the cleo_prep_*.py source file for a given setting wildcard."""
+    return f"src/cleo_prep_{_CLEO_PREP_MODULE_FOR_SETTING[wildcards.setting]}.py"
+
+
 def _cleo_prep_calibration_input(wildcards):
     """Declare chr2_4s_fsnn_calibration.json as a rule input when the
     configured plant class needs it. cleo_prep.py reads this file eagerly
@@ -998,10 +1042,10 @@ rule cleo_prep:
         # use NA for wildcards that were irrelevant before this step
         wildcard_path("fsnn_post_train.pkl.gz"),
         "src/grouped_light.py",
-        "src/cleo_prep_{setting}.py",
-        "src/interface_array.py",
-        "src/opsins.py",
-        "src/scripts/calibrate_opsin_plant.py",
+        cleo_prep_module=_cleo_prep_module_input,
+        interface_array="src/interface_array.py",
+        opsins="src/opsins.py",
+        calibrate="src/scripts/calibrate_opsin_plant.py",
         calibration=_cleo_prep_calibration_input,
         configfiles=configfile_inputs_excluding_sweeps,
     params:
@@ -1144,8 +1188,8 @@ ruleorder: prep_fsnn_save_fsnn > prep_fsnn_save_data > prep_fsnn_save_both
 rule plot_schematic:
     input:
         "src/interface_array.py",
-        "src/cleo_prep_{setting}.py",
-        "src/plot_style.py",
+        cleo_prep_module=_cleo_prep_module_input,
+        plot_style="src/plot_style.py",
     output:
         top=wildcard_path("cleo_prep_top_schematic.{ext}"),
         side=wildcard_path("cleo_prep_side_schematic.{ext}"),

@@ -77,9 +77,20 @@ class CleoPrep(BaseDataClass):
             probe_coords = cache["probe_coords"]
             print("loaded cached light/probe coords")
         else:
-            # separate files so one can change without causing the other to be rerun
+            # separate files so one can change without causing the other to be rerun.
+            # Multiple settings can share a cleo_prep module — only the array
+            # layout is keyed off `setting`, not the model-fit method or opsin
+            # use. The dict below collapses that aliasing so we don't ship
+            # one-line stub modules for every aliased setting.
             setting = cond_params.setting
-            module_name = f"src.cleo_prep_{setting}"
+            cleo_prep_module_for = {
+                "sufficient_stim": "sufficient_stim",
+                "optimal_stim_rec": "optimal_stim_rec",
+                "usid_stim_rec": "usid_stim_rec",
+                "usid_stim_rec_no_opsin": "usid_stim_rec",
+                "braid_stim_rec": "usid_stim_rec",
+            }
+            module_name = f"src.cleo_prep_{cleo_prep_module_for[setting]}"
             module = importlib.import_module(module_name)
             light_and_probe_coords = module.light_and_probe_coords
 
