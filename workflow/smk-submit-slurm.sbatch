@@ -4,7 +4,7 @@
 #SBATCH --mem-per-cpu=4G                        # Memory for coordinator
 #SBATCH -t1-00:00:00                           # Time limit D-HH:MM:SS
 #SBATCH -ologs/slurm-%j.out                         # Combined output and error messages file
-#SBATCH -A gts-crozell3-monthly          # Account (gts-crozell3 + ece both drained by 2026-04-28; falling back to monthly with 367 SU)
+#SBATCH -A gts-crozell3                  # Account (primary; switch to gts-crozell3-monthly when primary is drained)
 #SBATCH --mail-type=END,FAIL                    # Notify when job ends or fails
 #SBATCH --mail-user=jrauf3@gatech.edu       # Replace with your email
 cd $SLURM_SUBMIT_DIR                            # Change to working directory
@@ -28,7 +28,11 @@ echo "Using sweeps: $CONFIG_SWEEPS"
 
 mkdir -p "$(readlink -f results 2>/dev/null || echo results)" logs
 
-snakemake --unlock
+# --unlock needs the same configfiles because the Snakefile's parse-time
+# validation (lines 28-32) requires `params:` + `sweeps:` blocks before any
+# subcommand can run. Without them, --unlock fails with ValueError on a
+# stale lock from a previously-scancel'd coordinator.
+snakemake --configfiles "$CONFIG_PARAMS" "$CONFIG_SWEEPS" --unlock
 
 # Batch label for USID results grouping: YYYYMMDD_<coordinator_job_id>
 COLD_BATCH_LABEL="$(date +%Y%m%d)-${SLURM_JOB_ID:-local}"
@@ -44,7 +48,7 @@ snakemake \
     --config cold_batch_label="$COLD_BATCH_LABEL" \
     --executor slurm \
     --jobs 100 \
-    --default-resources slurm_account=gts-crozell3-monthly tasks_per_gpu=0 \
+    --default-resources slurm_account=gts-crozell3 tasks_per_gpu=0 \
     --envvars LD_LIBRARY_PATH PYTHONPATH USID_REPO_ROOT \
     --rerun-incomplete \
     --keep-going
