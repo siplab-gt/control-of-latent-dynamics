@@ -107,7 +107,11 @@ natural_hyperparams:
     loss_weights:
       delta: 1.0           # Teacher-forced 1-step MSE.
       rollout: 0.1         # Multi-step rollout MSE.
-      teacher: 0           # Full-sequence teacher loss (OFF; relies on schedule).
+      teacher: 0.1         # Full-sequence teacher 1-step loss. Static value
+                           # applies after the schedule's 20-epoch window
+                           # (which currently ramps 0.0 → 0.0). Added 2026-05-04
+                           # to fix R²(Y) over-scaling — `forward(Y, U)` was
+                           # never directly penalized, so Yhat magnitude drifts.
       acf: 0.0             # Autocorrelation-matching loss (OFF).
       innov_white: 0.5     # Innovation-whiteness penalty. Realistic for COLD LFP
                            # — penalizes autocorrelation of y - C·x̂ at lags 1..10
@@ -217,7 +221,11 @@ usid_hyperparams:
     loss_weights:
       delta: 1             # Teacher-forced 1-step MSE on USID output.
       rollout: 0.1         # Multi-step rollout MSE.
-      teacher: 0           # Full-sequence teacher loss (OFF statically; see schedule).
+      teacher: 0.1         # Full-sequence teacher loss. Schedule below ramps
+                           # 1.0 → 0.0 over first 20 epochs; after that, this
+                           # static 0.1 applies (epochs 21-100). Added
+                           # 2026-05-04 to keep teacher signal alive past the
+                           # schedule window.
       sroll: 0.0
       spectral: 0.0
       ifp: 0.5             # Input-free penalty — active in COLD as of the

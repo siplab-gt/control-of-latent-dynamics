@@ -120,11 +120,9 @@ model_fit_usid_stim_rec:
 ctrl_expts:
   Q_cost: 1
   R_cost: 1e-3
-  ctrl_horizon_ms: 300
   n_trials_ctrl: 2
   baseline_latency_ms: 1
   solvers: ["osqp", "clarabel", "scs"]
-  nlmpc_iters: 2
   nlmpc_lr: 0.5
 
 ctrl_expts_OL:

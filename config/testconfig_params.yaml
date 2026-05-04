@@ -151,11 +151,9 @@ model_fit_braid_stim_rec:
 ctrl_expts:
   Q_cost: 1
   R_cost: 1e-3
-  ctrl_horizon_ms: 300
   n_trials_ctrl: 100
   baseline_latency_ms: 1
   solvers: ["osqp", "clarabel", "scs"]
-  nlmpc_iters: 10
   nlmpc_lr: 0.5
   # All current stim-rec settings track Z; was previously specified per-setting
   # in identical ctrl_expts_<setting>.ref_type: Z blocks.

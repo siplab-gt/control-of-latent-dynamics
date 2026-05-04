@@ -148,11 +148,9 @@ natural_electrode_expts:
 ctrl_expts:
   Q_cost: 1
   R_cost: 1e-3
-  ctrl_horizon_ms: 300
   n_trials_ctrl: 100
   baseline_latency_ms: 1
   solvers: ["osqp", "clarabel", "scs"]
-  nlmpc_iters: 10
   nlmpc_lr: 0.5
 
 ctrl_expts_OL:

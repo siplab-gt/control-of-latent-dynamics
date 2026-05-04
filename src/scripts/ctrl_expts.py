@@ -168,7 +168,7 @@ def ctrl_expts(
         baseline_latency=base_lat,
         latency_rng=np.random.default_rng(seed + 18010630),
         sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor,
-        ctrl_horizon=getattr(cond_params, 'ctrl_horizon', base_params.ctrl_horizon),
+        ctrl_horizon=cond_params.ctrl_horizon,
         Qcost=float(base_params.Q_cost),
         Rcost=float(base_params.R_cost),
         cleo_prep=cleo_prep,
@@ -180,9 +180,7 @@ def ctrl_expts(
         signals=cond_params.signals,
     )
     if ctrl_type == "NLMPC":
-        ctrl_kwargs['nlmpc_iters'] = int(
-            getattr(cond_params, 'nlmpc_iters', base_params.nlmpc_iters)
-        )
+        ctrl_kwargs['nlmpc_iters'] = int(cond_params.nlmpc_iters)
         ctrl_kwargs['nlmpc_lr'] = float(base_params.nlmpc_lr)
     ctrl_proc: Controller = ControllerType(**ctrl_kwargs)
 
