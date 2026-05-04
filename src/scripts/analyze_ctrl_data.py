@@ -38,6 +38,7 @@ def analyze_ctrl_data(
     null_ctrl_data: CtrlData,
     fsnn_data_analysis_file,
     model_fit_analysis_file,
+    chr2_stability_file,
     outfile,
 ):
     results = {**cond_params}
@@ -225,6 +226,7 @@ def analyze_ctrl_data(
 
     results |= pd.read_csv(fsnn_data_analysis_file).iloc[0].to_dict()
     results |= pd.read_csv(model_fit_analysis_file).iloc[0].to_dict()
+    results |= pd.read_csv(chr2_stability_file).iloc[0].to_dict()
     print(results)
 
     df = pd.DataFrame([results])
@@ -245,5 +247,6 @@ if __name__ == "__main__" and "snakemake" in locals():
         null_ctrl_data,
         snakemake.input.fsnn_data_analysis,
         snakemake.input.model_fit_analysis,
+        snakemake.input.chr2_stability,
         snakemake.output[0],
     )

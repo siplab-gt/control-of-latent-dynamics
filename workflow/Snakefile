@@ -126,6 +126,12 @@ def step_from_filename(filename: str) -> str:
         return "sys_id_expts"
     elif "usid" in filename:
         return "sys_id_expts"
+    elif "chr2_stability" in filename:
+        # Stability artifacts live at the same wildcard level as
+        # natural_electrode_data (which is what they consume) — per
+        # (task, seed, offset, density, area, setting, k, m, beam, signals),
+        # one level above n_trials_sys_id / model_task_inputs.
+        return "sys_id_expts"
     elif "model_fit" in filename:
         return "model_fit"
     elif "ctrl" in filename:
@@ -520,6 +526,19 @@ rule analyze_ctrl_data:
         ),
         fsnn_data_analysis=wildcard_path("fsnn_test_data_analysis.csv"),
         model_fit_analysis=wildcard_path("model_fit_analysis.csv"),
+        # chr2-stability columns are merged in per-cell. Pinned to
+        # setting=usid_stim_rec because the chr2 attachment is identical
+        # across stim_rec settings at fixed (seed, k, m) (cleo_prep modules
+        # are aliased — see chr2_stability_check rule docstring).
+        chr2_stability=lambda wildcards: wildcard_path(
+            "chr2_stability.csv",
+            setting="usid_stim_rec",
+            **{k: getattr(wildcards, k) for k in (
+                "task", "seed", "n_latent_dims_offset", "density_scale",
+                "network_area_scale", "k", "m", "beam_width_um", "signals",
+            )},
+            fill_in_defaults=True,
+        ),
     output:
         wildcard_path("summary.csv"),
     log:
@@ -951,6 +970,46 @@ use rule sys_id_expts as natural_electrode_expts with:
         wildcard_path("natural_electrode_data.pkl.gz"),
     log:
         wildcard_path("natural_electrode_expts.log"),
+
+
+# Per-(seed, k, m) check that opto attachment doesn't destabilize the fSNN.
+# Pinned to setting=usid_stim_rec because the chr2 attachment (and resulting
+# natural_electrode_data) is identical across all stim_rec settings at a
+# fixed (seed, k, m) — see src/scripts/cleo_prep.py's
+# `cleo_prep_module_for` alias dict. Keying off a single canonical setting
+# avoids 3× redundant simulation work per geometry.
+#
+# The output csv is consumed by analyze_ctrl_data (also pinned to
+# setting=usid_stim_rec for its chr2_stability input) so the stability
+# columns merge into every cell's summary.csv regardless of that cell's
+# own setting / model_fit_method.
+rule chr2_stability_check:
+    input:
+        natural_data=lambda wildcards: wildcard_path(
+            "natural_electrode_data.pkl.gz",
+            setting="usid_stim_rec",
+            **{k: getattr(wildcards, k) for k in (
+                "task", "seed", "n_latent_dims_offset", "density_scale",
+                "network_area_scale", "k", "m", "beam_width_um", "signals",
+            )},
+            fill_in_defaults=True,
+        ),
+        fsnn_test_data=wildcard_path("fsnn_test_data.pkl.gz"),
+        configfiles=configfile_inputs_excluding_sweeps,
+    params:
+        # cleo_prep is included so chr2_stability_check can read
+        # `subsample_factor` (the chr2 ExptData time grid is bare's grid /
+        # subsample_factor; max-stat and histogram comparisons need bare
+        # subsampled to the same grid).
+        step_cfg("cleo_prep", "chr2_stability_check"),
+    output:
+        csv=wildcard_path("chr2_stability.csv"),
+        plot_webp=wildcard_path("chr2_stability_plot.webp"),
+    log:
+        wildcard_path("chr2_stability_check.log"),
+    localrule: True
+    script:
+        "../src/scripts/chr2_stability_check.py"
 
 
 rule impulse_responses:

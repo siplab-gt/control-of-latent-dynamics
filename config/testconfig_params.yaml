@@ -202,3 +202,23 @@ sys_id_expts:
 natural_electrode_expts:
   natural_only: true
   n_trials_natural: 50
+
+chr2_stability_check:
+  # Verdict thresholds. ALL must hold for chr2_stable=True. Values are
+  # generous for v1 — tighten after a single known-good cell completes
+  # (rule of thumb: shrink each band by ~half once the nominal range
+  # is empirically known).
+  #
+  # 0-light invariant. UnitlessChr2FourState resting Iopto is ~0 by
+  # design; non-trivial leakage means broken plant wiring.
+  iopto_max_abs_threshold: 0.01
+  # Factor magnitude (rate-inflation proxy, mean(|X_chr2|)/mean(|y_bare|)).
+  # At 0-light should sit ~1.0; opto inflation would push it > 1.
+  factor_mag_ratio_min: 0.8
+  factor_mag_ratio_max: 1.25
+  # Z behavioral output magnitude shift.
+  z_mean_ratio_min: 0.5
+  z_mean_ratio_max: 2.0
+  # Z divergence/saturation. Bare is subsampled to chr2's grid in the
+  # analyzer so extreme-value statistics are sample-count-fair.
+  z_max_ratio_max: 3.0
