@@ -226,6 +226,12 @@ class NLMPCController(Controller):
         u_light enters the NN per-channel; B' (learned at model_fit time)
         maps the per-channel photocurrent output back into state.
 
+        ARCHITECTURAL INVARIANT: NN output is per-channel and approximates
+        the average dynamics of that channel's cluster. Per-neuron output
+        is NOT a goal of this model. Do not introduce per-neuron output
+        dimensions — breaks the B' contract (B' is dimensioned
+        [n_state, n_channels]).
+
         Always uses the stateful path (`forward_with_hidden`) so the GRU
         hidden state bootstraps on first call (passing `h0=None` lets
         `nn.GRU` initialise to zeros internally and return a valid `h_out`

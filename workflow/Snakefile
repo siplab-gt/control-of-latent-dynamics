@@ -245,6 +245,22 @@ def step_cfg(*steps: str) -> callable:
     return wc_fn
 
 
+# Per-setting opsin_plant_class overlays break the cross-method fairness
+# contract: the calibration JSON is single-source-of-truth shared across all
+# settings via _cleo_prep_calibration_input, but a per-setting override
+# would dispatch a different plant for one setting and silently invalidate
+# that contract. Catch this at config-load time so a stray overlay can never
+# reach a sys_id / model_fit / ctrl run.
+for _k, _v in config.items():
+    if _k.startswith("cleo_prep_") and isinstance(_v, dict) and "opsin_plant_class" in _v:
+        raise ValueError(
+            f"opsin_plant_class found in per-setting overlay {_k!r}. "
+            f"This key is only valid at top-level cleo_prep — per-setting "
+            f"overrides break _cleo_prep_calibration_input dispatch and the "
+            f"single-calibration-JSON cross-method invariant."
+        )
+
+
 def configfile_inputs(wildcards=None):
     """Return all configfiles loaded by the workflow.
 
@@ -851,10 +867,14 @@ rule measure_voperating_range:
 
 
 rule calibrate_opsin_plant:
-    """Compute (g0, E, v0, v1) from voperating.json via published biophysical
-    ratios + a Brian2 long-pulse reference (plan §4.3). Writes
+    """Compute (g0, E) from voperating.json via the Bansal-anchored E_RATIO
+    placement + a Brian2 long-pulse reference. Writes
     chr2_4s_fsnn_calibration.json with a calibration_hash used as a cache
-    key (plan §4.6) and a provenance fingerprint (plan §4.5).
+    key and a provenance fingerprint.
+
+    Plant: Bansal-derived UnitlessChr2FourState (linear V−E driving force);
+    no v0/v1 saturation params. The calibration JSON includes a
+    `variant: "bansal"` field that cleo_prep.py asserts at load time.
 
     target_iopto is read from COLD config (`calibrate_opsin_plant.target_iopto`)
     so the calibration tracks config changes. The script requires an explicit

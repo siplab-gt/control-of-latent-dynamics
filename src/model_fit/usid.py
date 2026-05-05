@@ -152,14 +152,20 @@ def fit_lds_to_data(
             opsin_results_dir = Path(opsin_path)
         else:
             opsin_results_dir = Path(USID_REPO_PATH) / "experiments" / "opsin_results"
-        # v3.2: COLD reuses the USID-synthetic NN opsin unchanged. The v3
-        # `UnitlessChr2FourState` plant shares cleo's stock chr2_4s kinetic
-        # rate constants and equation form; their photocurrents for any
-        # given light input differ only by a per-channel scalar factor
-        # absorbed into USID's learned B'. See plan §4.5 and justification
-        # §4.5 for the compositional argument. load_trained_opsin just
-        # picks the newest timestamp subdirectory — no COLD/USID namespace
-        # separation.
+        # COLD plant: Bansal-derived dimensionless UnitlessChr2FourState.
+        # Synth-side NN: trained against cleo's stock `chr2_b4s()` factory
+        # (volt/ampere-typed Bansal with biological g0 = 3.2 nS, E = 0 mV)
+        # at v = -70 mV. Both ends share Bansal's kinetic constants
+        # (Gd1, Gd2, k1, k2, phim, ...), so the NN's temporal Iopto profile
+        # matches the plant. The g0 * (V - E) static-gain mismatch between
+        # synth (biological nA scale) and COLD (calibrated dimensionless ~0.05
+        # at typical light) is absorbed by USID's learned B' at fit time —
+        # this is the v3.2 NN-reuse argument. It works under Bansal because
+        # (V - E) is linear; the corresponding PyRhO chain failed because
+        # `fv_timesVminusE` saturates and the v-clamp choice changes the
+        # transient shape, not just the scale.
+        # load_trained_opsin picks the newest timestamp subdirectory and
+        # hard-raises if output_scale > 1.0 (PyRhO-era nA-scale signature).
         opsin_model = load_trained_opsin(
             opsin_results_dir,
             num_light_channels=1,

@@ -139,8 +139,8 @@ class CleoPrep(BaseDataClass):
             log.debug(f"{typical_task_input=}, {typical_transmittance=}, {I_per_Irr=}")
             opsin = cleo.opto.ProportionalCurrentOpsin(I_per_Irr=I_per_Irr)
         elif opsin_class == "chr2_4s_fsnn":
-            # v3 fSNN-dimensionless chr2_4s (UnitlessChr2FourState). Params
-            # from results/opsin_calibration/chr2_4s_fsnn_calibration.json
+            # fSNN-dimensionless Bansal 4-state ChR2 (UnitlessChr2FourState).
+            # Params from results/opsin_calibration/chr2_4s_fsnn_calibration.json
             # produced by rule calibrate_opsin_plant. Imports are local
             # because CleoPrep.__reduce__ re-invokes build() under dill
             # from downstream rules, whose __main__ namespace doesn't
@@ -155,17 +155,49 @@ class CleoPrep(BaseDataClass):
             calib_path = calib_dir / "chr2_4s_fsnn_calibration.json"
             with calib_path.open() as f:
                 calib = json.load(f)
+
+            # Schema validation: required fields + variant guard. Bare json.load()
+            # + dict access masks stale calibrations from the pre-Bansal era and
+            # silently produces wrong values if a key is missing or if a future
+            # schema change adds an unrecognized field that callers should review.
+            _required = {
+                "g0", "E", "v_median", "target_iopto", "target_light_mWmm2",
+                "saturation_light_mWmm2", "model_period_ms", "fphi_ss_at_target",
+                "v_minus_E_at_v_median", "bench", "voperating_ref",
+                "calibration_hash", "variant",
+            }
+            _allowed = _required | {
+                "window", "v_low", "v_high", "pulse_duration_ms",
+                "bench_duration_ms", "ratios", "cleo_class",
+            }
+            missing = _required - calib.keys()
+            if missing:
+                raise ValueError(
+                    f"Calibration JSON {calib_path} is missing required field(s): "
+                    f"{sorted(missing)}. Re-run rule calibrate_opsin_plant."
+                )
+            unknown = calib.keys() - _allowed
+            if unknown:
+                raise ValueError(
+                    f"Calibration JSON {calib_path} has unknown field(s): "
+                    f"{sorted(unknown)}. If the schema legitimately changed, "
+                    f"update the _allowed set in cleo_prep.py."
+                )
+            if calib.get("variant") != "bansal":
+                raise RuntimeError(
+                    f"chr2_4s_fsnn calibration JSON variant={calib.get('variant')!r} "
+                    f"does not match expected 'bansal'. Calibration is stale; re-run "
+                    f"rule calibrate_opsin_plant."
+                )
+
             opsin = UnitlessChr2FourState(
                 g0=float(calib["g0"]),
                 E=float(calib["E"]),
-                v0=float(calib["v0"]),
-                v1=float(calib["v1"]),
             )
             log.info(
                 f"Loaded chr2_4s_fsnn calibration from {calib_path} "
-                f"(hash={calib.get('calibration_hash', '<missing>')}): "
-                f"g0={calib['g0']:.6e}, E={calib['E']:.4f}, "
-                f"v0={calib['v0']:.4f}, v1={calib['v1']:.4f}"
+                f"(hash={calib['calibration_hash']}, variant={calib['variant']}): "
+                f"g0={calib['g0']:.6e}, E={calib['E']:.4f}"
             )
         else:
             raise ValueError(f"Unknown opsin_plant_class: {opsin_class!r}")
