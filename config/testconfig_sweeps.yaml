@@ -6,7 +6,7 @@
 # that does NOT appear in `sweeps:` is held at its default value from
 # testconfig_params.yaml.
 #
-# Cell count (current axes):
+# Cell count (current axes — three-setting comparison post-Bansal):
 #   seeds (5) × ctrl_type (3) × setting (3) × k/m pairs (1) = 45 ctrl_expts cells
 #   plus 5 × 3 × 1 = 15 NULL baselines = 60 total ctrl_expts cells.
 #   Other params (task, n_trials_sys_id, n_latent_dims_offset, latency,
@@ -32,12 +32,17 @@ sweeps:
     - LQMPC
     - NLMPC
   setting:
-    # Targeted run 2026-05-03 evening: USID-no-opsin smoke test on the
-    # OLD proportional_current plant. Mirror of the BRAID smoke test
-    # methodology — confirms (or refutes) that linear-LDS methods recover
-    # under a linear plant when chr2's nonlinearity is removed. Revert to
-    # all 3 settings after completion.
+    # Three-setting comparison sweep on the post-Bansal Bansal-derived
+    # UnitlessChr2FourState plant (linear V−E driving force, dimensionless
+    # Iopto). Each setting probes a different model-fit / opsin-loop choice:
+    #   - usid_stim_rec          : USID method, NN opsin in light→photocurrent loop
+    #   - usid_stim_rec_no_opsin : USID method, no opsin (B' eats z-scored light)
+    #   - braid_stim_rec         : BRAID method, no opsin (unified A·x + B_opto·u_z)
+    # Per-setting overrides (model_fit_method, use_opsin) live in
+    # testconfig_params.yaml as model_fit_<setting> blocks.
+    - usid_stim_rec
     - usid_stim_rec_no_opsin
+    - braid_stim_rec
 
 # (k, m) pair generation — Cartesian-multiplied with `sweeps:` above.
 # linspace(1, 63, 3) = [1, 32, 63] rounded to ints; target_k=32 filters to
