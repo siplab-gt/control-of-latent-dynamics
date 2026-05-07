@@ -14,6 +14,7 @@ c = {
     "a4": "#be50a1",
     "opto1": "#72b5f2",
     "opto2": "#FF6145",
+    "task": "#0F5FA8",
 }
 c["ctrl"] = c["main"]
 c["key"] = c["a1"]
@@ -66,3 +67,35 @@ def style_plots(context="paper", fontscale=5 / 6):
         "axes",
         prop_cycle=cycler("color", [c["main"], c["a1"], c["a2"], c["a3"], c["a4"]]),
     )
+
+
+if __name__ == "__main__":
+    style_plots()
+
+    # create CSV with all relevant values for use elsewhere
+    import pandas as pd
+    from matplotlib import font_manager as fm
+
+    rows = []
+    for cname, cval in c.items():
+        rows.append({"name": f"c_{cname}", "value": cval})
+
+    # from rcParams: font sizes, line widths
+    for param_name in [
+        "font.size",
+        "figure.titlesize",
+        "axes.labelsize",
+        "axes.titlesize",
+        "xtick.labelsize",
+        "ytick.labelsize",
+        "legend.fontsize",
+        "lines.linewidth",
+        "axes.linewidth",
+    ]:
+        value = plt.rcParams[param_name]
+        if value in fm.font_scalings.keys():
+            value = fm.font_scalings[value] * plt.rcParams["font.size"]
+        rows.append({"name": param_name, "value": value})
+
+    pd.DataFrame(rows).to_csv("results/plot-style-params.csv", index=False)
+    print("Created results/plot-style-params.csv")
