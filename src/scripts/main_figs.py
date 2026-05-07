@@ -153,7 +153,7 @@ def main(
             "model_task_inputs",
             "signals",
             "ctrl_horizon_ms",
-            "nlmpc_iters",
+            "nlmpc_grad_iters",
         )
         if k in cfg["params"]
     }

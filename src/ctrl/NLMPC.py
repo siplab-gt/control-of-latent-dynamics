@@ -135,8 +135,8 @@ class NLMPCController(Controller):
     Mode flags `_subspace_mode` and `_has_opsin` are populated in
     `_setup_torch_matrices` from the LDS attribute set.
     """
-    nlmpc_iters: int = 10
-    nlmpc_lr: float = 0.5
+    nlmpc_grad_iters: int = 10
+    nlmpc_step_size: float = 0.5
 
     # Internal state (not constructor args)
     _u_light_warm: np.ndarray = field(default=None, init=False, repr=False)
@@ -268,7 +268,7 @@ class NLMPCController(Controller):
             warm = np.zeros((H, k_opto))
 
         u_light = torch.tensor(warm, dtype=torch.float32, requires_grad=True)
-        optimizer = torch.optim.Adam([u_light], lr=self.nlmpc_lr)
+        optimizer = torch.optim.Adam([u_light], lr=self.nlmpc_step_size)
 
         x0 = torch.tensor(xhat, dtype=torch.float32)
 
@@ -286,7 +286,7 @@ class NLMPCController(Controller):
             self._opsin_hidden.detach() if self._opsin_hidden is not None else None
         )
 
-        for i in range(self.nlmpc_iters):
+        for i in range(self.nlmpc_grad_iters):
             optimizer.zero_grad()
 
             # Mode-aware rollout. Three paths:

@@ -180,8 +180,8 @@ def ctrl_expts(
         signals=cond_params.signals,
     )
     if ctrl_type == "NLMPC":
-        ctrl_kwargs['nlmpc_iters'] = int(cond_params.nlmpc_iters)
-        ctrl_kwargs['nlmpc_lr'] = float(base_params.nlmpc_lr)
+        ctrl_kwargs['nlmpc_grad_iters'] = int(cond_params.nlmpc_grad_iters)
+        ctrl_kwargs['nlmpc_step_size'] = float(base_params.nlmpc_step_size)
     ctrl_proc: Controller = ControllerType(**ctrl_kwargs)
 
     if ctrl_type not in ("NULL", "NLMPC"):

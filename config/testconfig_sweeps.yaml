@@ -10,7 +10,7 @@
 #   seeds (5) × ctrl_type (3) × setting (3) × k/m pairs (1) = 45 ctrl_expts cells
 #   plus 5 × 3 × 1 = 15 NULL baselines = 60 total ctrl_expts cells.
 #   Other params (task, n_trials_sys_id, n_latent_dims_offset, latency,
-#   ctrl_horizon_ms, nlmpc_iters) flat at default.
+#   ctrl_horizon_ms, nlmpc_grad_iters) flat at default.
 #
 # Settings axis decomposes the model-fit / opsin-loop choice:
 #   - usid_stim_rec            : USID method, NN opsin in light→photocurrent loop

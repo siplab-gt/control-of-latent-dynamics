@@ -52,7 +52,7 @@ wildcard_constraints:
     setting=_wc_constraint("setting", extras=("NA",)),
     ctrl_type=_wc_constraint("ctrl_type", extras=("NULL",)),
     ctrl_horizon_ms=r"\d+",
-    nlmpc_iters=r"\d+",
+    nlmpc_grad_iters=r"\d+",
 
 
 rule all:
@@ -88,7 +88,7 @@ steps_params = {
     ],
     "sys_id_expts": [],
     "model_fit": ["n_trials_sys_id", "model_task_inputs"],
-    "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_iters"],
+    "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
     "analysis": [],
 }
 
@@ -629,7 +629,7 @@ def _ctrl_expts_runtime(wildcards):
     if wildcards.ctrl_type in ("NULL", "OL"):
         return FLOOR_MIN
     H = int(wildcards.ctrl_horizon_ms)
-    N = int(wildcards.nlmpc_iters)
+    N = int(wildcards.nlmpc_grad_iters)
     per_trial_s = 7 + H * N / 150
     total_min = (100 * per_trial_s + 60) / 60 * SAFETY_MARGIN
     return max(FLOOR_MIN, 5 * (int(total_min // 5) + 1))

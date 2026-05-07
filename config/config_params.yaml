@@ -43,7 +43,7 @@ params:
   latency: true
   ctrl_type: LQMPC
   ctrl_horizon_ms: 300
-  nlmpc_iters: 10
+  nlmpc_grad_iters: 10
   k: 22
   m: 42
 
@@ -151,7 +151,7 @@ ctrl_expts:
   n_trials_ctrl: 100
   baseline_latency_ms: 1
   solvers: ["osqp", "clarabel", "scs"]
-  nlmpc_lr: 0.5
+  nlmpc_step_size: 0.5
 
 ctrl_expts_OL:
   time_limit_ms: 2000
