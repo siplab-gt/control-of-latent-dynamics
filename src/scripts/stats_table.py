@@ -24,10 +24,12 @@ def stats_table(
     control_df["ep"] = control_df["ep"].apply(r)
     key_df["ep"] = key_df["ep"].apply(r)
 
+    key_metric = r(params["key_metrics"][0])
+    control_metric = r(params["ctrl_metric"])
     combined = pd.concat(
         [key_df.set_index("ep"), control_df.set_index("ep")],
         axis=1,
-        keys=["Key metric", "Control performance"],
+        keys=[f"Key metric {key_metric}", f"Control performance {control_metric}"],
     ).reset_index()
 
     combined.to_csv(output_csv, index=False)
@@ -66,13 +68,12 @@ def stats_table(
     setting_alias = {"sufficient_stim": "Q1", "optimal_stim_rec": "Q2"}[
         params["setting"]
     ]
-    key_metric = r(params["key_metrics"][0])
-    control_metric = r(params["ctrl_metric"])
+    q = "q1" if "sufficient_stim" in params["setting"] else "q2"
     combined.to_latex(
         output_tex,
         index=False,
         escape=False,
-        label="t:q1-stats",
+        label=f"t:{q}-stats",
         caption=(
             f"Statistical analysis results for {setting_alias}, relating "
             f" {key_metric} and {control_metric} to exploratory parameters."
