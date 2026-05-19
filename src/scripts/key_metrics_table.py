@@ -2,6 +2,8 @@ import os
 from functools import reduce
 
 import numpy as np
+
+# import matplotlib.pyplot as plt
 import pandas as pd
 from kneed import KneeLocator
 from scipy.interpolate import make_interp_spline
@@ -44,7 +46,13 @@ def compute_optimal_alpha_stim(subset_df, ep, metric, **kwargs):
         assert x.min() <= k_opt <= x.max(), (
             "Optimal k must be within the range of k values"
         )
-        return pd.Series({"optimal_alpha_stim": k_opt / total_channel_budget})
+        return pd.Series(
+            {
+                "optimal_alpha_stim": k_opt / total_channel_budget,
+                f"{metric}_opt": y.max(),
+                "acc_pred_cond_Z_opt": group["acc_pred_cond_Z"].iloc[y.argmax()],
+            }
+        )
 
     out = (
         subset_df.groupby([ep, "ctrl_latency", "seed"])
@@ -106,6 +114,11 @@ def compute_alpha_centroid(subset_df, ep, metric, **kwargs):
 
 
 def compute_k_knee(subset_df, ep, metric, **kwargs):
+    # groups = subset_df.groupby([ep, "ctrl_latency", "seed"], group_keys=False)
+    # n_groups = len(groups)
+    # fig, axs = plt.subplots(n_groups // 6 + 1, 6, figsize=(8, n_groups // 6 + 1))
+    # i_ax = 0
+
     def _(group):
         k = group["k"].to_numpy()
         Q = group[metric].to_numpy()
@@ -131,14 +144,17 @@ def compute_k_knee(subset_df, ep, metric, **kwargs):
         Q_knee = all_knees_Q[i_knee]
 
         # for visualizing knees
-        # plt.clf()
-        # plt.plot(k, Q)
+        # nonlocal i_ax
+        # ax = axs.flat[i_ax]
+        # ax.plot(k, Q)
         # for kk in all_knees_k:
-        #     plt.axvline(kk, c="k", ls="--")
-        # plt.axvline(k_knee, c="g", ls="--")
-        # seed = group.name[2]
-        # plt.savefig(f"results/testknee/k_knee_{ep}_{seed}.png")
-        # plt.close()
+        #     ax.axvline(kk, c="k", ls="--")
+        # ax.axvline(k_knee, c="g", ls="--")
+        # ep_val, ctrl_lat, seed = group.name
+
+        # ax.set_title(f"{ep_val} {seed}")
+
+        # i_ax += 1
 
         return pd.Series(
             {
@@ -153,6 +169,7 @@ def compute_k_knee(subset_df, ep, metric, **kwargs):
         .apply(_, include_groups=False)
         .reset_index()
     )
+    # fig.savefig(f"results/testknee/k_knee_{ep}.png")
     return out
 
 
