@@ -43,6 +43,11 @@ rule all:
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
+        expand(
+            "<results>/{setting}_{task}_dependence/stats-table.tex",
+            task=config["manual_sweep_params"]["task"],
+            setting=config["manual_sweep_params"]["setting"],
+        ),
     localrule: True
 
 
@@ -269,9 +274,9 @@ rule main_figs:
     output:
         main=multiext("<results>/figs/{setting}_{task}", *fig_exts),
         # lineplots=multiext("<results>/figs/{setting}_{task}_lineplots", *fig_exts),
-        # heatmaps_mean=multiext(
-        #     "<results>/figs/{setting}_{task}_heatmaps_mean", *fig_exts
-        # ),
+        heatmaps_mean=multiext(
+            "<results>/figs/{setting}_{task}_heatmaps_mean", *fig_exts
+        ),
         # heatmaps_std=multiext("<results>/figs/{setting}_{task}_heatmaps_std", *fig_exts),
     localrule: True
     params:

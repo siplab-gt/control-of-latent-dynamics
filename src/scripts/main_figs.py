@@ -354,15 +354,17 @@ def main(
         )[mean_or_std]
         for ep, ax in zip(expl_params, hm_axs.flat):
             conds2keep = ref_condition.copy()
-            del conds2keep[ep]
+            del conds2keep[ep], conds2keep["latency"]
             query_str = " and ".join(
                 [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
             )
+            query_str += ' and (ctrl_latency == "MPC")'
             subset = df.query(query_str)
             # average over seeds
             subset = subset.groupby([ep, "k"])[[ctrl_metric]]
             subset = getattr(subset, mean_or_std)().reset_index()
             subset = subset.pivot(index="k", columns=ep, values=ctrl_metric)
+            subset = subset.rename_axis(columns=r(ep))
             sns.heatmap(
                 subset,
                 ax=ax,
@@ -370,7 +372,6 @@ def main(
                 **heatmap_kwargs,
             )
             ax.invert_yaxis()
-            ax.set_title(ep)
 
             # Add text annotations for extreme values not represented by colormap
             for i, k_val in enumerate(subset.index):
@@ -384,7 +385,7 @@ def main(
                             ha="center",
                             va="center",
                             color="black",
-                            fontsize=8,
+                            fontsize=4,
                         )
 
         for ax in hm_axs[..., 1:].flat:
@@ -688,8 +689,8 @@ def main(
     # fig_lp, axs_lp = grid_subplots()
     # plot_lineplots(axs_lp, key_metric)
 
-    # fig_hm_mean, axs_hm_mean = grid_subplots()
-    # plot_heatmaps(fig_hm_mean, axs_hm_mean, "mean")
+    fig_hm_mean, axs_hm_mean = grid_subplots()
+    plot_heatmaps(fig_hm_mean, axs_hm_mean, "mean")
 
     # fig_hm_std, axs_hm_std = grid_subplots()
     # plot_heatmaps(fig_hm_std, axs_hm_std, "std")
@@ -697,7 +698,7 @@ def main(
     for fig, files in [
         (main_fig, outfiles.main),
         # (fig_lp, outfiles.lineplots),
-        # (fig_hm_mean, outfiles.heatmaps_mean),
+        (fig_hm_mean, outfiles.heatmaps_mean),
         # (fig_hm_std, outfiles.heatmaps_std),
     ]:
         for f in files:
