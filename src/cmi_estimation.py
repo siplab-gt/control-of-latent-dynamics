@@ -7,6 +7,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, PolynomialFeatures
 from statsmodels.nonparametric.kernel_density import KDEMultivariate
@@ -43,12 +44,41 @@ class PredictiveCMIRegressor(BaseEstimator, RegressorMixin):
         elif self.regressor_type == "splines":
             # Phase 1: Splines via LinearRegression + PolynomialFeatures
             # or pygam. We use PolynomialFeatures here.
-            self.model = make_pipeline(PolynomialFeatures(degree=3), LinearRegression())
+            base_model = make_pipeline(PolynomialFeatures(degree=3), LinearRegression())
+            if len(y) >= 5:
+                cv = KFold(n_splits=5, shuffle=True, random_state=0)
+                y_pred_oof = cross_val_predict(base_model, X, y, cv=cv)
+                self.sigma_ = np.sqrt(mean_squared_error(y, y_pred_oof))
+            else:
+                base_model.fit(X, y)
+                y_pred_train = base_model.predict(X)
+                self.sigma_ = np.sqrt(mean_squared_error(y, y_pred_train))
+            self.model = base_model
             self.model.fit(X, y)
 
-            # Phase 1: estimate \sigma using RMSE of the training residuals
-            y_pred_train = self.model.predict(X)
-            self.sigma_ = np.sqrt(mean_squared_error(y, y_pred_train))
+        elif self.regressor_type == "xgboost":
+            from xgboost import XGBRegressor
+
+            base_model = XGBRegressor(
+                objective="reg:squarederror",
+                n_estimators=300,
+                max_depth=6,
+                learning_rate=0.05,
+                subsample=0.9,
+                colsample_bytree=0.9,
+                random_state=0,
+                n_jobs=-1,
+            )
+            if len(y) >= 5:
+                cv = KFold(n_splits=5, shuffle=True, random_state=0)
+                y_pred_oof = cross_val_predict(base_model, X, y, cv=cv)
+                self.sigma_ = np.sqrt(mean_squared_error(y, y_pred_oof))
+            else:
+                base_model.fit(X, y)
+                y_pred_train = base_model.predict(X)
+                self.sigma_ = np.sqrt(mean_squared_error(y, y_pred_train))
+            self.model = base_model
+            self.model.fit(X, y)
 
         else:
             raise ValueError(f"Unknown regressor_type: {self.regressor_type}")
@@ -56,12 +86,7 @@ class PredictiveCMIRegressor(BaseEstimator, RegressorMixin):
         return self
 
     def predict(self, X):
-        def gaussian_logp(y, mu, sigma):
-            # Evaluate Log-Probability Density using Gaussian likelihood
-            return -0.5 * np.log(2 * np.pi * sigma**2) - ((y - mu) ** 2) / (
-                2 * sigma**2
-            )
-
+        
         if self.regressor_type == "tabpfn":
             tabpfn_out = self.model.predict(X, output_type="full")
             y_mean = tabpfn_out["mean"]
@@ -70,12 +95,16 @@ class PredictiveCMIRegressor(BaseEstimator, RegressorMixin):
                 y_torch = torch.tensor(y, dtype=torch.float32).to(
                     tabpfn_out["logits"].device
                 )
-                return np.log(
-                    tabpfn_out["criterion"]
-                    .pdf(tabpfn_out["logits"], y_torch)
-                    .cpu()
-                    .numpy()
-                )[0]
+                return (
+                    np.log(
+                        tabpfn_out["criterion"]
+                        .pdf(tabpfn_out["logits"], y_torch)
+                        .cpu()
+                        .numpy()
+                    )
+                    .squeeze()
+                    .astype(float)
+                )
         elif self.regressor_type == "gp":
             y_mean, y_std = self.model.predict(X, return_std=True)
             y_std = y_std + self.eps
@@ -89,34 +118,49 @@ class PredictiveCMIRegressor(BaseEstimator, RegressorMixin):
             def log_p_fn(y):
                 return gaussian_logp(y, y_mean, y_std)
 
+        elif self.regressor_type == "xgboost":
+            y_mean = self.model.predict(X)
+            y_std = np.full(y_mean.shape, self.sigma_) + self.eps
+
+            def log_p_fn(y):
+                return gaussian_logp(y, y_mean, y_std)
+
         return y_mean, log_p_fn
 
 
-def calculate_total_log_likelihood(X, y, regressor_type):
-    """
-    Phase 2: The Estimation Engine (LOO)
-    """
-    n = len(y)
-    total_log_likelihood = 0.0
+def gaussian_logp(y, mu, sigma):
+    # Evaluate Log-Probability Density using Gaussian likelihood
+    return -0.5 * np.log(2 * np.pi * sigma**2) - ((y - mu) ** 2) / (
+        2 * sigma**2
+    )
 
-    for i in range(n):
-        # Leave-One-Out Loop
-        idx_train = np.arange(n) != i
-        X_train = X[idx_train]
-        y_train = y[idx_train]
 
-        X_test = X[i : i + 1]
-        y_test = y[i : i + 1]
+def calculate_total_log_likelihood(X, y, regressor_type, cv=None):
+    """
+    Phase 2: The Estimation Engine (10-fold CV)
+    """
+    if cv is None:
+        cv = KFold(n_splits=10, shuffle=True, random_state=0)
+
+    y_flat = y.ravel()
+
+    def fold_log_likelihood(split):
+        train_idx, test_idx = split
+        X_train = X[train_idx]
+        y_train = y_flat[train_idx]
+
+        X_test = X[test_idx]
+        y_test = y_flat[test_idx]
 
         model = PredictiveCMIRegressor(regressor_type=regressor_type)
-        model.fit(X_train, y_train.ravel())
+        model.fit(X_train, y_train)
 
-        y_pred_i, log_p_fn = model.predict(X_test)
-        log_p_i = log_p_fn(y_test.ravel()[0])
+        _, log_p_fn = model.predict(X_test)
+        log_p = log_p_fn(y_test)
+        return float(np.sum(log_p))
 
-        total_log_likelihood += log_p_i
-
-    return total_log_likelihood
+    fold_ll = np.fromiter(map(fold_log_likelihood, cv.split(X)), dtype=float)
+    return float(np.sum(fold_ll))
 
 
 def substr(s, ii):
@@ -194,15 +238,17 @@ def calculate_cmi(
     Phase 3: The CMI Calculation
     Estimates Conditional Mutual Information I(X;Y|Z) in bits.
     """
-    if estimator_type in ["tabpfn", "splines", "gp"]:
+    if estimator_type in ["tabpfn", "splines", "gp", "xgboost"]:
         n = len(y)
+
+        cv = KFold(n_splits=10, shuffle=True, random_state=0)
 
         # Full Model
         XZ = np.hstack([X, Z])
-        ll_full = calculate_total_log_likelihood(XZ, y, estimator_type)
+        ll_full = calculate_total_log_likelihood(XZ, y, estimator_type, cv=cv)
 
         # Reduced Model
-        ll_reduced = calculate_total_log_likelihood(Z, y, estimator_type)
+        ll_reduced = calculate_total_log_likelihood(Z, y, estimator_type, cv=cv)
 
         # Information Gain
         cmi_bits = (ll_full - ll_reduced) / (n * np.log(2))
@@ -319,6 +365,7 @@ def statistical_validation_permutation(
         )
         kwargs["bw"] = bw
     observed_cmi = calculate_cmi(x, y, z, **kwargs)
+    assert observed_cmi > 0, f"Observed CMI should be non-negative. Got {observed_cmi}"
     logger.info(f"Observed CMI: {observed_cmi}")
 
     null_cmis = np.zeros(n_permutations)

@@ -23,6 +23,7 @@ dependencies = [
     'tensorflow[and-cuda]',
     'marimo',
     'kneed',
+    'xgboost',
 ]
 
 [tool.setuptools]
