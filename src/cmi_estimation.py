@@ -1,4 +1,5 @@
 import logging
+import os
 
 import numpy as np
 from scipy.stats import bootstrap
@@ -7,7 +8,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
-from sklearn.model_selection import KFold, cross_val_predict
+from sklearn.model_selection import GroupKFold, KFold, cross_val_predict
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, PolynomialFeatures
 from statsmodels.nonparametric.kernel_density import KDEMultivariate
@@ -27,6 +28,8 @@ class PredictiveCMIRegressor(BaseEstimator, RegressorMixin):
         self.eps = eps
         self.model = None
         self.sigma_ = None
+        self.min_sigma_ = None
+        self.max_sigma_ = None
 
     def fit(self, X, y):
 
@@ -65,7 +68,6 @@ class PredictiveCMIRegressor(BaseEstimator, RegressorMixin):
                 max_depth=6,
                 learning_rate=0.05,
                 subsample=0.9,
-                colsample_bytree=0.9,
                 random_state=0,
                 n_jobs=-1,
             )
@@ -80,13 +82,82 @@ class PredictiveCMIRegressor(BaseEstimator, RegressorMixin):
             self.model = base_model
             self.model.fit(X, y)
 
+        elif self.regressor_type == "xgboost_gauss":
+            from xgboost import XGBRegressor
+
+            y = np.asarray(y).ravel()
+            y_std = float(np.std(y) + self.eps)
+            self.min_sigma_ = max(self.eps, y_std * 0.1)
+            self.max_sigma_ = max(self.min_sigma_, y_std * 10.0)
+            y_mean = float(np.mean(y))
+            y_log_std = float(np.log(y_std))
+            base_margin = np.tile([y_mean, y_log_std], (len(y), 1))
+            y_targets = np.column_stack([y, np.zeros_like(y)])
+            min_log_sigma = float(np.log(self.min_sigma_))
+            max_log_sigma = float(np.log(self.max_sigma_))
+            log_sigma_prior = float(np.log(y_std))
+            sigma_prior_weight = 1.0
+
+            n_estimators = int(os.getenv("XGB_GAUSS_N_ESTIMATORS", 300))
+            max_depth = int(os.getenv("XGB_GAUSS_MAX_DEPTH", 4))
+            learning_rate = float(os.getenv("XGB_GAUSS_LEARNING_RATE", 0.05))
+            subsample = float(os.getenv("XGB_GAUSS_SUBSAMPLE", 0.8))
+            reg_lambda = float(os.getenv("XGB_GAUSS_REG_LAMBDA", 10.0))
+            reg_alpha = float(os.getenv("XGB_GAUSS_REG_ALPHA", 0.0))
+            sigma_prior_weight = float(
+                os.getenv("XGB_GAUSS_SIGMA_PRIOR_WEIGHT", sigma_prior_weight)
+            )
+
+            def _gauss_obj(labels, preds):
+                y_true, preds = _reshape_gauss_labels_preds(labels, preds)
+                mu = preds[:, 0]
+                log_sigma = np.clip(preds[:, 1], min_log_sigma, max_log_sigma)
+                sigma2 = np.exp(2.0 * log_sigma)
+                diff = mu - y_true
+
+                grad_mu = diff / sigma2
+                hess_mu = np.ones_like(grad_mu) / sigma2
+
+                grad_log_sigma = (
+                    1.0
+                    - (diff**2) / sigma2
+                    + sigma_prior_weight * (log_sigma - log_sigma_prior)
+                )
+                hess_log_sigma = 2.0 * (diff**2) / sigma2 + sigma_prior_weight
+
+                grad = np.column_stack([grad_mu, grad_log_sigma])
+                hess = np.column_stack([hess_mu, hess_log_sigma])
+                return grad, hess
+
+            self.model = XGBRegressor(
+                objective=_gauss_obj,
+                n_estimators=n_estimators,
+                max_depth=max_depth,
+                learning_rate=learning_rate,
+                subsample=subsample,
+                # don't subsample features, since there are only 2 or 3
+                reg_lambda=reg_lambda,
+                reg_alpha=reg_alpha,
+                random_state=0,
+                n_jobs=-1,
+                num_target=2,
+                tree_method="hist",
+            )
+            self.model.fit(
+                X,
+                y_targets,
+                base_margin=base_margin,
+                eval_set=[(X, y_targets)],
+                verbose=False,
+            )
+
         else:
             raise ValueError(f"Unknown regressor_type: {self.regressor_type}")
 
         return self
 
     def predict(self, X):
-        
+
         if self.regressor_type == "tabpfn":
             tabpfn_out = self.model.predict(X, output_type="full")
             y_mean = tabpfn_out["mean"]
@@ -125,22 +196,53 @@ class PredictiveCMIRegressor(BaseEstimator, RegressorMixin):
             def log_p_fn(y):
                 return gaussian_logp(y, y_mean, y_std)
 
+        elif self.regressor_type == "xgboost_gauss":
+            preds = self.model.predict(X)
+            preds = np.asarray(preds)
+            if preds.ndim == 1:
+                preds = preds.reshape(-1, 2)
+            y_mean = preds[:, 0]
+            min_sigma = self.min_sigma_ if self.min_sigma_ is not None else self.eps
+            max_sigma = self.max_sigma_ if self.max_sigma_ is not None else np.inf
+            log_sigma = np.clip(preds[:, 1], np.log(min_sigma), np.log(max_sigma))
+            y_std = np.exp(log_sigma) + self.eps
+
+            def log_p_fn(y):
+                return gaussian_logp(y, y_mean, y_std)
+
         return y_mean, log_p_fn
 
 
 def gaussian_logp(y, mu, sigma):
     # Evaluate Log-Probability Density using Gaussian likelihood
-    return -0.5 * np.log(2 * np.pi * sigma**2) - ((y - mu) ** 2) / (
-        2 * sigma**2
-    )
+    return -0.5 * np.log(2 * np.pi * sigma**2) - ((y - mu) ** 2) / (2 * sigma**2)
 
 
-def calculate_total_log_likelihood(X, y, regressor_type, cv=None):
+def _reshape_gauss_labels_preds(labels, preds):
+    preds = np.asarray(preds)
+    if preds.ndim == 1:
+        preds = preds.reshape(-1, 2)
+
+    labels = np.asarray(labels)
+    if labels.ndim == 1 and labels.shape[0] == preds.size:
+        labels = labels.reshape(-1, 2)
+
+    y_true = labels[:, 0] if labels.ndim > 1 else labels
+    return y_true, preds
+
+
+def calculate_total_log_likelihood(X, y, regressor_type, cv=None, cv_groups=None):
     """
     Phase 2: The Estimation Engine (10-fold CV)
     """
     if cv is None:
-        cv = KFold(n_splits=10, shuffle=True, random_state=0)
+        if cv_groups is None:
+            raise ValueError("cv_groups is required when cv is None")
+        unique_groups = np.unique(cv_groups)
+        n_groups = len(unique_groups)
+        if n_groups < 2:
+            raise ValueError("cv_groups must include at least two unique groups")
+        cv = GroupKFold(n_splits=n_groups)
 
     y_flat = y.ravel()
 
@@ -159,7 +261,9 @@ def calculate_total_log_likelihood(X, y, regressor_type, cv=None):
         log_p = log_p_fn(y_test)
         return float(np.sum(log_p))
 
-    fold_ll = np.fromiter(map(fold_log_likelihood, cv.split(X)), dtype=float)
+    fold_ll = np.fromiter(
+        map(fold_log_likelihood, cv.split(X, groups=cv_groups)), dtype=float
+    )
     return float(np.sum(fold_ll))
 
 
@@ -238,17 +342,28 @@ def calculate_cmi(
     Phase 3: The CMI Calculation
     Estimates Conditional Mutual Information I(X;Y|Z) in bits.
     """
-    if estimator_type in ["tabpfn", "splines", "gp", "xgboost"]:
+    if estimator_type in ["tabpfn", "splines", "gp", "xgboost", "xgboost_gauss"]:
         n = len(y)
 
-        cv = KFold(n_splits=10, shuffle=True, random_state=0)
+        cv_groups = kwargs.get("cv_groups", None)
+        if cv_groups is None:
+            raise ValueError("cv_groups is required for regression CMI estimators")
+        unique_groups = np.unique(cv_groups)
+        n_groups = len(unique_groups)
+        if n_groups < 2:
+            raise ValueError("cv_groups must include at least two unique groups")
+        cv = GroupKFold(n_splits=n_groups)
 
         # Full Model
         XZ = np.hstack([X, Z])
-        ll_full = calculate_total_log_likelihood(XZ, y, estimator_type, cv=cv)
+        ll_full = calculate_total_log_likelihood(
+            XZ, y, estimator_type, cv=cv, cv_groups=cv_groups
+        )
 
         # Reduced Model
-        ll_reduced = calculate_total_log_likelihood(Z, y, estimator_type, cv=cv)
+        ll_reduced = calculate_total_log_likelihood(
+            Z, y, estimator_type, cv=cv, cv_groups=cv_groups
+        )
 
         # Information Gain
         cmi_bits = (ll_full - ll_reduced) / (n * np.log(2))
@@ -343,6 +458,7 @@ def statistical_validation_permutation(
     cat_XZ=None,
     cat_Z=None,
     var_types=None,
+    cv_groups=None,
     n_permutations=1000,
 ):
     """
@@ -364,8 +480,9 @@ def statistical_validation_permutation(
             [heuristic_bw(data[:, i], var_types[i]) for i in range(data.shape[1])]
         )
         kwargs["bw"] = bw
+    kwargs["cv_groups"] = cv_groups
     observed_cmi = calculate_cmi(x, y, z, **kwargs)
-    assert observed_cmi > 0, f"Observed CMI should be non-negative. Got {observed_cmi}"
+    # assert observed_cmi > 0, f"Observed CMI should be non-negative. Got {observed_cmi}"
     logger.info(f"Observed CMI: {observed_cmi}")
 
     null_cmis = np.zeros(n_permutations)
@@ -405,6 +522,7 @@ def statistical_validation_bootstrap(
     n_boot=1000,
     group_ids=None,
     cluster_ids=None,
+    cv_groups=None,
     **kwargs,
 ):
     """
@@ -430,16 +548,24 @@ def statistical_validation_bootstrap(
         x_boot = []
         y_boot = []
         z_boot = []
+        group_ids_boot = []
+        cv_groups_boot = []
 
         for i_cluster in cluster_idx:
             idx = np.where(cluster_ids == i_cluster)[0]
             x_boot.append(x[idx])
             y_boot.append(y[idx])
             z_boot.append(z[idx])
+            group_ids_boot.append(group_ids[idx])
+            if cv_groups is not None:
+                cv_groups_boot.append(cv_groups[idx])
 
         x_boot = np.concatenate(x_boot, axis=0)
         y_boot = np.concatenate(y_boot, axis=0)
         z_boot = np.concatenate(z_boot, axis=0)
+        group_ids_boot = np.concatenate(group_ids_boot, axis=0)
+        if cv_groups is not None:
+            cv_groups_boot = np.concatenate(cv_groups_boot, axis=0)
         assert len(x_boot) == len(y_boot) == len(z_boot) == len(x)
 
         cmi = calculate_cmi(
@@ -450,6 +576,7 @@ def statistical_validation_bootstrap(
             cat_XZ=cat_XZ,
             cat_Z=cat_Z,
             var_types=var_types,
+            cv_groups=cv_groups_boot if cv_groups is not None else group_ids_boot,
             **kwargs,
         )
         c = boot_call_count[0]

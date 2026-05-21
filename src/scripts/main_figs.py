@@ -402,10 +402,8 @@ def main(
         dependence_ctrl_res = CMIEstimateSet.load(dependence_control_file)
 
         # Maps
-        key_map = {res.ep: res for res in dependence_key_res.null_corrected_ep_results}
-        ctrl_map = {
-            res.ep: res for res in dependence_ctrl_res.null_corrected_ep_results
-        }
+        key_map = {res.ep: res for res in dependence_key_res.ep_results}
+        ctrl_map = {res.ep: res for res in dependence_ctrl_res.ep_results}
 
         def get_p_crit(results_list, alpha=0.05):
             significant = [r for r in results_list if r.q_value <= alpha]
@@ -422,8 +420,7 @@ def main(
         y_sig_marker = np.max(
             [
                 np.max(r.boot_dist)
-                for r in dependence_key_res.null_corrected_ep_results
-                + dependence_ctrl_res.null_corrected_ep_results
+                for r in set(key_map.values()) | set(ctrl_map.values())
             ]
         )
 

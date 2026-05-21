@@ -203,6 +203,7 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
 
     cluster_ids = _group_ids_from_z(data[["seed"]])
 
+    cv_groups = _group_ids_from_z(data[["seed"]])
     common_kwargs = dict(
         x=x,
         y=y,
@@ -213,6 +214,7 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
         cat_Z=cat_Z,
         var_types=var_types,
         rng=rng,
+        cv_groups=cv_groups,
     )
 
     p_value, cmi_val, null_dist = statistical_validation_permutation(
