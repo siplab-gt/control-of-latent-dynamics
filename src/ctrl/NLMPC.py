@@ -20,12 +20,14 @@ from attrs import define, field
 from brian2 import mm2, ms, mwatt
 
 from src.ctrl import Controller
+from src.ctrl._cz_helpers import apply_cz, build_cz_state, has_cz
 
 log = logging.getLogger(__name__)
 
 
 def _rollout_state(x0, u_for_B, A11, A22, K1, K2, C1, C2, A12,
-                   B1_prime, B2_prime, ref_trajectory, ref_type, Cz=None):
+                   B1_prime, B2_prime, ref_trajectory, ref_type,
+                   cz_state=None):
     """Roll out subspace-LDS state dynamics through the MPC horizon.
 
     Args:
@@ -38,7 +40,8 @@ def _rollout_state(x0, u_for_B, A11, A22, K1, K2, C1, C2, A12,
         A11..B2_prime: state-space matrices (torch tensors)
         ref_trajectory: (H, n_r) reference in z-scored space (torch tensor)
         ref_type: "X" or "Z"
-        Cz: (n_r, n) behavioral decoder (torch tensor), needed if ref_type="Z"
+        cz_state: dict from `build_cz_state` describing linear/nonlinear
+            Cz dispatch. Required if ref_type='Z'; ignored otherwise.
 
     Returns:
         tracking_cost: scalar (torch tensor)
@@ -66,8 +69,8 @@ def _rollout_state(x0, u_for_B, A11, A22, K1, K2, C1, C2, A12,
 
         # Tracking cost
         x_full = torch.cat([x1, x2])
-        if ref_type == "Z" and Cz is not None:
-            ctrl_var = Cz @ x_full
+        if ref_type == "Z" and cz_state is not None and has_cz(cz_state):
+            ctrl_var = apply_cz(cz_state, x_full)
         else:
             ctrl_var = x_full
         cost = cost + torch.sum((ctrl_var - ref_trajectory[t]) ** 2)
@@ -75,7 +78,8 @@ def _rollout_state(x0, u_for_B, A11, A22, K1, K2, C1, C2, A12,
     return cost / H
 
 
-def _rollout_state_unified(x0, u_zscored, A, B_opto, ref_trajectory, ref_type, Cz=None):
+def _rollout_state_unified(x0, u_zscored, A, B_opto, ref_trajectory, ref_type,
+                           cz_state=None):
     """Roll out unified-LDS dynamics for BRAID-shaped models.
 
     Open-loop (no observer correction in the rollout): BRAID's LDS doesn't
@@ -104,8 +108,8 @@ def _rollout_state_unified(x0, u_zscored, A, B_opto, ref_trajectory, ref_type, C
     for t in range(H):
         x = A @ x + B_opto @ u_zscored[t]
 
-        if ref_type == "Z" and Cz is not None:
-            ctrl_var = Cz @ x
+        if ref_type == "Z" and cz_state is not None and has_cz(cz_state):
+            ctrl_var = apply_cz(cz_state, x)
         else:
             ctrl_var = x
         cost = cost + torch.sum((ctrl_var - ref_trajectory[t]) ** 2)
@@ -146,6 +150,8 @@ class NLMPCController(Controller):
     # Mode flags: detected from LDS shape in _setup_torch_matrices.
     _subspace_mode: bool = field(default=False, init=False, repr=False)
     _has_opsin: bool = field(default=False, init=False, repr=False)
+    # Cz dispatch state — populated by _cz_helpers.build_cz_state.
+    _cz_state: dict = field(factory=dict, init=False, repr=False)
 
     def sample_latency(self) -> b2.Quantity:
         """Sample latency without referencing CVXPY solvers."""
@@ -187,11 +193,6 @@ class NLMPCController(Controller):
                 'B2_prime': torch.tensor(lds.B2_prime, dtype=torch.float32),
                 'A12': torch.tensor(lds.A12, dtype=torch.float32) if lds.A12 is not None else None,
             }
-            if hasattr(lds, 'Cz') and lds.Cz is not None:
-                self._torch_matrices['Cz'] = torch.tensor(lds.Cz, dtype=torch.float32)
-            elif hasattr(lds, 'Cz1') and lds.Cz1 is not None:
-                Cz = np.hstack([lds.Cz1, lds.Cz2])
-                self._torch_matrices['Cz'] = torch.tensor(Cz, dtype=torch.float32)
         else:
             # Unified-LDS shape (BRAID). Only A / B_opto / C / Cz are present.
             self._torch_matrices = {
@@ -199,8 +200,9 @@ class NLMPCController(Controller):
                 'B_opto': torch.tensor(lds.B_opto, dtype=torch.float32),
                 'C': torch.tensor(lds.C, dtype=torch.float32),
             }
-            if hasattr(lds, 'Cz') and lds.Cz is not None:
-                self._torch_matrices['Cz'] = torch.tensor(lds.Cz, dtype=torch.float32)
+        # Single source of truth for Cz dispatch across subspace and unified
+        # modes, linear and nonlinear. See src/ctrl/_cz_helpers.py.
+        self._cz_state = build_cz_state(lds)
 
         if self._has_opsin:
             self._opsin_model = lds.opsin_model
@@ -305,7 +307,7 @@ class NLMPCController(Controller):
                     mat['A11'], mat['A22'], mat['K1'], mat['K2'],
                     mat['C1'], mat['C2'], mat['A12'],
                     mat['B1_prime'], mat['B2_prime'],
-                    ref, self.ref_type, mat.get('Cz'),
+                    ref, self.ref_type, self._cz_state,
                 )
             elif self._subspace_mode:
                 u_zscored = (u_light - mat['u_mean_opto']) / mat['u_std_opto']
@@ -314,14 +316,14 @@ class NLMPCController(Controller):
                     mat['A11'], mat['A22'], mat['K1'], mat['K2'],
                     mat['C1'], mat['C2'], mat['A12'],
                     mat['B1_prime'], mat['B2_prime'],
-                    ref, self.ref_type, mat.get('Cz'),
+                    ref, self.ref_type, self._cz_state,
                 )
             else:  # linearized_unified (BRAID)
                 u_zscored = (u_light - mat['u_mean_opto']) / mat['u_std_opto']
                 tracking_cost = _rollout_state_unified(
                     x0, u_zscored,
                     mat['A'], mat['B_opto'],
-                    ref, self.ref_type, mat.get('Cz'),
+                    ref, self.ref_type, self._cz_state,
                 )
 
             # Control effort cost (penalizes light power)

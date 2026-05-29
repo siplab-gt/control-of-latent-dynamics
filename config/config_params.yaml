@@ -126,6 +126,22 @@ cleo_prep:
 calibrate_opsin_plant:
   target_iopto: 0.05
 
+# Hyperparams for the opsin_train_cold rule. See testconfig_params.yaml for
+# details. Keep parity with testconfig unless production needs longer training.
+opsin_train_cold:
+  n_sequences: 500
+  time_steps: 500
+  sequence_length: 250
+  epochs: 5000
+  batch_size: 16
+  lr: 3e-3
+  hidden_size: 32
+  num_layers: 2
+  scheduler_patience: 200
+  scheduler_factor: 0.8
+  scheduler_min_lr: 1.0e-6
+  seed: 42
+
 model_fit:
   linear_Cz: true
 
@@ -170,6 +186,13 @@ ctrl_expts_LQMPC:
     enforce_dpp: true
 
 ctrl_expts_NLMPC: {}
+
+ctrl_expts_iLQR:
+  ilqr_tol: 1e-4
+  ilqr_mu_init: 1e-3
+  ilqr_mu_min: 1e-6
+  ilqr_mu_max: 1e6
+  ilqr_mu_factor: 10.0
 
 ctrl_expts_usid_stim_rec:
   ref_type: Z

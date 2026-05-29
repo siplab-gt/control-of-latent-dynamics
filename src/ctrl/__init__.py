@@ -97,7 +97,36 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             cp.multiply(self.Uopt_opto, self.lds.u_std[None, : self.k_opto])
             + self.lds.u_mean[None, : self.k_opto]
         )
-        ctrl_var_traj = self.Xopt if self.ref_type == "X" else self.lds.x2z(self.Xopt)
+        # Nonlinear Cz (e.g. BRAID Cz1HL64U) cannot be constructed inside a
+        # CVXPY problem — the MLP forward is not affine in CVXPY variables.
+        # The PyTorch-based controllers (NLMPC, iLQR) handle it natively;
+        # for the CVXPY-based controllers we linearize the nonlinear Cz at
+        # x=0 (Jacobian + constant offset). The approximation is loose at
+        # operating points far from origin, but keeps the comparison roughly
+        # apples-to-apples on the same MLP topology — and far better than
+        # falling back to X-tracking with a shape-mismatched Ropt.
+        nonlinear_cz = (
+            self.ref_type == "Z"
+            and getattr(self.lds, 'cz_torch_module', None) is not None
+        )
+        if nonlinear_cz:
+            import torch  # local: matches NLMPC/iLQR's lazy-torch convention
+            cz_module = self.lds.cz_torch_module
+            cz_module.eval()
+            with torch.no_grad():
+                x0_t = torch.zeros(self.n, dtype=torch.float32)
+                cz0 = cz_module(x0_t).numpy()
+            J0 = torch.autograd.functional.jacobian(cz_module, x0_t).numpy()
+            log.warning(
+                "%s: nonlinear Cz detected on LDS; linearizing at x=0 for "
+                "CVXPY construction. ||J0||=%.3f, ||cz0||=%.3f. The Q_track "
+                "metric will reflect the linearized approximation, not the "
+                "full nonlinear Cz.",
+                type(self).__name__, float(np.linalg.norm(J0)), float(np.linalg.norm(cz0)),
+            )
+            ctrl_var_traj = self.Xopt @ J0.T + cz0
+        else:
+            ctrl_var_traj = self.Xopt if self.ref_type == "X" else self.lds.x2z(self.Xopt)
         cost = (
             cp.sum_squares(ctrl_var_traj[1:] - self.Ropt) * self.Qcost / self.n_r
             + cp.sum_squares(Uopt_opto_unzscored) * self.Rcost / self.k_opto

@@ -31,18 +31,21 @@ sweeps:
     - OL
     - LQMPC
     - NLMPC
+    - iLQR
   setting:
-    # Three-setting comparison sweep on the post-Bansal Bansal-derived
+    # Four-setting comparison sweep on the post-Bansal Bansal-derived
     # UnitlessChr2FourState plant (linear V−E driving force, dimensionless
     # Iopto). Each setting probes a different model-fit / opsin-loop choice:
-    #   - usid_stim_rec          : USID method, NN opsin in light→photocurrent loop
-    #   - usid_stim_rec_no_opsin : USID method, no opsin (B' eats z-scored light)
-    #   - braid_stim_rec         : BRAID method, no opsin (unified A·x + B_opto·u_z)
-    # Per-setting overrides (model_fit_method, use_opsin) live in
+    #   - usid_stim_rec               : USID method, NN opsin in light→photocurrent loop
+    #   - usid_stim_rec_no_opsin      : USID method, no opsin (B' eats z-scored light)
+    #   - braid_stim_rec              : BRAID method, no opsin, linear Cz
+    #   - braid_stim_rec_nonlinear    : BRAID method, no opsin, nonlinear Cz (Cz1HL64U)
+    # Per-setting overrides (model_fit_method, use_opsin, linear_Cz) live in
     # testconfig_params.yaml as model_fit_<setting> blocks.
     - usid_stim_rec
     - usid_stim_rec_no_opsin
     - braid_stim_rec
+    - braid_stim_rec_nonlinear
 
 # (k, m) pair generation — Cartesian-multiplied with `sweeps:` above.
 # linspace(1, 63, 3) = [1, 32, 63] rounded to ints; target_k=32 filters to

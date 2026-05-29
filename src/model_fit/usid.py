@@ -147,39 +147,42 @@ def fit_lds_to_data(
     use_opsin = bool(config['use_opsin'])
     opsin_model = None
     if use_opsin:
-        opsin_path = config['opsin_checkpoint_path']
+        # COLD trains its own opsin NN against the calibrated
+        # UnitlessChr2FourState plant via the ``opsin_train_cold`` snake rule.
+        # The cold-trained checkpoint lands under
+        # ``$USID_REPO_ROOT/experiments/opsin_results_external/cold/`` with
+        # provenance.tag == 'external' and caller_tag == 'cold'. The
+        # ``expected_provenance='external'`` gate refuses to silently load a
+        # synthetic-tagged checkpoint if anything mis-wires the path back to
+        # the synthetic tree — the whole point of the cold-train pipeline is
+        # to remove the train-vs-deploy distribution mismatch the synthetic
+        # NN was creating.
+        #
+        # Override path: callers can still pin ``opsin_checkpoint_path`` in
+        # config to a specific dir. That overrides discovery but is still
+        # gated by ``expected_provenance='external'`` — synthetic-tagged
+        # checkpoints are refused at this seam.
+        opsin_path = config.get('opsin_checkpoint_path')
         if opsin_path:
             opsin_results_dir = Path(opsin_path)
         else:
-            opsin_results_dir = Path(USID_REPO_PATH) / "experiments" / "opsin_results"
-        # COLD plant: Bansal-derived dimensionless UnitlessChr2FourState.
-        # Synth-side NN: trained against cleo's stock `chr2_b4s()` factory
-        # (volt/ampere-typed Bansal with biological g0 = 3.2 nS, E = 0 mV)
-        # at v = -70 mV. Both ends share Bansal's kinetic constants
-        # (Gd1, Gd2, k1, k2, phim, ...), so the NN's temporal Iopto profile
-        # matches the plant. The g0 * (V - E) static-gain mismatch between
-        # synth (biological nA scale) and COLD (calibrated dimensionless ~0.05
-        # at typical light) is absorbed by USID's learned B' at fit time —
-        # this is the v3.2 NN-reuse argument. It works under Bansal because
-        # (V - E) is linear; the corresponding PyRhO chain failed because
-        # `fv_timesVminusE` saturates and the v-clamp choice changes the
-        # transient shape, not just the scale.
-        # load_trained_opsin picks the newest timestamp subdirectory and
-        # hard-raises if output_scale > 1.0 (PyRhO-era nA-scale signature).
+            opsin_results_dir = (
+                Path(USID_REPO_PATH) / "experiments" / "opsin_results_external" / "cold"
+            )
         opsin_model = load_trained_opsin(
             opsin_results_dir,
             num_light_channels=1,
             map_location=device,
+            expected_provenance='external',
         )
         if opsin_model is None:
             raise FileNotFoundError(
-                f"use_opsin=True but no trained opsin checkpoint found in "
-                f"{opsin_results_dir}. Run USID synthetic opsin training "
-                f"(scripts/opsin_model_testing.py) at least once; COLD "
-                f"loads the latest plain-timestamp checkpoint."
+                f"use_opsin=True but no cold-trained opsin checkpoint found in "
+                f"{opsin_results_dir}. The ``opsin_train_cold`` snake rule "
+                f"should have produced one; check its log."
             )
         log.info(f"Loaded opsin model (input_scale={opsin_model.input_scale.item():.1f}, "
-                 f"output_scale={opsin_model.output_scale.item():.2f})")
+                 f"output_scale={opsin_model.output_scale.item():.4f})")
 
     # === 3. Prepare DataBundle ===
     opto_UN = UN[:, :k_opto]

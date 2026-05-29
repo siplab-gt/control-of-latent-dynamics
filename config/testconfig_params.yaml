@@ -148,6 +148,19 @@ model_fit_braid_stim_rec:
   epochs: 200
   steps_ahead_model_code: ""
 
+model_fit_braid_stim_rec_nonlinear:
+  # BRAID with nonlinear Cz MLP. Iteration log:
+  #   Sweep 6  Cz1HL64U  no stability:  R²(Z)=0.915, NLMPC Q=-0.022, iLQR Q=-0.009
+  #   Sweep 7  Cz1HL16U  + |λ|≤0.97:    R²(Z)=0.821, NLMPC Q=-0.041, iLQR Q=-0.030  (BOTH changes hurt)
+  #   Sweep 8  Cz1HL64U  + |λ|≤0.97:    isolating stability projection's effect (this row)
+  # See tmp/sweep6_diagnosis_v3.md for the analysis driving these knobs.
+  model_fit_method: braid
+  use_opsin: false
+  linear_Cz: false
+  cz_hidden_units: 64
+  epochs: 200
+  steps_ahead_model_code: ""
+
 ctrl_expts:
   Q_cost: 1
   R_cost: 1e-3
@@ -176,6 +189,16 @@ ctrl_expts_LQMPC:
     enforce_dpp: true
 
 ctrl_expts_NLMPC: {}
+
+# iLQR-specific overrides (all optional — class defaults apply otherwise).
+# `ilqr_max_iters` is read from the `nlmpc_grad_iters` wildcard so iLQR
+# can share NLMPC's path encoding without adding a new wildcard.
+ctrl_expts_iLQR:
+  ilqr_tol: 1e-4
+  ilqr_mu_init: 1e-3
+  ilqr_mu_min: 1e-6
+  ilqr_mu_max: 1e6
+  ilqr_mu_factor: 10.0
 
 cleo_prep:
   array_side_length_mm: 4

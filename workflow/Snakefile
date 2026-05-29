@@ -513,16 +513,17 @@ def _stim_rec_tabulate_inputs(wildcards):
 
 
 # Stim-rec tabulator: one rule for usid_stim_rec / usid_stim_rec_no_opsin /
-# braid_stim_rec. The setting wildcard is constrained to those three names so
-# this rule doesn't shadow `sufficient_stim_tabulate` /
-# `optimal_stim_rec_tabulate`, which use different (k, m) grids.
+# braid_stim_rec / braid_stim_rec_nonlinear. The setting wildcard is
+# constrained to those names so this rule doesn't shadow
+# `sufficient_stim_tabulate` / `optimal_stim_rec_tabulate`, which use
+# different (k, m) grids.
 rule stim_rec_tabulate:
     input:
         _stim_rec_tabulate_inputs,
     output:
         "<results>/{setting}_{task}.csv",
     wildcard_constraints:
-        setting="usid_stim_rec|usid_stim_rec_no_opsin|braid_stim_rec",
+        setting="usid_stim_rec|usid_stim_rec_no_opsin|braid_stim_rec|braid_stim_rec_nonlinear",
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -630,7 +631,14 @@ def _ctrl_expts_runtime(wildcards):
         return FLOOR_MIN
     H = int(wildcards.ctrl_horizon_ms)
     N = int(wildcards.nlmpc_grad_iters)
-    per_trial_s = 7 + H * N / 150
+    # iLQR per-iter cost ~4× NLMPC's Adam iter (H per-step autograd
+    # Jacobians + Cholesky on Quu in the backward pass). Bumping the
+    # H·N coefficient by 4 prevents iLQR cells from chronically hitting
+    # the SLURM wall.
+    if wildcards.ctrl_type == "iLQR":
+        per_trial_s = 7 + H * N * 4 / 150
+    else:
+        per_trial_s = 7 + H * N / 150
     total_min = (100 * per_trial_s + 60) / 60 * SAFETY_MARGIN
     return max(FLOOR_MIN, 5 * (int(total_min // 5) + 1))
 
@@ -759,6 +767,27 @@ def get_natural_data_input(wildcards):
     if _resolve_model_fit_method(wildcards.setting) != "usid":
         return []
     return wildcard_path("natural_electrode_data.pkl.gz")
+
+
+def _use_opsin_for_setting(setting: str) -> bool:
+    """Resolve use_opsin for a given setting, mirroring the model_fit overlay logic."""
+    per_setting = config.get(f"model_fit_{setting}", {}) or {}
+    if "use_opsin" in per_setting:
+        return bool(per_setting["use_opsin"])
+    return bool(config.get("use_opsin", False))
+
+
+def get_cold_opsin_input(wildcards):
+    """Sentinel from opsin_train_cold, required only when this setting actually uses opsin.
+    Force model_fit/usid.py to consume the cold-trained checkpoint instead of
+    silently falling back to USID's synthetic tree."""
+    if wildcards.setting == "sufficient_stim":
+        return []
+    if _resolve_model_fit_method(wildcards.setting) != "usid":
+        return []
+    if not _use_opsin_for_setting(wildcards.setting):
+        return []
+    return "results/opsin_train_cold/best_model.path"
 
 
 # assume GPU-heavy resources when not sufficient stim (BRAID or USID)
@@ -902,12 +931,53 @@ rule calibrate_opsin_plant:
         "> {log} 2>&1"
 
 
+rule opsin_train_cold:
+    """Train COLD's own opsin NN against the calibrated UnitlessChr2FourState
+    plant (single-neuron Brian2 sim, no fSNN). Replaces the prior behavior of
+    reusing USID's synthetic-tagged opsin checkpoint. Output checkpoint lands
+    under ``$USID_REPO_ROOT/experiments/opsin_results_external/cold/`` with
+    provenance tag ``external`` + caller_tag ``cold``; ``model_fit/usid.py``
+    loads it via ``load_trained_opsin(..., expected_provenance='external')``.
+
+    Snakemake re-runs this rule when the calibration JSON, the script itself,
+    or the ``opsin_train_cold`` config block changes. Output sentinel records
+    the absolute path of the resulting ``best_model.pth`` so downstream
+    consumers can resolve it without recomputing."""
+    input:
+        calibration="results/opsin_calibration/chr2_4s_fsnn_calibration.json",
+        script="src/scripts/opsin_train.py",
+        opsins="src/opsins.py",
+        configfiles=configfile_inputs_excluding_sweeps,
+    output:
+        sentinel="results/opsin_train_cold/best_model.path",
+    log:
+        "logs/opsin_train_cold.log",
+    conda:
+        "envs/main.yaml"
+    threads: 4
+    resources:
+        # GPU partition for the NN-training half (5000 epochs at hidden_size=32
+        # is ~10 min on V100 vs ~100 min on CPU). Brian2 datagen still runs on
+        # the same node's CPUs via joblib — GPU just sits idle for ~30 min
+        # while datagen finishes, then accelerates the training pass. Memory
+        # at 16 GB covers Brian2 cython compile + 4 loky workers; we've seen
+        # workers cycle deaths under 16 GB but joblib retries them.
+        # Match COLD's other GPU rules (model_fit, ctrl_expts) on rtx6000.
+        slurm_partition="gpu-rtx6000",
+        gpu=1,
+        mem_mb=16000,
+        runtime=180,
+    script:
+        "../src/scripts/opsin_train.py"
+
+
 rule model_fit:
     input:
         "src/model_fit/__init__.py",
         method=get_model_fit_method,
         usid_deps=get_usid_dependencies,
         natural_data=get_natural_data_input,
+        cold_opsin=get_cold_opsin_input,
         sys_id_data=wildcard_path("sys_id_data.pkl.gz"),
         configfiles=configfile_inputs_excluding_sweeps,
     params:
@@ -1094,6 +1164,7 @@ _CLEO_PREP_MODULE_FOR_SETTING = {
     "usid_stim_rec": "usid_stim_rec",
     "usid_stim_rec_no_opsin": "usid_stim_rec",
     "braid_stim_rec": "usid_stim_rec",
+    "braid_stim_rec_nonlinear": "usid_stim_rec",
 }
 
 

@@ -36,8 +36,19 @@ class LDS(BaseDataClass):
 
     @property
     def m_z(self) -> int:
-        # Note: Cz is added dynamically by model_fit methods, not a declared field
-        return self.Cz.shape[0]
+        # Cz is added dynamically by model_fit methods, not a declared field.
+        # Two possible sources after fit:
+        #   • lds.Cz (linear matrix, m_z × n)         — usid.py, braid.py linear, known_factors
+        #   • lds.cz_torch_module (torch nn.Module)   — braid.py with linear_Cz=False
+        if getattr(self, 'Cz', None) is not None:
+            return self.Cz.shape[0]
+        cz_module = getattr(self, 'cz_torch_module', None)
+        if cz_module is not None:
+            return cz_module.n_out
+        raise AttributeError(
+            "LDS has no Cz nor cz_torch_module — model_fit did not set up a "
+            "behavioral decoder. Cannot derive m_z."
+        )
 
     @property
     def k(self) -> int:

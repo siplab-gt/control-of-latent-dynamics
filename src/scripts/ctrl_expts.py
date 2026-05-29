@@ -182,9 +182,25 @@ def ctrl_expts(
     if ctrl_type == "NLMPC":
         ctrl_kwargs['nlmpc_grad_iters'] = int(cond_params.nlmpc_grad_iters)
         ctrl_kwargs['nlmpc_step_size'] = float(base_params.nlmpc_step_size)
+    elif ctrl_type == "iLQR":
+        # iLQR reuses the `nlmpc_grad_iters` wildcard as its outer-iteration
+        # budget so we don't need a parallel path wildcard. Other iLQR
+        # hyperparams come from the `ctrl_expts_iLQR` config block (only
+        # values present override the dataclass defaults).
+        ctrl_kwargs['ilqr_max_iters'] = int(cond_params.nlmpc_grad_iters)
+        for hp in (
+            'ilqr_tol', 'ilqr_mu_init', 'ilqr_mu_min', 'ilqr_mu_max',
+            'ilqr_mu_factor',
+        ):
+            if hasattr(base_params, hp):
+                ctrl_kwargs[hp] = float(getattr(base_params, hp))
+        if hasattr(base_params, 'ilqr_alpha_schedule'):
+            ctrl_kwargs['ilqr_alpha_schedule'] = tuple(
+                float(a) for a in base_params.ilqr_alpha_schedule
+            )
     ctrl_proc: Controller = ControllerType(**ctrl_kwargs)
 
-    if ctrl_type not in ("NULL", "NLMPC"):
+    if ctrl_type not in ("NULL", "NLMPC", "iLQR"):
         # Test latency for each solver and order them from fastest to slowest
         log.info("Testing all solvers...")
         solver_latencies = []
@@ -254,7 +270,9 @@ def ctrl_expts(
         ctrl_proc.compute_latency_std = fastest_std_lat
         ctrl_proc.compute_latency_nonsolve = fastest_nonsolve_lat
     else:
-        if ctrl_type != "NULL":
+        # NULL/NLMPC/iLQR have no CVXPY solvers attached (NLMPC/iLQR
+        # use PyTorch optimization). Skip the time-limit reset for them.
+        if ctrl_type not in ("NULL", "NLMPC", "iLQR"):
             for solver in ctrl_proc.solvers:
                 solver.generic_args["time_limit"] = 2  # large time limit
         ctrl_proc.compute_latency_mean = 0 * b2.ms

@@ -111,6 +111,14 @@ prep_fsnn_reaching:
   n_trials_pca: 20
   g: 3
 
+model_fit_braid_stim_rec_nonlinear:
+  # See testconfig_params.yaml for full notes. BRAID with nonlinear Cz (MLP).
+  model_fit_method: braid
+  use_opsin: false
+  linear_Cz: false
+  epochs: 2
+  steps_ahead_model_code: ""
+
 model_fit_usid_stim_rec:
   # Placeholder block injected by Snakemake's step_cfg("model_fit", "usid_stim_rec")
   # lookup. Actual epoch reduction is via usid_overrides above.
@@ -143,6 +151,13 @@ ctrl_expts_LQMPC:
 
 ctrl_expts_NLMPC: {}
 
+ctrl_expts_iLQR:
+  ilqr_tol: 1e-4
+  ilqr_mu_init: 1e-3
+  ilqr_mu_min: 1e-6
+  ilqr_mu_max: 1e6
+  ilqr_mu_factor: 10.0
+
 ctrl_expts_usid_stim_rec:
   ref_type: Z
 
@@ -156,6 +171,23 @@ cleo_prep:
 
 calibrate_opsin_plant:
   target_iopto: 0.05
+
+# Ultra-light overrides: minimal sequences/epochs since this config is for
+# DAG smoke tests, not for producing a usable opsin. See
+# testconfig_params.yaml for the documented "good" values.
+opsin_train_cold:
+  n_sequences: 20
+  time_steps: 100
+  sequence_length: 50
+  epochs: 50
+  batch_size: 4
+  lr: 3e-3
+  hidden_size: 32
+  num_layers: 2
+  scheduler_patience: 200
+  scheduler_factor: 0.8
+  scheduler_min_lr: 1.0e-6
+  seed: 42
 
 model_fit:
   linear_Cz: true
