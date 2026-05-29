@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import re
 import types
 
 import numpy as np
@@ -38,7 +39,7 @@ def fit_lds_to_data(
     # makes Cz nonlinear. Default 1 hidden layer with 16 units (down from 64
     # after Sweep 6 found that Cz1HL64U overfits to the low-amplitude
     # sys_id training distribution, then collapses under closed-loop drive
-    # which is 5-6× higher amplitude — see tmp/sweep7_diagnosis.md).
+    # which is 5-6× higher amplitude — Sweep 7 diagnosis, scratch, not committed).
     # Configurable via `cz_hidden_units` in the per-setting model_fit overlay.
     if base_params.linear_Cz:
         Cz_code = ""
@@ -98,7 +99,7 @@ def fit_lds_to_data(
     )
 
     # Post-fit stability projection (nonlinear-Cz only). Sweep 6 forensic
-    # diagnosis (tmp/braid_nonlin_diagnosis_v3.py) found nonlinear joint
+    # diagnosis (scratch, not committed) found nonlinear joint
     # training pushes A's spectral radius to ~1.000 on some seeds — the
     # controller then over-drives a near-unit-modulus mode through the
     # nonlinear Cz, blowing up closed-loop Z prediction. The legacy
@@ -136,8 +137,7 @@ def fit_lds_to_data(
     # weight copy; the resulting `cz_torch_module` is independent of the
     # subsequent BRAID save and is dilled along with the LDS.
     if not base_params.linear_Cz:
-        import re as _re
-        m_cz = _re.match(r"Cz(\d+)HL(\d+)U", Cz_code)
+        m_cz = re.match(r"Cz(\d+)HL(\d+)U", Cz_code)
         if not m_cz:
             raise ValueError(
                 f"Cannot parse Cz topology from Cz_code={Cz_code!r}; "

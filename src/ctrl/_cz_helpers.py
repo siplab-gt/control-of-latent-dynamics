@@ -13,7 +13,7 @@ The LDS abstraction exposes Cz in one of three forms:
 
 Both NLMPC and iLQR need to:
 
-  * Apply Cz to a state during forward rollouts (`apply_cz_torch`).
+  * Apply Cz to a state during forward rollouts (`apply_cz`).
   * (iLQR only) Take the Jacobian of Cz at a state for the quadratic
     cost expansion in the LQR backward pass (`cz_jacobian`).
 

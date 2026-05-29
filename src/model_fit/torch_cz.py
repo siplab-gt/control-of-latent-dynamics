@@ -10,7 +10,7 @@ This module:
   * Defines a small `torch.nn.Module` mirroring the BRAID Cz topology.
   * Provides `from_braid_regression()` to copy weights from a trained
     BRAID `RegressionModel` into the torch module (bit-exact transfer
-    verified by `tmp/test_torch_cz_port.py`).
+    verified by a scratch port test, not committed).
 
 Stored on the `LDS` as `lds.cz_torch_module` after model_fit. The ctrl-side
 helper `src/ctrl/_cz_helpers.py` dispatches on this attribute to decide

@@ -153,7 +153,7 @@ model_fit_braid_stim_rec_nonlinear:
   #   Sweep 6  Cz1HL64U  no stability:  R²(Z)=0.915, NLMPC Q=-0.022, iLQR Q=-0.009
   #   Sweep 7  Cz1HL16U  + |λ|≤0.97:    R²(Z)=0.821, NLMPC Q=-0.041, iLQR Q=-0.030  (BOTH changes hurt)
   #   Sweep 8  Cz1HL64U  + |λ|≤0.97:    isolating stability projection's effect (this row)
-  # See tmp/sweep6_diagnosis_v3.md for the analysis driving these knobs.
+  # Knobs driven by the Sweep 6 forensic analysis (scratch notes, not committed).
   model_fit_method: braid
   use_opsin: false
   linear_Cz: false

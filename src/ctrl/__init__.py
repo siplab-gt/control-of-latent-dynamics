@@ -110,7 +110,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             and getattr(self.lds, 'cz_torch_module', None) is not None
         )
         if nonlinear_cz:
-            import torch  # local: matches NLMPC/iLQR's lazy-torch convention
+            import torch  # local: only the nonlinear-Cz path needs torch here
             cz_module = self.lds.cz_torch_module
             cz_module.eval()
             with torch.no_grad():

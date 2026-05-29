@@ -519,8 +519,8 @@ class ILQRController(Controller):
                 x_new[t + 1] = x_next
 
         # Reference is consistent across line-search trials within one MPC step.
-        # Recompute t_horizon once outside the loop in the caller? Keep it
-        # local for clarity; the cost is small (np.arange + 1 dict lookup).
+        # t_horizon recomputed locally for clarity; cost is small
+        # (np.arange + one dict lookup).
         t_horizon = self.t_now + np.arange(1, H + 1) * self.sample_period
         ref = torch.tensor(self.reference_zscored(t_horizon), dtype=torch.float32)
         cost_new = self._total_cost(x_new, u_new, ref)
