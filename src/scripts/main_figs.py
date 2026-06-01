@@ -402,8 +402,10 @@ def main(
         dependence_ctrl_res = CMIEstimateSet.load(dependence_control_file)
 
         # Maps
-        key_map = {res.ep: res for res in dependence_key_res.ep_results}
-        ctrl_map = {res.ep: res for res in dependence_ctrl_res.ep_results}
+        key_map = {res.ep: res for res in dependence_key_res.null_corrected_ep_results}
+        ctrl_map = {
+            res.ep: res for res in dependence_ctrl_res.null_corrected_ep_results
+        }
 
         def get_p_crit(results_list, alpha=0.05):
             significant = [r for r in results_list if r.q_value <= alpha]
@@ -419,8 +421,8 @@ def main(
 
         y_sig_marker = np.max(
             [
-                np.max(r.boot_dist)
-                for r in set(key_map.values()) | set(ctrl_map.values())
+                np.percentile(r.null_dist, 99.9)
+                for r in list(key_map.values()) + list(ctrl_map.values())
             ]
         )
 
@@ -443,6 +445,7 @@ def main(
                     color="k",
                 )
 
+        violin_width = 0.2
         for ep, ax in zip(expl_params, dependence_axs.flat):
             # If neither exist, hide
             if ep not in key_map and ep not in ctrl_map:
@@ -450,28 +453,23 @@ def main(
                 continue
 
             # Prepare data for seaborn
-            # We want 2 split violins side-by-side
+            # We want 2 violins side-by-side
             # X-axis: 0 -> Key, 1 -> Control
-            # Hue: Null vs Boot
 
             plot_data = []
 
-            # Key Data
+            # Key/Control Data (Null only)
             if ep in key_map:
                 res = key_map[ep]
-                n_null = len(res.null_dist)
                 plot_data.extend(
                     [
-                        {"Type": "Key", "Condition": "Null", "dependence": val}
+                        {
+                            "Type": "Key",
+                            "Condition": "Null",
+                            "value": val,
+                            "Group": "Null",
+                        }
                         for val in res.null_dist
-                    ]
-                )
-                # Boot
-                n_boot = len(res.boot_dist)
-                plot_data.extend(
-                    [
-                        {"Type": "Key", "Condition": "Boot", "dependence": val}
-                        for val in res.boot_dist
                     ]
                 )
 
@@ -481,26 +479,18 @@ def main(
             else:
                 thresh_key = None
 
-            # Control Data (Note: naming "Control" to distinct from "Key")
-            # But we want specific colors.
-            # "Control" metric usually corresponds to `c["ctrl"]` (teal)
-            # "Key" metric usually corresponds to `c["key"]` (blue/purple a1)
-
+            # Control Data (Null only)
             if ep in ctrl_map:
                 res = ctrl_map[ep]
-                n_null = len(res.null_dist)
                 plot_data.extend(
                     [
-                        {"Type": "Control", "Condition": "Null", "cmi": val}
+                        {
+                            "Type": "Control",
+                            "Condition": "Null",
+                            "value": val,
+                            "Group": "Null",
+                        }
                         for val in res.null_dist
-                    ]
-                )
-                # Boot
-                n_boot = len(res.boot_dist)
-                plot_data.extend(
-                    [
-                        {"Type": "Control", "Condition": "Boot", "cmi": val}
-                        for val in res.boot_dist
                     ]
                 )
 
@@ -514,94 +504,94 @@ def main(
                 ax.set_visible(False)
                 continue
 
-            # Define palette matching hue
-            # We have hue="Condition" (Null, Boot)
-            # But we want different colors for Key-Boot vs Control-Boot.
-            # Seaborn split violin doesn't support varying hue colors by x-group easily.
-            # Workaround: Plot them separately.
+            has_key = ep in key_map
+            has_ctrl = ep in ctrl_map
 
-            # Plot Key
+            if has_key and has_ctrl:
+                # Plot split violins (Key vs Control)
+                sns.violinplot(
+                    data=df_plot,
+                    x="Group",
+                    y="value",
+                    hue="Type",
+                    split=True,
+                    inner=None,
+                    palette={"Key": psty.c["key"], "Control": psty.c["ctrl"]},
+                    ax=ax,
+                    width=violin_width,
+                    linewidth=0,
+                    order=["Null"],
+                    hue_order=["Key", "Control"],
+                    legend=False,
+                    dodge=True,
+                    gap=0.4,
+                    density_norm="width",
+                    cut=0,
+                )
+            else:
+                single_type = "Key" if has_key else "Control"
+                sns.violinplot(
+                    data=df_plot,
+                    x="Group",
+                    y="value",
+                    hue=None,
+                    split=False,
+                    inner=None,
+                    color=psty.c["key"] if has_key else psty.c["ctrl"],
+                    ax=ax,
+                    width=violin_width,
+                    linewidth=0,
+                    order=["Null"],
+                    legend=False,
+                    dodge=False,
+                    gap=0.4,
+                    density_norm="width",
+                    cut=0,
+                )
+
+            x_center = ax.get_xticks()[0]
+            x_left = x_center - (violin_width / 2)
+            x_right = x_center + (violin_width / 2)
+            x_key = x_center - (violin_width / 4)
+            x_ctrl = x_center + (violin_width / 4)
+
             if ep in key_map:
                 res = key_map[ep]
-                sns.violinplot(
-                    data=df_plot[df_plot["Type"] == "Key"],
-                    x="Type",
-                    y="dependence",
-                    hue="Condition",
-                    split=True,
-                    inner=None,
-                    palette={"Null": "0.6", "Boot": psty.c["key"]},
-                    ax=ax,
-                    width=0.8,
-                    linewidth=0,
-                    order=["Key", "Control"],  # Force x-positions
-                    hue_order=["Null", "Boot"],
-                    legend=False,
-                )
-                # Add threshold line
-                # x=0. The violin is centered at 0.
-                # It spans [-0.4, 0.4] roughly with width=0.8
-                # Null is left side (-).
-                xmin, xmax = -0.4, 0.4
                 ax.hlines(
-                    thresh_key, xmin, xmax, colors="gray", linestyle="--", linewidth=1.0
-                )  # , linestyle="--")
-
-                # Add dependence estimate and CI markers on the right (Boot) side
-                # Key is at x=0. Boot is right side (0 to 0.4).
-                # Place marker exactly at 0 (flat edge)
-                x_marker = 0.0
-                ax.plot(
-                    [x_marker, x_marker],
-                    [res.ci_low, res.ci_high],
-                    color="k",
-                    linewidth=2,
-                )
-                ax.plot(x_marker, res.cmi, color="k", marker="o", markersize=3)
-
-                add_significance_marker(ax, res, x_marker)
-
-            # Plot Control
-            if ep in ctrl_map:
-                res = ctrl_map[ep]
-                sns.violinplot(
-                    data=df_plot[df_plot["Type"] == "Control"],
-                    x="Type",
-                    y="cmi",
-                    hue="Condition",
-                    split=True,
-                    inner=None,
-                    palette={"Null": "0.6", "Boot": psty.c["ctrl"]},
-                    ax=ax,
-                    width=0.8,
-                    linewidth=0,
-                    order=["Key", "Control"],
-                    hue_order=["Null", "Boot"],
-                    legend=False,
-                )
-                # x=1.
-                xmin, xmax = 0.6, 1.4  # Left side of the second violin
-                ax.hlines(
-                    thresh_ctrl,
-                    xmin,
-                    xmax,
+                    thresh_key,
+                    x_left,
+                    x_center,
                     colors="gray",
                     linestyle="--",
                     linewidth=1.0,
                 )
-
-                # Add dependence estimate and CI markers on the right (Boot) side
-                # Control is at x=1. Boot is right side (1 to 1.4).
-                x_marker = 1.0
-                ax.plot(
-                    [x_marker, x_marker],
-                    [res.ci_low, res.ci_high],
-                    color="k",
-                    linewidth=2,
+                ax.hlines(
+                    res.cmi,
+                    x_left,
+                    x_center,
+                    colors="k",
+                    linewidth=1.0,
                 )
-                ax.plot(x_marker, res.cmi, color="k", marker="o", markersize=3)
+                add_significance_marker(ax, res, x_key)
 
-                add_significance_marker(ax, res, x_marker)
+            if ep in ctrl_map:
+                res = ctrl_map[ep]
+                ax.hlines(
+                    thresh_ctrl,
+                    x_center,
+                    x_right,
+                    colors="gray",
+                    linestyle="--",
+                    linewidth=1.0,
+                )
+                ax.hlines(
+                    res.cmi,
+                    x_center,
+                    x_right,
+                    colors="k",
+                    linewidth=1.0,
+                )
+                add_significance_marker(ax, res, x_ctrl)
 
             # Clean up
             ax.set_xlabel("")
@@ -623,7 +613,6 @@ def main(
         import matplotlib.patches as mpatches
 
         handles = [
-            mpatches.Patch(color="0.6", label="shuffled null"),
             mpatches.Patch(color=psty.c["key"], label=r(key_metric)),
             mpatches.Patch(color=psty.c["ctrl"], label=r(ctrl_metric)),
             mlines.Line2D(
@@ -638,10 +627,8 @@ def main(
                 [],
                 [],
                 color="k",
-                linewidth=2,
-                marker="o",
-                markersize=3,
-                label="estimate & 95% CI",
+                linewidth=1.0,
+                label="estimate",
             ),
             mlines.Line2D(
                 [],
@@ -658,7 +645,8 @@ def main(
 
         fig.legend(
             handles=handles,
-            loc="lower center",
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.0),
             ncol=len(handles),
             frameon=True,
         )
