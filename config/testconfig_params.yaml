@@ -209,7 +209,54 @@ cleo_prep:
   opsin_calibration_dir: results/opsin_calibration
 
 calibrate_opsin_plant:
-  target_iopto: 0.05
+  # RE-ANCHORED (2026-06-01 authority sweep). The legacy 0.05@100µm operating
+  # point ran opto at ~1/11.5 of the natural task-input scale mean(|u_in|)≈0.575
+  # — and the working proportional_current plant tunes opto TO mean(|u_in|) at a
+  # 500µm reference (cleo_prep.py). So we re-anchor: fiber reference distance to
+  # 500µm (raises solved g0 ~3.4×) and target_iopto toward mean(|u_in|).
+  # target_iopto + phim_scale are SWEPT by tmp/cold_ablation/run_authority_sweep.sbatch
+  # (these base values are placeholders the wrapper sed-overwrites per combo).
+  target_iopto: 0.0575
+  phim_scale: 1
+  # Reference fiber→neuron distance for the g0 solve (lines up with the
+  # proportional_current plant's 0.5 mm reference).
+  fiber_distance_um: 500
+  # E (reversal potential) and the g0 clamp anchor to the RESTING (no-input)
+  # v-distribution (vinf absent task input, median over neurons). e_ratio sets E
+  # placement: E = v_low + e_ratio*window; lower = E closer = stronger (V−E) dependence.
+  e_ratio: 3.5
+  # Guard RELAXED to 10.0: at target≈mean(|u_in|) the OPERATING-point drive is
+  # natural-scale (pk@5mW≈0.6-1.0, validated) but the 75 mW saturation peak (the
+  # rare lognormal tail) reaches ~4-8, which the old 0.30 bound would block. The
+  # real fSNN-stability gate is chr2_stability_check + n_sanitize_clipped /
+  # n_nonfinite flags on the actual sys_id/model_fit runs — monitor those.
+  peak_saturation_bound: 10.0
+
+opsin_train_cold:
+  # Hyperparams for the opsin_train_cold rule (COLD self-trained NN opsin).
+  # Block was added to config_params.yaml + ultra_light_config_params.yaml in
+  # commit c4aa3d2 but MISSED here (config regression fixed 2026-05-30).
+  #
+  # REDUCED from production (n_sequences 500, time_steps 500, epochs 5000):
+  # at those sizes the data-gen (500 single-neuron Brian2 sims, each recompiling
+  # Cython because the per-sim light TimedArray makes the generated code hash
+  # unique) took ~138 min and 5000-epoch training pushed past the 180-min
+  # walltime -> TIMEOUT on gpu-rtx6000 (job 9335869). The NN only needs to learn
+  # a single-neuron deterministic light->photocurrent transfer; 80 sequences /
+  # 2000 epochs is ample (0511 run showed the cold NN is functionally
+  # interchangeable with the synthetic NN at k=m=32). USID's B' absorbs NN scale.
+  n_sequences: 80
+  time_steps: 300
+  sequence_length: 200
+  epochs: 2000
+  batch_size: 16
+  lr: 3e-3
+  hidden_size: 32
+  num_layers: 2
+  scheduler_patience: 200
+  scheduler_factor: 0.8
+  scheduler_min_lr: 1.0e-6
+  seed: 42
 
 model_fit:
   linear_Cz: true

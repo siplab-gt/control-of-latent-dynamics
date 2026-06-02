@@ -1,25 +1,22 @@
-"""Measure fSNN's operational voltage range under representative sys-ID stimulation.
+"""Measure the fSNN voltage distribution that feeds the opsin calibration.
 
-Builds a minimal CleoPrep inline (forcing ``proportional_current`` plant
-regardless of the configured ``opsin_plant_class``) so this measurement can
-run before the v3 plant is calibrated. The main ``cleo_prep`` rule depends
-on ``chr2_4s_fsnn_calibration.json`` under the v3 plant; calibration in
-turn depends on this measurement; so voperating must not route through
-the main rule or we deadlock.
+Writes two characterisations to ``voperating.json``:
+  - the RESTING (no-input) distribution — ``v_rest_low/high/median`` — which is the
+    calibration anchor: the opsin reversal potential E and the g0-solve clamp are
+    derived from it (vinf in the absence of task input, median over neurons).
+  - the under-stimulation operating range — ``v_low/high/median``, ``window``,
+    ``v_stdev_normalized`` — recorded as a diagnostic (with a histogram); NOT
+    consumed by calibration.
 
-Scientific note: the v-distribution is dominated by fSNN's intrinsic
-dynamics, so measuring it under ``proportional_current`` is an acceptable
-approximation of what the ``chr2_4s_fsnn`` plant will see at the calibrated
-operating point (both plants deliver ~0.1 Iopto at 5 mW/mm²; they diverge
-at high-drive transients, which don't dominate the v-distribution).
-See scratchpad/v3_opsin_deviations.md D1.
+The under-stimulation pass builds a minimal CleoPrep inline (forcing
+``proportional_current`` regardless of the configured ``opsin_plant_class``) so it
+can run before the chr2_4s_fsnn plant is calibrated — calibration depends on this
+measurement, so it must not route through the main ``cleo_prep`` rule or the DAG
+deadlocks. The resting pass runs an isolated bare fSNN with zeroed task inputs.
 
-Outputs consumed by v3 opsin calibration (see
-scratchpad/opsin_v3_cleanup_and_plan.md §4.1a, §4.3):
-  - v_low  = 5th percentile  → calibration window lower bound
-  - v_high = 95th percentile → calibration window upper bound
-  - v_median = 50th percentile → diagnostic only
-  - v_stdev_normalized = population std / (v_high - v_low)
+Scientific note: the v-distribution is dominated by fSNN's intrinsic dynamics, so
+measuring the under-stimulation pass under ``proportional_current`` is an acceptable
+approximation of the ``chr2_4s_fsnn`` plant near its operating point.
 
 Invoked via Snakemake's ``script:`` directive — see rule
 ``measure_voperating_range`` in ``workflow/Snakefile``.
@@ -147,6 +144,32 @@ def measure_voperating_range(
     pop_std = float(v_samples.std())
     v_stdev_normalized = float(pop_std / window) if window > 0 else float("nan")
 
+    # REST measurement (mentor's E criterion): characterize the operating voltage
+    # by vinf in the ABSENCE of input, NOT the p5-p95 window measured under drive.
+    # Re-load the fSNN fresh (isolated bare network — no cleo/opto) and run with
+    # zeroed task inputs so it settles to its spontaneous (no-input) distribution.
+    # v_rest_median = median over neurons of each neuron's time-median rest vinf;
+    # v_rest_low/high = pooled p5/p95 (the intrinsic spread, not light-inflated).
+    log.info("Measuring REST v-distribution (no input) on an isolated fSNN load...")
+    fsnn_rest = fSNN.load(fsnn_file)
+    _zero_task_inputs(fsnn_rest)
+    vrest_mon = b2.StateMonitor(fsnn_rest.ng_main, "v", record=True, name="vrest_mon")
+    fsnn_rest.net.add(vrest_mon)
+    ns_rest = fsnn_rest._get_namespace(t_ta_start=0 * b2.ms)
+    fsnn_rest.net.run(settle_ms * b2.ms, namespace=ns_rest)
+    fsnn_rest.net.run(measure_ms * b2.ms, namespace=ns_rest)
+    v_rest = np.asarray(vrest_mon.v)[:, n_settle_samples:]
+    v_rest_pooled = v_rest.ravel()
+    v_rest_low = float(np.percentile(v_rest_pooled, 5))
+    v_rest_high = float(np.percentile(v_rest_pooled, 95))
+    v_rest_median = float(np.median(np.median(v_rest, axis=1)))
+    v_rest_window = v_rest_high - v_rest_low
+    log.info(
+        f"v_rest (no input): p5={v_rest_low:.4f}, median(over neurons)={v_rest_median:.4f}, "
+        f"p95={v_rest_high:.4f} (window={v_rest_window:.4f})"
+    )
+    del fsnn_rest
+
     # fSNN's spike threshold / reset voltage — exact constants from fSNN config.
     # Emitted for provenance; the v-histogram's two dominant peaks sit near
     # these values (slow ramp-to-threshold + reset snap-back).
@@ -163,6 +186,10 @@ def measure_voperating_range(
         "v_high": v_high,
         "v_median": v_median,
         "window": window,
+        "v_rest_low": v_rest_low,
+        "v_rest_high": v_rest_high,
+        "v_rest_median": v_rest_median,
+        "v_rest_window": v_rest_window,
         "v_stdev_normalized": v_stdev_normalized,
         "vr": vr,
         "vth": vth,

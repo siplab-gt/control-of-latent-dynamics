@@ -878,6 +878,7 @@ rule measure_voperating_range:
         fsnn=_voperating_fsnn_input(),
         script="src/scripts/measure_voperating_range.py",
         cleo_prep_src="src/scripts/cleo_prep.py",
+        configfiles=configfile_inputs_excluding_sweeps,
     output:
         json="results/opsin_calibration/voperating.json",
         png="results/opsin_calibration/voperating.png",
@@ -913,8 +914,17 @@ rule calibrate_opsin_plant:
         voperating="results/opsin_calibration/voperating.json",
         script="src/scripts/calibrate_opsin_plant.py",
         opsins="src/opsins.py",
+        configfiles=configfile_inputs_excluding_sweeps,
     params:
         target_iopto=lambda wc: config["calibrate_opsin_plant"]["target_iopto"],
+        # phim_scale (>1 = less light-sensitive plant) and peak_saturation_bound
+        # are optional; default to 1.0 / 0.3 (the script defaults) when absent.
+        phim_scale=lambda wc: config["calibrate_opsin_plant"].get("phim_scale", 1.0),
+        peak_saturation_bound=lambda wc: config["calibrate_opsin_plant"].get(
+            "peak_saturation_bound", 0.3),
+        fiber_distance_um=lambda wc: config["calibrate_opsin_plant"].get(
+            "fiber_distance_um", 500.0),
+        e_ratio=lambda wc: config["calibrate_opsin_plant"].get("e_ratio", 3.5),
     output:
         "results/opsin_calibration/chr2_4s_fsnn_calibration.json",
     log:
@@ -928,6 +938,10 @@ rule calibrate_opsin_plant:
         "python -m src.scripts.calibrate_opsin_plant "
         "{input.voperating} {output[0]} "
         "--target-iopto {params.target_iopto} "
+        "--phim-scale {params.phim_scale} "
+        "--peak-saturation-bound {params.peak_saturation_bound} "
+        "--fiber-distance-um {params.fiber_distance_um} "
+        "--e-ratio {params.e_ratio} "
         "> {log} 2>&1"
 
 

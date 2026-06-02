@@ -169,7 +169,8 @@ class CleoPrep(BaseDataClass):
             }
             _allowed = _required | {
                 "window", "v_low", "v_high", "pulse_duration_ms",
-                "bench_duration_ms", "ratios", "cleo_class",
+                "bench_duration_ms", "ratios", "cleo_class", "phim_scale",
+                "fiber_distance_um",
             }
             missing = _required - calib.keys()
             if missing:
@@ -191,9 +192,15 @@ class CleoPrep(BaseDataClass):
                     f"rule calibrate_opsin_plant."
                 )
 
+            # phim_scale (>1 = less light-sensitive plant) must match what
+            # calibrate_opsin_plant used to solve g0, else the plant operating
+            # point shifts. Absent (legacy calibration) → 1.0.
+            _phim_scale = float(calib.get("phim_scale", 1.0))
+            _default_phim = UnitlessChr2FourState(g0=1.0, E=0.0).phim
             opsin = UnitlessChr2FourState(
                 g0=float(calib["g0"]),
                 E=float(calib["E"]),
+                phim=_phim_scale * _default_phim,
             )
             log.info(
                 f"Loaded chr2_4s_fsnn calibration from {calib_path} "

@@ -4,10 +4,12 @@ Consumes ``voperating.json`` (produced by ``measure_voperating_range.py``) and
 writes ``chr2_4s_fsnn_calibration.json`` describing ``(g0, E)`` plus
 bench-validation metrics.
 
-Parameter derivation (Bansal-anchored):
+Parameter derivation (Bansal-anchored). The v-window is the RESTING (no-input)
+distribution — vinf in the absence of task input — the physically correct
+reversal-potential reference:
     window = v_high - v_low
-    E      = v_low + 3.5 * window     (anchored away from the operating range
-                                       to keep |V−E| well-conditioned)
+    E      = v_low + e_ratio * window  (anchored above the resting range
+                                        to keep |V−E| well-conditioned)
 
 Bansal's driving force is linear: ``Iopto ∝ -g0 * fphi * (V − E)``. This is
 simpler than the PyRhO ``fv_timesVminusE`` form (no v0/v1 saturation params)
@@ -73,6 +75,14 @@ _STEADY_STATE_TAIL_SAMPLES = 10
 # peak fails the bench check rather than silently driving fSNN out of regime.
 DEFAULT_PEAK_SATURATION_BOUND = 0.3
 
+# Reference fiber→neuron distance for the g0 solve. 500 µm lines the chr2/Bansal
+# calibration up with the proportional_current plant (`cleo_prep.py` uses a
+# 0.5 mm reference) so both plants anchor target_iopto = mean(|u_in|) at the
+# same typical neuron distance. (The legacy chr2 calibration used the
+# SynthOptoStimDataGen default of 100 µm, which set g0 assuming bright/close
+# neurons and under-drove the realistically-distant plant population.)
+DEFAULT_FIBER_DISTANCE_UM = 500.0
+
 
 def _dimensionless_dummy_neuron_model(v_clamp: float) -> str:
     """Brian2 equations string for a v-clamped dimensionless dummy neuron.
@@ -97,6 +107,7 @@ def _run_constant_pulse(
     v_clamp: float,
     duration_ms: float,
     model_period_ms: float,
+    fiber_distance_um: float,
 ) -> np.ndarray:
     """Single cleo pulse: constant light, v-clamped dummy; returns Iopto(t)."""
     b2.start_scope()
@@ -105,6 +116,7 @@ def _run_constant_pulse(
         opsin_model=opsin,
         model_period_ms=model_period_ms,
         dummy_neuron_model=_dimensionless_dummy_neuron_model(v_clamp),
+        fiber_distance_um=fiber_distance_um,
     )
     photocurrent, _ = data_gen.run_simulation(duration=duration_ms, t_unit=b2.ms)
     return np.asarray(photocurrent[1], dtype=np.float64)
@@ -126,6 +138,13 @@ def _calibration_hash(core: dict) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
+def _default_phim():
+    """cleo BansalFourStateOpsin default phim (Quantity), inherited by
+    UnitlessChr2FourState. Read it off a throwaway instance so we track
+    whatever cleo defines rather than hardcoding the value/units."""
+    return UnitlessChr2FourState(g0=1.0, E=0.0).phim
+
+
 def calibrate(
     voperating: dict,
     target_iopto: float,
@@ -136,18 +155,36 @@ def calibrate(
     model_period_ms: float = DEFAULT_MODEL_PERIOD_MS,
     rel_err_tolerance: float = 0.05,
     peak_saturation_bound: float = DEFAULT_PEAK_SATURATION_BOUND,
+    phim_scale: float = 1.0,
+    fiber_distance_um: float = DEFAULT_FIBER_DISTANCE_UM,
+    e_ratio: float = E_RATIO,
 ) -> dict:
-    """Derive (g0, E) from measured fSNN v-range + bench-validate (Bansal)."""
-    v_low = float(voperating["v_low"])
-    v_high = float(voperating["v_high"])
-    v_median = float(voperating["v_median"])
+    """Derive (g0, E) from measured fSNN v-range + bench-validate (Bansal).
+
+    ``phim_scale`` multiplies the opsin's half-saturation photon flux phim
+    (>1 = less light-sensitive = saturates later = more linear over the
+    operating range). g0 is re-solved automatically for the chosen phim so the
+    operating-point Iopto still equals ``target_iopto``.
+
+    ``fiber_distance_um`` is the reference fiber→neuron distance at which the
+    g0 solve places ``target_iopto`` (default 500 µm, lined up with the
+    proportional_current plant). Farther reference ⇒ lower transmittance ⇒
+    larger solved g0 ⇒ more drive delivered to the realistically-distant
+    plant population."""
+    phim = phim_scale * _default_phim()
+    # E (reversal potential) and the g0-solve clamp reference the RESTING (no-input)
+    # v-distribution (vinf absent task input, median over neurons) — the physically
+    # correct reference. e_ratio places E above the range: E = v_low + e_ratio*window.
+    v_low = float(voperating["v_rest_low"])
+    v_high = float(voperating["v_rest_high"])
+    v_median = float(voperating["v_rest_median"])
     window = v_high - v_low
     if window <= 0:
         raise ValueError(
-            f"Degenerate voperating window: v_high ({v_high}) <= v_low ({v_low})."
+            f"Degenerate resting voperating window: v_high ({v_high}) <= v_low ({v_low})."
         )
 
-    E = v_low + E_RATIO * window
+    E = v_low + e_ratio * window
     v_minus_E = v_median - E
     if v_minus_E == 0.0:
         raise RuntimeError(
@@ -164,13 +201,14 @@ def calibrate(
     # Bansal current equation in g0 lets us solve for the calibrated g0
     # in closed form: Iopto_G(t) = G * Iopto_1(t) when (fphi, V−E) are
     # independent of g0, which they are.
-    opsin_unit = UnitlessChr2FourState(g0=1.0, E=E)
+    opsin_unit = UnitlessChr2FourState(g0=1.0, E=E, phim=phim)
     iopto_unit = _run_constant_pulse(
         opsin=opsin_unit,
         light_mWmm2=target_light_mWmm2,
         v_clamp=v_median,
         duration_ms=pulse_duration_ms,
         model_period_ms=model_period_ms,
+        fiber_distance_um=fiber_distance_um,
     )
     iopto_unit_ss = _steady_state(iopto_unit)
     if iopto_unit_ss == 0.0:
@@ -194,13 +232,14 @@ def calibrate(
     # lands on target_iopto within rel_err_tolerance. Perfect linearity
     # implies exact agreement; deviation flags numerical or plumbing issues.
     # Also captures peak Iopto at target light to gate transient overshoot.
-    opsin_cal = UnitlessChr2FourState(g0=g0, E=E)
+    opsin_cal = UnitlessChr2FourState(g0=g0, E=E, phim=phim)
     iopto_bench = _run_constant_pulse(
         opsin=opsin_cal,
         light_mWmm2=target_light_mWmm2,
         v_clamp=v_median,
         duration_ms=bench_duration_ms,
         model_period_ms=model_period_ms,
+        fiber_distance_um=fiber_distance_um,
     )
     iopto_bench_ss = _steady_state(iopto_bench)
     rel_err = abs(iopto_bench_ss - target_iopto) / abs(target_iopto)
@@ -233,13 +272,14 @@ def calibrate(
     # the absolute bound so fSNN's driving-current envelope isn't violated.
     # Need a fresh opsin instance because Brian2's start_scope() in
     # _run_constant_pulse would otherwise discard state mid-use.
-    opsin_sat = UnitlessChr2FourState(g0=g0, E=E)
+    opsin_sat = UnitlessChr2FourState(g0=g0, E=E, phim=phim)
     iopto_sat = _run_constant_pulse(
         opsin=opsin_sat,
         light_mWmm2=saturation_light_mWmm2,
         v_clamp=v_median,
         duration_ms=bench_duration_ms,
         model_period_ms=model_period_ms,
+        fiber_distance_um=fiber_distance_um,
     )
     peak_sat = float(np.max(np.abs(iopto_sat)))
     log.info(
@@ -260,7 +300,9 @@ def calibrate(
         "g0": g0, "E": E,
         "target_iopto": target_iopto,
         "target_light_mWmm2": target_light_mWmm2,
-        "E_ratio": E_RATIO,
+        "E_ratio": e_ratio,
+        "phim_scale": phim_scale,
+        "fiber_distance_um": fiber_distance_um,
         "variant": "bansal",
     }
     calibration_hash = _calibration_hash(core)
@@ -275,6 +317,8 @@ def calibrate(
         "target_iopto": target_iopto,
         "target_light_mWmm2": target_light_mWmm2,
         "saturation_light_mWmm2": saturation_light_mWmm2,
+        "phim_scale": phim_scale,
+        "fiber_distance_um": fiber_distance_um,
         "pulse_duration_ms": pulse_duration_ms,
         "bench_duration_ms": bench_duration_ms,
         "model_period_ms": model_period_ms,
@@ -289,7 +333,7 @@ def calibrate(
             "peak_at_saturation": peak_sat,
             "peak_saturation_bound": peak_saturation_bound,
         },
-        "ratios": {"E": E_RATIO},
+        "ratios": {"E": e_ratio},
         "voperating_ref": {
             "vr": voperating.get("vr"),
             "vth": voperating.get("vth"),
@@ -338,6 +382,22 @@ def main():
                              "PyRhO peak ~0.25); Bansal-anchored calibration produces a "
                              "smaller envelope, so this gate catches kinetic-shape "
                              "regressions that the legacy 1.5 bound would mask.")
+    parser.add_argument("--phim-scale", type=float, default=1.0,
+                        help="Multiplier on the opsin half-saturation phim. >1 = less "
+                             "light-sensitive (saturates later, more linear over the "
+                             "operating range); g0 is re-solved for the chosen phim.")
+    parser.add_argument("--fiber-distance-um", type=float,
+                        default=DEFAULT_FIBER_DISTANCE_UM,
+                        help="Reference fiber→neuron distance (µm) at which the g0 "
+                             "solve places target_iopto. Default 500 µm lines the "
+                             "chr2 calibration up with the proportional_current plant; "
+                             "the legacy chr2 calibration used 100 µm (under-drove the "
+                             "realistically-distant plant population).")
+    parser.add_argument("--e-ratio", type=float, default=E_RATIO,
+                        help="E placement: E = v_low + e_ratio*window. Default 3.5 "
+                             "(E far above the operating range, weak voltage "
+                             "dependence). Lower brings E closer, strengthening the "
+                             "Bansal (V−E) voltage dependence.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -355,6 +415,9 @@ def main():
         model_period_ms=args.model_period_ms,
         rel_err_tolerance=args.rel_err_tolerance,
         peak_saturation_bound=args.peak_saturation_bound,
+        phim_scale=args.phim_scale,
+        fiber_distance_um=args.fiber_distance_um,
+        e_ratio=args.e_ratio,
     )
 
     out_path = Path(args.out_json)
