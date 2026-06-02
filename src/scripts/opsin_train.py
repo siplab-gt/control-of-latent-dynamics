@@ -60,12 +60,14 @@ def _generate_one_sequence(
     *,
     g0: float,
     E: float,
+    phim,
     v_clamp: float,
     mu: float,
     sigma: float,
     u_max_mWmm2: float,
     time_steps: int,
     model_period_ms: float,
+    fiber_distance_um: float,
     seed: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Generate a single lognormal trace + photocurrent pair under a fresh
@@ -74,13 +76,14 @@ def _generate_one_sequence(
     trace = rng.lognormal(mu, sigma, size=time_steps).clip(0, u_max_mWmm2)
 
     b2.start_scope()
-    opsin = UnitlessChr2FourState(g0=g0, E=E)
+    opsin = UnitlessChr2FourState(g0=g0, E=E, phim=phim)
     data_gen = SynthOptoStimDataGen(
         opto_stim_fn=SynthOptoStimDataGen.make_array_stim_fn(
             trace, dt=model_period_ms * ms),
         opsin_model=opsin,
         model_period_ms=model_period_ms,
         dummy_neuron_model=_v_clamp_dummy_neuron_eqs(v_clamp),
+        fiber_distance_um=fiber_distance_um,
     )
     duration_ms = time_steps * model_period_ms
     photocurrent_raw, light_raw = data_gen.run_simulation(duration_ms)
@@ -97,12 +100,14 @@ def generate_cold_opsin_pool(
     *,
     g0: float,
     E: float,
+    phim,
     v_clamp: float,
     typical_Irr0_mWmm2: float,
     u_max_mWmm2: float,
     n_sequences: int,
     time_steps: int,
     model_period_ms: float,
+    fiber_distance_um: float,
     seed: int,
     verbose: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -130,10 +135,11 @@ def generate_cold_opsin_pool(
     results = Parallel(n_jobs=n_jobs)(
         delayed(_generate_one_sequence)(
             i,
-            g0=g0, E=E, v_clamp=v_clamp,
+            g0=g0, E=E, phim=phim, v_clamp=v_clamp,
             mu=mu, sigma=sigma, u_max_mWmm2=u_max_mWmm2,
             time_steps=time_steps,
             model_period_ms=model_period_ms,
+            fiber_distance_um=fiber_distance_um,
             seed=seed,
         )
         for i in range(n_sequences)
@@ -152,6 +158,12 @@ def main(snakemake) -> None:
     g0 = float(calib["g0"])
     E = float(calib["E"])
     v_clamp = float(calib["v_median"])
+    # Match the plant's phim so the NN trains against the SAME calibrated opsin
+    # cleo_prep injects (phim_scale absent in legacy calibrations → 1.0).
+    phim = float(calib.get("phim_scale", 1.0)) * UnitlessChr2FourState(g0=1.0, E=0.0).phim
+    # Match the plant's reference fiber distance so the NN trains against the
+    # same light→Iopto operating point the g0 solve used (legacy calib → 100 µm).
+    fiber_distance_um = float(calib.get("fiber_distance_um", 100.0))
 
     train_cfg = config.get("opsin_train_cold") or {}
     if not train_cfg:
@@ -178,12 +190,13 @@ def main(snakemake) -> None:
         config["prep_fsnn"]["dt_ms"] * config["cleo_prep"]["subsample_factor"])
 
     light, photocurrent = generate_cold_opsin_pool(
-        g0=g0, E=E, v_clamp=v_clamp,
+        g0=g0, E=E, phim=phim, v_clamp=v_clamp,
         typical_Irr0_mWmm2=typical_Irr0_mWmm2,
         u_max_mWmm2=u_max_mWmm2,
         n_sequences=n_sequences,
         time_steps=time_steps,
         model_period_ms=model_period_ms,
+        fiber_distance_um=fiber_distance_um,
         seed=seed,
     )
 
