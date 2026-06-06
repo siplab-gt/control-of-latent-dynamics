@@ -652,6 +652,18 @@ rule ctrl_expts:
         "src/ctrl/{ctrl_type}.py",
         cleo_prep=wildcard_path("cleo_prep.pkl.gz"),
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
+        # ctrl_expts unpickles cleo_prep, whose __reduce__ re-runs CleoPrep.build,
+        # which EAGERLY reads chr2_4s_fsnn_calibration.json. Declare it (same
+        # pattern as rule cleo_prep via _cleo_prep_calibration_input) so the DAG
+        # orders ctrl after calibrate_opsin_plant and never runs against a missing
+        # JSON — the per-combo sweep wrapper rm's the global JSON to force
+        # recalibration, and without this dep a cached cleo_prep.pkl.gz lets ctrl
+        # race ahead of the regeneration and crash with FileNotFoundError.
+        calibration=lambda wc: (
+            [config["cleo_prep"]["opsin_calibration_dir"] + "/chr2_4s_fsnn_calibration.json"]
+            if config.get("cleo_prep", {}).get("opsin_plant_class") == "chr2_4s_fsnn"
+            else []
+        ),
         configfiles=configfile_inputs_excluding_sweeps,
     params:
         step_cfg("cleo_prep", "expts", "ctrl_expts"),
@@ -1217,7 +1229,6 @@ rule cleo_prep:
         cleo_prep_module=_cleo_prep_module_input,
         interface_array="src/interface_array.py",
         opsins="src/opsins.py",
-        calibrate="src/scripts/calibrate_opsin_plant.py",
         calibration=_cleo_prep_calibration_input,
         configfiles=configfile_inputs_excluding_sweeps,
     params:
