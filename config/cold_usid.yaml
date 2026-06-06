@@ -314,5 +314,26 @@ usid_hyperparams:
   train_split: 0.7
   val_split: 0.15
   subset_ratio: 0.5
+  # Behavioral-decoder (Cz) fit mode. The NLMPC/iLQR controllers plan against
+  # the OBSERVER free-run state (self-fed y = C·x, Kalman gain K still applied),
+  # NOT the teacher-forced (real-y, Kalman-corrected) state the model is
+  # validated on. Fitting Cz on the teacher-forced 1-step state therefore reads
+  # Z out of the wrong trajectory and the controller's planned Z is poor.
+  #   - "teacher_forced": Ridge-fit Cz on the 1-step filtered/observer state
+  #     (legacy behaviour; matches the state the model is trained against).
+  #   - "observer_rollout": Ridge-fit Cz on the observer free-run state POOLED
+  #     over rollout horizons j=1..cz_observer_horizon — the states the
+  #     controller actually visits when planning. Lifts observer-form held-out
+  #     R²(Z) at the control horizon from ~−0.04 to ~+0.16 @h20 (offline-
+  #     validated on the cached usid_stim_rec chr2 cells; see
+  #     tmp/cold_investigation/wave3_B_solution_integration.md PART 1b).
+  cz_fit_mode: observer_rollout
+  # Rollout depth (in samples) to pool the observer free-run state over when
+  # cz_fit_mode == "observer_rollout". 20 = the 200 ms control horizon at the
+  # subsample_factor=10 (10 ms) controller grid (ctrl_horizon_ms=200). Pooling
+  # j=1..H (rather than fitting at a single far horizon) keeps the near-horizon
+  # readout — which the replanning MPC realizes most — intact while still
+  # lifting the tail.
+  cz_observer_horizon: 20
 
 # (oracle_usid omitted — architecturally incompatible with COLD; same as oracle_natural.)

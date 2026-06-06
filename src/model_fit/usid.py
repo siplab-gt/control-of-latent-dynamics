@@ -282,11 +282,31 @@ def fit_lds_to_data(
     Xhat = _compute_state_trajectory(usid_model, y_tensor, u_tensor, device)
 
     # === 6. Post-processing ===
-    # Fit behavioral decoder
+    # Fit behavioral decoder. The controller (NLMPC/iLQR) plans against the
+    # OBSERVER free-run state (self-fed y = C·x), not the teacher-forced state
+    # Xhat above — so by default Cz is fit on the pooled observer-rollout state
+    # the controller visits, not on Xhat. See _fit_behavioral_decoder.
     log.info("Fitting behavioral decoder (Cz)...")
-    Cz1, Cz2 = _fit_behavioral_decoder(Xhat, ZN, n1, n2)
+    try:
+        cz_fit_mode = str(cfg.usid_hyperparams.cz_fit_mode)
+        cz_observer_horizon = int(cfg.usid_hyperparams.cz_observer_horizon)
+    except AttributeError as e:
+        raise AttributeError(
+            "Missing required USID config attribute "
+            "usid_hyperparams.cz_fit_mode / cz_observer_horizon."
+        ) from e
+    Cz1, Cz2 = _fit_behavioral_decoder(
+        Xhat, ZN, n1, n2,
+        usid_model=usid_model,
+        u_tensor=u_tensor,
+        device=device,
+        cz_fit_mode=cz_fit_mode,
+        cz_observer_horizon=cz_observer_horizon,
+    )
     subspace_lds.Cz1 = Cz1
     subspace_lds.Cz2 = Cz2
+    # Zhat reported for the analysis CSV is the teacher-forced readout (the
+    # state the model is validated against — what R2_model_fit_Z_Zhat measures).
     Zhat = Xhat[:, :n1] @ Cz1.T + Xhat[:, n1:] @ Cz2.T
 
     subspace_lds.metadata['k_opto'] = k_opto
@@ -763,15 +783,126 @@ def _compute_state_trajectory(usid_model, y_train, u_train, device):
     return np.hstack([x1_traj, x2_traj])
 
 
-def _fit_behavioral_decoder(Xhat, ZN, n1, n2, alpha=1.0):
+def _observer_rollout_pool(usid_model, Xf, u_tensor, device, horizon):
+    """Build the pooled OBSERVER free-run state the controller plans against.
+
+    The NLMPC/iLQR controllers self-feed ``y = C·x`` (with the Kalman gains K1/K2
+    still applied) when they roll the model forward to plan — see
+    ``src/ctrl/NLMPC.py::_rollout_state``. This is NOT the teacher-forced
+    trajectory ``Xf`` (from ``_compute_state_trajectory``), which feeds the REAL
+    recorded y each step. Fitting Cz on the teacher-forced state therefore
+    decodes Z from a state the controller never actually visits.
+
+    Here we reproduce the controller's planning rollout exactly, reusing the
+    trained model's own ``step`` (single source of the recurrence): from each
+    filtered start ``Xf[t0]`` we free-run ``horizon`` steps, self-feeding the
+    model's predicted y, and collect the state at every rollout depth
+    ``j = 1..horizon`` paired with the true Z at ``t0 + j``. Pooling over all j
+    (rather than fitting at one far horizon) yields one Cz that decodes Z
+    consistently along the whole rollout — the near horizons (which the
+    replanning MPC realizes most) stay intact while the tail is lifted.
+
+    No trial boundaries are available at model_fit time, so rollouts are seeded
+    from every start ``t0 = 0..T-1-horizon`` over the continuous trajectory; a
+    rollout near a (concatenated) trial boundary spans it, which is benign
+    because the photocurrent input is continuous.
+
+    Args:
+        Xf: (T, n1+n2) teacher-forced state trajectory (the controller's running
+            observer estimate), reused as the rollout seeds.
+
+    Returns:
+        Tuple of (X_pool (n_starts*horizon, n1+n2), Z_idx (n_starts*horizon,)),
+        where Z_idx maps each pooled state to its true-Z timestep.
+    """
+    usid_model.eval()
+    n1 = usid_model.n1
+    n2 = usid_model.n2
+    T = Xf.shape[0]
+    if T <= horizon + 1:
+        raise ValueError(
+            f"Sequence too short to build observer-rollout Cz pool: T={T}, "
+            f"cz_observer_horizon={horizon}. Need T > horizon + 1."
+        )
+
+    Xf_t = torch.tensor(Xf, dtype=torch.float32, device=device)
+
+    n_starts = T - horizon
+    with torch.no_grad():
+        with usid_model.natural_model.A_param.cache(), usid_model.A22_param.cache():
+            # Photocurrents for the WHOLE trajectory (matches the GRU memory the
+            # controller carries); index per-start below.
+            photocurrents = usid_model.compute_photocurrents(u_tensor)  # (1, T, k)
+            P = photocurrents.squeeze(0)  # (T, k)
+
+            # Batch all starts: x1/x2 (n_starts, n1/n2); P broadcast per rollout step.
+            x1 = Xf_t[:n_starts, :n1].clone()
+            x2 = Xf_t[:n_starts, n1:].clone()
+            start_idx = torch.arange(n_starts, device=device)
+
+            X_pool = []
+            Z_idx = []
+            for j in range(horizon):
+                # self-fed y = C1·x1 + C2·x2 (== model.step's y_out at this state)
+                yhat = x1 @ usid_model.natural_model.Cy1.T + x2 @ usid_model.Cy2.T
+                P_j = P[start_idx + j]  # photocurrent at absolute time t0+j
+                x1, x2, _ = usid_model.step(x1, x2, yhat, P_j)
+                # state at depth j+1 -> true Z at t0 + (j+1)
+                X_pool.append(torch.cat([x1, x2], dim=1))
+                Z_idx.append(start_idx + (j + 1))
+
+    X_pool = torch.cat(X_pool, dim=0).cpu().numpy()
+    Z_idx = torch.cat(Z_idx, dim=0).cpu().numpy()
+    return X_pool, Z_idx
+
+
+def _fit_behavioral_decoder(
+    Xhat, ZN, n1, n2, *,
+    usid_model=None, u_tensor=None, device=None,
+    cz_fit_mode="teacher_forced", cz_observer_horizon=20, alpha=1.0,
+):
     """Fit linear decoder from states to behavioral output Z.
+
+    Two modes (see config/cold_usid.yaml usid_hyperparams.cz_fit_mode):
+
+    * ``teacher_forced`` — Ridge-fit Cz on the 1-step teacher-forced (filtered)
+      state ``Xhat``. This is the state the model is *trained/validated* against,
+      but NOT the one the controller plans against. Legacy behaviour.
+
+    * ``observer_rollout`` (default) — Ridge-fit Cz on the OBSERVER free-run
+      state pooled over rollout depths ``j = 1..cz_observer_horizon`` (see
+      ``_observer_rollout_pool``). This is the state the NLMPC/iLQR controllers
+      actually visit during planning, so the decoder reads Z out of the right
+      trajectory. Offline-validated to lift observer-form held-out R²(Z) at the
+      control horizon (≈ −0.04 → +0.16 @h20) on the cached usid_stim_rec chr2
+      cells.
 
     Uses fit_intercept=False because ZN is already zero-mean (normalized by
     model_fit.py). This ensures x2z(X) = X @ Cz.T with no bias term, matching
     the controller's expectation.
     """
+    if cz_fit_mode == "teacher_forced":
+        X_fit, Z_fit = Xhat, ZN
+    elif cz_fit_mode == "observer_rollout":
+        if usid_model is None or u_tensor is None or device is None:
+            raise ValueError(
+                "cz_fit_mode='observer_rollout' requires usid_model, u_tensor, "
+                "and device."
+            )
+        # Xhat is the teacher-forced state trajectory (the controller's running
+        # observer estimate); reused as the free-run rollout seeds.
+        X_pool, Z_idx = _observer_rollout_pool(
+            usid_model, Xhat, u_tensor, device, cz_observer_horizon
+        )
+        X_fit, Z_fit = X_pool, ZN[Z_idx]
+    else:
+        raise ValueError(
+            f"Unknown cz_fit_mode={cz_fit_mode!r}; expected 'teacher_forced' "
+            f"or 'observer_rollout'."
+        )
+
     decoder = Ridge(alpha=alpha, fit_intercept=False)
-    decoder.fit(Xhat, ZN)
+    decoder.fit(X_fit, Z_fit)
 
     Cz_combined = decoder.coef_  # (nz, n1+n2)
     Cz1 = Cz_combined[:, :n1]
