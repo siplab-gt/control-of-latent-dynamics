@@ -90,6 +90,11 @@ class CleoPrep(BaseDataClass):
                 "usid_stim_rec_no_opsin": "usid_stim_rec",
                 "braid_stim_rec": "usid_stim_rec",
                 "braid_stim_rec_nonlinear": "usid_stim_rec",
+                # loss-recovery sweep settings (2026-05-30): USID, same array layout.
+                "usid_loss_base": "usid_stim_rec",
+                "usid_loss_roll": "usid_stim_rec",
+                "usid_loss_acf": "usid_stim_rec",
+                "usid_loss_both": "usid_stim_rec",
             }
             module_name = f"src.cleo_prep_{cleo_prep_module_for[setting]}"
             module = importlib.import_module(module_name)

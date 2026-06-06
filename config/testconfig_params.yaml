@@ -32,7 +32,7 @@ params:
   setting: usid_stim_rec
   beam_width_um: 100
   signals: lfp
-  n_trials_sys_id: 10
+  n_trials_sys_id: 50
   model_task_inputs: false
   latency: false
   ctrl_type: LQMPC
@@ -160,6 +160,70 @@ model_fit_braid_stim_rec_nonlinear:
   cz_hidden_units: 64
   epochs: 200
   steps_ahead_model_code: ""
+
+# === Loss-recovery sweep (2026-05-30) — 4 USID/no-opsin settings ===
+# Tests whether constraining the FREE-RUN (rollout) and/or matching the output
+# autocorrelation (ACF, which constrains the natural A11 directly) recovers the
+# open-loop rollout R2(Z) the controller plans against — currently decoupled from
+# the (good) 1-step teacher-forced R2(Z). Per-setting `usid_overrides` reach
+# usid.py via the model_fit overlay (model_fit.py:186-202) and deep-merge onto
+# cold_usid.yaml (usid.py:357-359). ACF is natural-phase-only (A11 is frozen in
+# the USID phase). NOTE: `schedule` overrides static loss_weights, and a
+# linear schedule with `end` PERSISTS after its window — so raising rollout needs
+# its schedule overridden too (else the stock 0.1->0.1 linear schedule pins it
+# back to 0.1). Verify activation post-run via natural_metrics.json train_components.
+model_fit_usid_loss_base:        # L0 baseline (cold_usid.yaml defaults)
+  model_fit_method: usid
+  use_opsin: false
+  epochs: 2500
+  steps_ahead_model_code: ""
+
+model_fit_usid_loss_roll:        # L1 rollout weight 0.1 -> 1.0 (both phases)
+  model_fit_method: usid
+  use_opsin: false
+  epochs: 2500
+  steps_ahead_model_code: ""
+  usid_overrides:
+    natural_hyperparams:
+      loss:
+        loss_weights: {rollout: 1.0}
+        schedule:
+          rollout: {mode: linear, start: 1.0, end: 1.0, epochs: 20}
+    usid_hyperparams:
+      loss:
+        loss_weights: {rollout: 1.0}
+        schedule:
+          rollout: {mode: linear, start: 1.0, end: 1.0, epochs: 20}
+
+model_fit_usid_loss_acf:         # L2 ACF loss 0.0 -> 1.0 (natural phase; constrains A11)
+  model_fit_method: usid
+  use_opsin: false
+  epochs: 2500
+  steps_ahead_model_code: ""
+  usid_overrides:
+    natural_hyperparams:
+      loss:
+        loss_weights: {acf: 1.0}
+        schedule:
+          acf: {mode: linear, start: 1.0, end: 1.0, epochs: 20}
+
+model_fit_usid_loss_both:        # L3 rollout=1.0 + acf=1.0
+  model_fit_method: usid
+  use_opsin: false
+  epochs: 2500
+  steps_ahead_model_code: ""
+  usid_overrides:
+    natural_hyperparams:
+      loss:
+        loss_weights: {rollout: 1.0, acf: 1.0}
+        schedule:
+          rollout: {mode: linear, start: 1.0, end: 1.0, epochs: 20}
+          acf: {mode: linear, start: 1.0, end: 1.0, epochs: 20}
+    usid_hyperparams:
+      loss:
+        loss_weights: {rollout: 1.0}
+        schedule:
+          rollout: {mode: linear, start: 1.0, end: 1.0, epochs: 20}
 
 ctrl_expts:
   Q_cost: 1

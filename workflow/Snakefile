@@ -523,7 +523,10 @@ rule stim_rec_tabulate:
     output:
         "<results>/{setting}_{task}.csv",
     wildcard_constraints:
-        setting="usid_stim_rec|usid_stim_rec_no_opsin|braid_stim_rec|braid_stim_rec_nonlinear",
+        # stim-rec settings recognized by this tabulator (distinct from the
+        # sufficient_stim / optimal_stim_rec grids). usid_loss_* added 2026-05-30
+        # for the loss-recovery sweep (same tabulation, new setting names).
+        setting="usid_stim_rec|usid_stim_rec_no_opsin|braid_stim_rec|braid_stim_rec_nonlinear|usid_loss_base|usid_loss_roll|usid_loss_acf|usid_loss_both",
     localrule: True
     run:
         dfs = [pd.read_csv(infile) for infile in input]
@@ -1006,7 +1009,7 @@ rule model_fit:
         slurm_partition=slurm_extra_for_model_fit,
         gpu=1,
         mem_mb=32000,
-        runtime=120,
+        runtime=180,    # raised 120->180 for n_trials_sys_id=50 + rollout/ACF losses (loss-recovery sweep)
     retries: 1
     conda:
         "envs/main.yaml"
@@ -1179,6 +1182,11 @@ _CLEO_PREP_MODULE_FOR_SETTING = {
     "usid_stim_rec_no_opsin": "usid_stim_rec",
     "braid_stim_rec": "usid_stim_rec",
     "braid_stim_rec_nonlinear": "usid_stim_rec",
+    # loss-recovery sweep settings (2026-05-30): USID method, same array layout.
+    "usid_loss_base": "usid_stim_rec",
+    "usid_loss_roll": "usid_stim_rec",
+    "usid_loss_acf": "usid_stim_rec",
+    "usid_loss_both": "usid_stim_rec",
 }
 
 
