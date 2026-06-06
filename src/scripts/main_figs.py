@@ -85,12 +85,12 @@ def main(
         key_metric_func = compute_k_suff
         main_fig_plot_type = "lineplots"
         plots_per_row = 3
-    elif setting in (
-        "optimal_stim_rec",
-        "usid_stim_rec",
-        "usid_stim_rec_no_opsin",
-        "braid_stim_rec",
-    ):
+    else:
+        # Every stim-rec-family setting (optimal_stim_rec, usid_stim_rec[_no_opsin],
+        # braid_stim_rec[_nonlinear], usid_loss_*, oracle_stim_rec, …) tracks the
+        # behavioral output Z. sufficient_stim above is the sole X-tracking
+        # exception, so default the rest here rather than enumerating — new
+        # Z-tracking settings then need no edit to plot.
         metric = "Q_track_Zref_Z"
         colorbar_label = r"$Q_\text{track}\left(Z_\text{ref}, Z\right)$"
         key_metric_name = "optimal_p_stim"
@@ -237,6 +237,13 @@ def main(
         # TODO: limit vmin, vmax to reasonable range
         vmin = max(vmin, -1)
         vmax = min(vmax, 1)
+        # When ALL values lie outside [-1, 1] (e.g. an over-driven plant gives
+        # Q_track ≪ -1), the clamps above invert to vmin > vmax, which
+        # matplotlib's Normalize rejects ("minvalue must be ≤ maxvalue"). Fall
+        # back to the full [-1, 1] display window — the actual extreme values
+        # are still surfaced by the text annotations below.
+        if vmin >= vmax:
+            vmin, vmax = -1.0, 1.0
         heatmap_kwargs = dict(
             mean=dict(
                 vmin=vmin,

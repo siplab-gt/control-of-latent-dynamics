@@ -34,11 +34,11 @@ def main(cond_params, base_params, outfiles):
         from src.cleo_prep_sufficient_stim import light_and_probe_coords
     elif cond_params["setting"] in ("optimal_stim_rec", "optimal-stim-rec"):
         from src.cleo_prep_optimal_stim_rec import light_and_probe_coords
-    elif cond_params["setting"] in (
-        "usid_stim_rec",
-        "usid_stim_rec_no_opsin",
-        "braid_stim_rec",
-    ):
+    else:
+        # All other stim-rec-family settings (usid_stim_rec[_no_opsin],
+        # braid_stim_rec[_nonlinear], usid_loss_*, oracle_stim_rec, …) share the
+        # usid_stim_rec array layout — only sufficient_stim / optimal_stim_rec
+        # above differ. Default here so new settings need no schematic edit.
         from src.cleo_prep_usid_stim_rec import light_and_probe_coords
 
     light_coords, light_groups, probe_coords = light_and_probe_coords(
