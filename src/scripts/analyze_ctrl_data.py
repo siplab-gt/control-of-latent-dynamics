@@ -1,5 +1,7 @@
 """Analyze control experiment data and include fSNN and model fit analyses."""
 
+import json
+
 import brian2.only as b2
 import numpy as np
 import pandas as pd
@@ -31,6 +33,76 @@ def is_empty(arr):
     return arr is None or arr.size == 0
 
 
+def operating_regime_linearity(ctrl_data, eval_mask, curve, u_max):
+    """How linear is the portion of the opsin saturation curve the controller
+    actually drives, given its realized commanded light `ctrl_data.Uopto`.
+
+    `curve` is the dict written by the `opsin_saturation_curve` diagnostic: a
+    light grid (mW/mm2) and the steady-state |Iopto| response on it, i.e. the
+    static actuator map f(u). This complements the fixed-range `lin[5,75]`
+    (a property of f alone) by weighting it by where the controller operates.
+
+    - `ctrl_opsin_gain_retention` (G_op) = mean_t f'(u_t) / f'(0): the average
+      fractional small-signal gain the opsin still delivers at the commanded
+      light levels. 1.0 = the controller stays in the linear region; -> 0 = it
+      drives the opsin deep into saturation.
+    - `ctrl_opsin_lin_op` = f(u_hi) / ((u_hi/u_lo) f(u_lo)) over the realized
+      operating range [p10, p90] of commanded light: the same secant-linearity
+      form as lin[5,75] but anchored at what the controller actually commands.
+      Read it alongside `ctrl_opsin_gain_retention` and the p10/p90 columns: a
+      narrow operating band (p10 ~ p90) drives lin_op -> 1 regardless of where
+      on the curve it sits, so gain_retention is the disambiguating number.
+    - operating-point stats: mean / max commanded light and the fraction of
+      commands at the u_max bound.
+
+    Diagnostic only — the caller wraps this in try/except so a failure never
+    blocks the summary row. Commanded light is in mW/mm2 (source irradiance),
+    matching the curve grid and u_max. Restricted to the eval windows for
+    consistency with Q_track/R2_track; zero-light commands are excluded from
+    the gain statistics (they carry no operating-point information).
+    """
+    U = np.asarray(ctrl_data.Uopto, dtype=float)
+    light = np.asarray(curve["light_grid_mWmm2"], dtype=float)
+    ss = np.abs(np.asarray(curve["iopto_ss_abs"], dtype=float))
+    order = np.argsort(light)
+    light, ss = light[order], ss[order]
+    slope = np.gradient(ss, light)
+    # Small-signal gain f'(0): the near-origin forward-difference slope of the
+    # curve (light[0] is 0). Used only to normalize G_op, so G_op == 1 exactly
+    # for a linear curve and < 1 once the realized commands enter the bend.
+    slope0 = float(np.interp(0.0, light, slope))
+
+    u_all = U[eval_mask].ravel()
+    u_active = u_all[u_all > 0.0]
+    out = {
+        "ctrl_opsin_light_mean": float(np.mean(u_all)) if u_all.size else np.nan,
+        "ctrl_opsin_light_mean_active": float(np.mean(u_active)) if u_active.size else np.nan,
+        "ctrl_opsin_light_max": float(np.max(u_all)) if u_all.size else np.nan,
+        "ctrl_opsin_frac_light_at_umax": (
+            float(np.mean(u_all >= 0.99 * u_max)) if (u_all.size and u_max > 0) else np.nan
+        ),
+        "ctrl_opsin_gain_retention": np.nan,
+        "ctrl_opsin_lin_op": np.nan,
+        "ctrl_opsin_op_light_p10": np.nan,
+        "ctrl_opsin_op_light_p90": np.nan,
+    }
+    if u_active.size == 0 or not np.isfinite(slope0) or slope0 <= 0:
+        return out
+
+    fprime = np.interp(u_active, light, slope)
+    out["ctrl_opsin_gain_retention"] = float(np.mean(fprime) / slope0)
+
+    u_lo = float(np.percentile(u_active, 10))
+    u_hi = float(np.percentile(u_active, 90))
+    out["ctrl_opsin_op_light_p10"] = u_lo
+    out["ctrl_opsin_op_light_p90"] = u_hi
+    f_lo = float(np.interp(u_lo, light, ss))
+    f_hi = float(np.interp(u_hi, light, ss))
+    if u_lo > 0 and f_lo > 0:
+        out["ctrl_opsin_lin_op"] = f_hi / ((u_hi / u_lo) * f_lo)
+    return out
+
+
 def analyze_ctrl_data(
     cond_params,
     cfg,
@@ -39,6 +111,7 @@ def analyze_ctrl_data(
     fsnn_data_analysis_file,
     model_fit_analysis_file,
     chr2_stability_file,
+    saturation_curve_file,
     outfile,
 ):
     results = {**cond_params}
@@ -227,6 +300,28 @@ def analyze_ctrl_data(
     results |= pd.read_csv(fsnn_data_analysis_file).iloc[0].to_dict()
     results |= pd.read_csv(model_fit_analysis_file).iloc[0].to_dict()
     results |= pd.read_csv(chr2_stability_file).iloc[0].to_dict()
+
+    # Operating-regime opsin linearity (diagnostic — must never block the row).
+    # Scores the controller's realized commanded light against the plant's
+    # saturation curve, and carries the plant's static linearity indices
+    # through as provenance columns.
+    try:
+        with open(saturation_curve_file) as f:
+            curve = json.load(f)
+        u_max = float(cfg.expts.u_max_mWmm2)
+        results |= operating_regime_linearity(ctrl_data, eval_mask, curve, u_max)
+        for key in (
+            "linearity_index_5_to_75",
+            "linearity_index_5_to_20",
+            "i_half_light_mWmm2",
+            "marginal_gain_at_umax",
+        ):
+            results[f"opsin_{key}"] = curve.get(key, np.nan)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[WARN] operating-regime linearity metric failed: {e}")
+
     print(results)
 
     df = pd.DataFrame([results])
@@ -248,5 +343,6 @@ if __name__ == "__main__" and "snakemake" in locals():
         snakemake.input.fsnn_data_analysis,
         snakemake.input.model_fit_analysis,
         snakemake.input.chr2_stability,
+        snakemake.input.saturation_curve,
         snakemake.output[0],
     )

@@ -559,6 +559,11 @@ rule analyze_ctrl_data:
             )},
             fill_in_defaults=True,
         ),
+        # Plant saturation curve (global, one per calibration) — used to
+        # score the controller's realized commanded-light distribution
+        # against the opsin nonlinearity (ctrl_opsin_* operating-regime
+        # metrics) and to report plant linearity (lin[5,75]) as provenance.
+        saturation_curve="results/opsin_calibration/chr2_4s_fsnn_saturation_curve.json",
     output:
         wildcard_path("summary.csv"),
     log:
@@ -957,6 +962,34 @@ rule calibrate_opsin_plant:
         "--peak-saturation-bound {params.peak_saturation_bound} "
         "--fiber-distance-um {params.fiber_distance_um} "
         "--e-ratio {params.e_ratio} "
+        "> {log} 2>&1"
+
+
+rule opsin_saturation_curve:
+    """Steady-state saturation curve + linearity indices of the calibrated
+    opsin, consumed by analyze_ctrl_data for the operating-regime control
+    metrics (ctrl_opsin_*). Leaf diagnostic mirroring chr2_stability_check:
+    reads the calibration JSON, sweeps constant light over the commandable
+    range, writes the curve. Reuses the calibrate_opsin_plant bench (one
+    source of truth)."""
+    input:
+        calibration="results/opsin_calibration/chr2_4s_fsnn_calibration.json",
+        script="src/scripts/opsin_saturation_curve.py",
+        calibrate_src="src/scripts/calibrate_opsin_plant.py",
+        opsins="src/opsins.py",
+        configfiles=configfile_inputs_excluding_sweeps,
+    output:
+        "results/opsin_calibration/chr2_4s_fsnn_saturation_curve.json",
+    log:
+        "logs/opsin_saturation_curve.log",
+    conda:
+        "envs/main.yaml"
+    resources:
+        mem_mb=8000,
+        runtime=60,
+    shell:
+        "python -m src.scripts.opsin_saturation_curve "
+        "{input.calibration} {output[0]} "
         "> {log} 2>&1"
 
 
