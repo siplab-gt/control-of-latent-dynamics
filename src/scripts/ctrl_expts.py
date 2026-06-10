@@ -19,6 +19,7 @@ from src.helpers import (
     str2bool,
 )
 from src.model_fit import LDS
+from src.opsin_monitoring import attach_opsin_monitors, extract_per_neuron
 from src.scripts.cleo_prep import CleoPrep
 from src.scripts.sys_id_expts import ExptData
 
@@ -281,6 +282,22 @@ def ctrl_expts(
 
     cleo_prep.sim.set_io_processor(ctrl_proc)
 
+    # Optionally record per-neuron photocurrent + membrane voltage for the
+    # realized opsin-saturation diagnostic (analyze_ctrl_data.per_neuron_saturation;
+    # v splits saturation into the light-gating vs the (V−E) driving-force factor).
+    # OFF by default: recording all N neurons would add multiple GB of Brian2
+    # monitor RAM and OOM the ctrl_expts cgroup. When enabled, record on the
+    # subsampled X/Y/Z grid (record_dt) to keep RAM bounded. Shared recorder
+    # (one source of truth with sys_id_expts).
+    record_pn = bool(getattr(base_params, "record_opto_per_neuron", False))
+    monitors = None
+    channel_neuron_transmittance = None
+    if record_pn:
+        record_dt = base_params.subsample_factor * cleo_prep.fsnn.dt
+        monitors, channel_neuron_transmittance = attach_opsin_monitors(
+            cleo_prep, record_v=True, record_dt=record_dt
+        )
+
     log.info(f"running {n_trials} control trials")
     cleo_prep.fsnn.run_trials(
         n_trials,
@@ -293,6 +310,10 @@ def ctrl_expts(
     )
 
     spike_counts = np.array(ctrl_proc.spike_counts) if ctrl_proc.spike_counts else None
+    Iopto_per_neuron = V_per_neuron = None
+    if monitors is not None:
+        # already recorded on the subsampled grid -> no further subsampling
+        Iopto_per_neuron, V_per_neuron = extract_per_neuron(monitors, 1)
 
     ctrl_data = CtrlData.from_cleo_prep(
         cleo_prep,
@@ -300,6 +321,9 @@ def ctrl_expts(
         cleo_prep.sim.io_processor.t_samp,
         base_params.subsample_factor,
         cleo_prep_file,
+        Iopto_per_neuron=Iopto_per_neuron,
+        channel_neuron_transmittance=channel_neuron_transmittance,
+        V_per_neuron=V_per_neuron,
     )
     log.info("extracting Zref and Zhat")
     Zref = ctrl_proc.Zref * lds.z_std + lds.z_mean

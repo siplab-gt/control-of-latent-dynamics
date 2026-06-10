@@ -15,6 +15,7 @@ from src.helpers import (
     setup_debugger,
     setup_logging,
 )
+from src.opsin_monitoring import attach_opsin_monitors, extract_per_neuron
 from src.scripts.cleo_prep import CleoPrep
 
 log = logging.getLogger(__name__)
@@ -56,6 +57,12 @@ class ExptData(BaseDataClass):
     """Per-channel→per-neuron transmittance matrix, shape (k_opto, N). Static
     (channel geometry doesn't change during a trial). Multiply by Uopto(t) to
     reconstruct per-neuron irradiance. None if Iopto_per_neuron is None."""
+    V_per_neuron: Float[np.ndarray, "T N"] | None = None
+    """Per-neuron membrane voltage from the plant, shape (T, N) array, on the
+    same grid as Iopto_per_neuron. Enables decomposing realized opsin saturation
+    into the light-gating vs the voltage-dependent (V−E) driving-force factors.
+    Recorded by ctrl_expts (record_v=True); None for sys-ID and natural-electrode
+    data (record_v=False) and whenever Iopto_per_neuron is None."""
 
     @property
     def n_trials(self) -> int:
@@ -88,7 +95,7 @@ class ExptData(BaseDataClass):
     @classmethod
     def from_cleo_prep(
         cls, cleo_prep: CleoPrep, spike_counts, t_samp, subsample_factor, cleo_prep_file,
-        Iopto_per_neuron=None, channel_neuron_transmittance=None,
+        Iopto_per_neuron=None, channel_neuron_transmittance=None, V_per_neuron=None,
     ):
         i_trial_bounds = np.array(cleo_prep.fsnn.i_trial_boundaries) / subsample_factor
         i_trial_bounds[:, 0] = i_trial_bounds[:, 0].astype(int)
@@ -118,6 +125,7 @@ class ExptData(BaseDataClass):
             cleo_prep_file=cleo_prep_file,
             Iopto_per_neuron=Iopto_per_neuron,
             channel_neuron_transmittance=channel_neuron_transmittance,
+            V_per_neuron=V_per_neuron,
         )
         assert np.all(expt_data.t_ms == expt_data.t_samp_ms)
         assert expt_data.X.shape[0] == expt_data.Y.shape[0] == expt_data.Z.shape[0], (
@@ -134,6 +142,11 @@ class ExptData(BaseDataClass):
             assert expt_data.channel_neuron_transmittance.shape[1] == expt_data.Iopto_per_neuron.shape[1], (
                 f"transmittance N={expt_data.channel_neuron_transmittance.shape[1]} "
                 f"!= Iopto N={expt_data.Iopto_per_neuron.shape[1]}"
+            )
+        if expt_data.V_per_neuron is not None:
+            assert expt_data.V_per_neuron.shape == expt_data.Iopto_per_neuron.shape, (
+                f"V_per_neuron {expt_data.V_per_neuron.shape} "
+                f"!= Iopto_per_neuron {expt_data.Iopto_per_neuron.shape}"
             )
 
         return expt_data
@@ -183,24 +196,12 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         SysIDProcessor(sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor)
     )
 
-    # Record per-neuron biophysical photocurrent for opsin-fit validation.
-    # cleo opsin classes declare Iopto on ng_main via a (summed) synapse
-    # expression, so monitoring ng_main directly gives the final per-neuron
-    # photocurrent regardless of opsin class.
-    ng_main = cleo_prep.fsnn.ng_main
-    iopto_mon = b2.StateMonitor(ng_main, "Iopto", record=True, name="opsin_iopto_mon")
-    cleo_prep.fsnn.net.add(iopto_mon)
-
-    # Static channel→neuron transmittance (T[c,n] = sum of per-source
-    # transmittances for sources in group c). Multiplying by Uopto(t) gives
-    # per-neuron irradiance, which the NN opsin is trained to map to Iopto.
-    neuron_coords = cleo.coords.coords_from_ng(ng_main)
-    trans_per_source = cleo_prep.light.transmittance(neuron_coords)  # (n_sources, N)
-    k_channels = cleo_prep.light.n_groups
-    N = ng_main.N
-    channel_neuron_transmittance = np.zeros((k_channels, N), dtype=np.float32)
-    for c, group in enumerate(cleo_prep.light.groups):
-        channel_neuron_transmittance[c] = trans_per_source[group].sum(axis=0)
+    # Record per-neuron biophysical photocurrent for opsin-fit validation
+    # (shared with ctrl_expts via src.opsin_monitoring). sys-ID does not need
+    # membrane voltage, so record_v=False keeps its output unchanged.
+    monitors, channel_neuron_transmittance = attach_opsin_monitors(
+        cleo_prep, record_v=False
+    )
 
     log.info(f"running {n_trials} sys ID trials")
     cleo_prep.fsnn.run_trials(
@@ -226,32 +227,8 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         cleo_prep.light.t[1:] == cleo_prep.fsnn.y_mon.t[:: base_params.subsample_factor]
     )
 
-    # Subsample Iopto onto the same grid as X/Y/Z. StateMonitor shape is
-    # (N_neurons, T_brian); transpose + subsample → (T, N).
-    #
-    # Iopto can be:
-    #   * ampere-typed (ProportionalCurrentOpsin on fSNN) — convert to nA
-    #     to match the scale USID's NN opsin was trained against
-    #     (synthetic_opsin_data.py emits nA for amp-typed Iopto).
-    #   * dimensionless (UnitlessChr2FourState on fSNN's `Iopto : 1`) —
-    #     pass through unchanged; dividing by b2.namp would be a
-    #     DimensionMismatchError.
-    # Dimension-pattern-match instead of isinstance() so an empty-dim
-    # Quantity doesn't silently trip the amp branch.
-    #
-    # NOTE to future maintainers: the check uses `b2.amp` (broad ampere
-    # family) while the divisor is `b2.namp` (nanoampere). These look
-    # inconsistent but both are amp-dimension units; `have_same_dimensions`
-    # checks dimensions not scale. If you change the divisor to `b2.amp`
-    # to "match the check," you'll silently shift the stored scale by
-    # 1e9 — downstream USID diagnostics expect the nA scale because
-    # synthetic_opsin_data.py emits nA.
-    iopto_raw = iopto_mon.Iopto
-    if b2.have_same_dimensions(iopto_raw, b2.amp):
-        iopto_raw = iopto_raw / b2.namp
-    Iopto_per_neuron = np.asarray(iopto_raw).T[
-        :: base_params.subsample_factor
-    ].astype(np.float32)
+    # Subsample Iopto onto the same grid as X/Y/Z (shared extractor).
+    Iopto_per_neuron, _ = extract_per_neuron(monitors, base_params.subsample_factor)
 
     expt_data = ExptData.from_cleo_prep(
         cleo_prep,

@@ -153,6 +153,12 @@ model_fit_usid_stim_rec:
 
 expts:
   u_max_mWmm2: 75
+  # Record per-neuron photocurrent + membrane voltage during control for the
+  # realized opsin-saturation diagnostic (analyze_ctrl_data.per_neuron_saturation,
+  # ctrl_perneuron_* columns). OFF by default: recording all neurons adds
+  # multiple GB of Brian2 monitor RAM. Enable for a dedicated per-neuron-
+  # saturation run (recorded on the subsampled grid to keep RAM bounded).
+  record_opto_per_neuron: false
 
 sys_id_expts:
   foo: bar

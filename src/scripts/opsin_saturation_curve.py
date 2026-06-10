@@ -132,6 +132,11 @@ def opsin_saturation_curve(calibration_file, out_json):
         "calibration_hash": cal.get("calibration_hash"),
         "phim_scale": float(cal["phim_scale"]),
         "g0": float(cal["g0"]),
+        # Reversal potential and resting voltage — used by analyze_ctrl_data's
+        # per_neuron_saturation to decompose realized saturation into the gating
+        # vs the (V−E) driving-force factor.
+        "E_rev": float(cal["E"]),
+        "v_rest": float(cal["v_median"]),
         "target_light_mWmm2": target_light,
         "saturation_light_mWmm2": saturation_light,
         "operating_band_hi_mWmm2": OPERATING_BAND_HI_MWMM2,
