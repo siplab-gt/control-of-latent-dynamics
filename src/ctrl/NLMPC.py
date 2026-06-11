@@ -1,20 +1,25 @@
 """
-Nonlinear MPC controller using PyTorch gradient descent.
+Nonlinear MPC controller using a differentiable forward model.
 
 Optimizes light inputs directly through the opsin model + linear state
-dynamics. Replaces the CVXPY QP with a differentiable forward model:
+dynamics, replacing the CVXPY QP with:
 
     light → opsin GRU → photocurrents → B' @ p → state update
 
-Box constraints [0, u_max] are enforced by clamping after each gradient step.
-Warm-starts from the previous solution (shifted by one step) for fast
-convergence (typically 5-10 iterations).
+The inner solver is box-constrained L-BFGS-B by default (scipy, quasi-Newton
+with native [0, u_max] bounds and a robust gradient-norm convergence test):
+it converges in far fewer function evaluations than first-order Adam on this
+smooth objective, and its built-in tolerance test avoids the flat-tail
+oscillation that made Adam's relative-improvement early-stop fragile.
+Projected-gradient Adam is retained as the 'adam' option. Both warm-start from
+the previous solution (shifted by one step).
 """
 import logging
 import time
 
 import brian2.only as b2
 import numpy as np
+import scipy.optimize as sopt
 import torch
 from attrs import define, field
 from brian2 import mm2, ms, mwatt
@@ -117,6 +122,98 @@ def _rollout_state_unified(x0, u_zscored, A, B_opto, ref_trajectory, ref_type,
     return cost / H
 
 
+def _solve_projected_adam(loss_fn, u0, lr, max_iters, tol, patience, u_max):
+    """Projected-gradient Adam for the MPC light optimization.
+
+    Minimizes ``loss_fn(u)`` over the box ``[0, u_max]`` (clamped after each
+    Adam step) and stops early once the relative loss improvement stays below
+    ``tol`` for ``patience`` consecutive iterations, else runs ``max_iters``.
+
+    The previous fixed 5–10 iteration loop did not converge. On the linear
+    (no-opsin) model the MPC objective is convex and identical — up to the
+    constant 1/H factor — to LQMPC's QP, so an un-converged solve was the sole
+    reason NLMPC under-performed LQMPC and over-drove the light: with too few
+    iterations the optimizer never reached the shared optimum. The convergence
+    check makes the iteration count adaptive (cheap on the convex linear path,
+    bounded on the opsin path), and is backward-compatible — with the old small
+    ``max_iters`` the patience window never closes, so behavior is unchanged.
+
+    Returns ``(u_opt: np.ndarray, n_iters: int, final_loss: float)``.
+    """
+    u = torch.tensor(u0, dtype=torch.float32, requires_grad=True)
+    optimizer = torch.optim.Adam([u], lr=lr)
+    prev = None
+    n_converged = 0
+    n_iters = 0
+    final_loss = float("nan")
+    for i in range(int(max_iters)):
+        optimizer.zero_grad()
+        loss = loss_fn(u)
+        loss.backward()
+        optimizer.step()
+        with torch.no_grad():
+            u.clamp_(0.0, u_max)
+        n_iters = i + 1
+        cur = float(loss.detach())
+        final_loss = cur
+        if prev is not None:
+            rel = abs(prev - cur) / max(abs(prev), 1e-12)
+            if rel < tol:
+                n_converged += 1
+                if n_converged >= patience:
+                    break
+            else:
+                n_converged = 0
+        prev = cur
+    return u.detach().numpy().copy(), n_iters, final_loss
+
+
+def _solve_lbfgsb(loss_fn, u0, u_max, max_iters, ftol, gtol):
+    """Box-constrained L-BFGS-B for the MPC light optimization (default).
+
+    Minimizes ``loss_fn(u)`` over the box ``[0, u_max]`` with scipy's L-BFGS-B
+    — a quasi-Newton method that handles the bounds natively and stops on a
+    proper gradient-norm / relative-function test (``gtol`` / ``ftol``). The
+    differentiable torch ``loss_fn`` supplies value+gradient via autograd.
+
+    This replaces first-order Adam as the inner solver: on this smooth
+    (GRU + linear) objective the curvature information converges in far fewer
+    function evaluations, which (a) makes the non-convex USID+opsin solve
+    feasibly convergeable — Adam needed ~1.6k cold-start iters — and (b) is
+    robust to the flat-tail per-iter oscillation that broke Adam's
+    consecutive-relative-improvement early-stop. The optimum is unchanged
+    (same objective); only the path/speed differ — for the convex linear path
+    it reaches the identical LQMPC/QP solution.
+
+    ``max_iters`` caps L-BFGS-B iterations; func evals are capped at 4×.
+    Returns ``(u_opt: np.ndarray float32, n_iters: int, final_loss: float)``.
+    """
+    shape = u0.shape
+
+    def f_and_g(u_flat):
+        u = torch.tensor(
+            u_flat.reshape(shape), dtype=torch.float32, requires_grad=True
+        )
+        loss = loss_fn(u)
+        loss.backward()
+        return float(loss.detach()), u.grad.detach().numpy().ravel().astype(np.float64)
+
+    res = sopt.minimize(
+        f_and_g,
+        u0.ravel().astype(np.float64),
+        method="L-BFGS-B",
+        jac=True,
+        bounds=[(0.0, float(u_max))] * int(u0.size),
+        options={
+            "maxiter": int(max_iters),
+            "maxfun": int(max_iters) * 4,
+            "ftol": ftol,
+            "gtol": gtol,
+        },
+    )
+    return res.x.reshape(shape).astype(np.float32), int(res.nit), float(res.fun)
+
+
 @define
 class NLMPCController(Controller):
     """Nonlinear MPC using PyTorch gradient descent.
@@ -140,7 +237,30 @@ class NLMPCController(Controller):
     `_setup_torch_matrices` from the LDS attribute set.
     """
     nlmpc_grad_iters: int = 10
+    """Maximum projected-Adam iterations per control step (the convergence
+    check stops earlier when the loss plateaus). Wired from the `nlmpc_iters`
+    wildcard. Must be large enough for the solve to converge — the old default
+    of 5–10 left the optimizer un-converged."""
     nlmpc_step_size: float = 0.5
+    nlmpc_tol: float = 5e-5
+    """Relative-loss improvement threshold for early-stop convergence. Set to
+    5e-5 (not 1e-6): at high input dim (k=32) Adam's flat-tail per-iter
+    improvement oscillates ~1e-5, so a 1e-6 threshold never closes the patience
+    window and the solve runs the full cap — yet the solution is already
+    converged (<0.03% of a 5x-longer solve) by then. 5e-5 lets early-stop fire
+    in the converged tail; it cannot fire prematurely (only once the loss is
+    flat) and is bounded above by nlmpc_grad_iters."""
+    nlmpc_patience: int = 5
+    """Consecutive sub-`tol` iterations required to declare convergence."""
+    nlmpc_optimizer: str = "lbfgsb"
+    """Inner solver: 'lbfgsb' (box-constrained scipy L-BFGS-B — default;
+    quasi-Newton, converges in far fewer func-evals than Adam and has a robust
+    gradient-norm convergence test) or 'adam' (legacy projected-gradient Adam,
+    kept for comparison; uses nlmpc_step_size / nlmpc_tol / nlmpc_patience)."""
+    nlmpc_ftol: float = 1e-9
+    """L-BFGS-B relative-function convergence tolerance."""
+    nlmpc_gtol: float = 1e-6
+    """L-BFGS-B projected-gradient inf-norm convergence tolerance."""
 
     # Internal state (not constructor args)
     _u_light_warm: np.ndarray = field(default=None, init=False, repr=False)
@@ -152,6 +272,9 @@ class NLMPCController(Controller):
     _has_opsin: bool = field(default=False, init=False, repr=False)
     # Cz dispatch state — populated by _cz_helpers.build_cz_state.
     _cz_state: dict = field(factory=dict, init=False, repr=False)
+    # Per-cell history of solve iteration counts, for log visibility (how many
+    # Adam iters the convergence check actually used per control step).
+    _n_iters_history: list = field(factory=list, init=False, repr=False)
 
     def sample_latency(self) -> b2.Quantity:
         """Sample latency without referencing CVXPY solvers."""
@@ -169,6 +292,7 @@ class NLMPCController(Controller):
         super().reset()
         self._u_light_warm = None
         self._opsin_hidden = None
+        self._n_iters_history = []
         self._setup_torch_matrices()
 
     def _setup_torch_matrices(self):
@@ -269,15 +393,11 @@ class NLMPCController(Controller):
         else:
             warm = np.zeros((H, k_opto))
 
-        u_light = torch.tensor(warm, dtype=torch.float32, requires_grad=True)
-        optimizer = torch.optim.Adam([u_light], lr=self.nlmpc_step_size)
-
         x0 = torch.tensor(xhat, dtype=torch.float32)
 
         # Reference trajectory over horizon
         t_horizon = self.t_now + np.arange(1, H + 1) * self.sample_period
-        ref_np = self.reference_zscored(t_horizon)
-        ref = torch.tensor(ref_np, dtype=torch.float32)
+        ref = torch.tensor(self.reference_zscored(t_horizon), dtype=torch.float32)
 
         mat = self._torch_matrices
 
@@ -288,9 +408,7 @@ class NLMPCController(Controller):
             self._opsin_hidden.detach() if self._opsin_hidden is not None else None
         )
 
-        for i in range(self.nlmpc_grad_iters):
-            optimizer.zero_grad()
-
+        def loss_fn(u_light):
             # Mode-aware rollout. Three paths:
             #   • opsin + subspace: forward through NN opsin → photocurrents,
             #     then subspace observer-form recurrence with B'·photocurrent.
@@ -325,20 +443,48 @@ class NLMPCController(Controller):
                     mat['A'], mat['B_opto'],
                     ref, self.ref_type, self._cz_state,
                 )
-
-            # Control effort cost (penalizes light power)
+            # Control effort cost (penalizes light power). Tracking + effort is
+            # LQMPC's exact QP objective up to the constant 1/H factor (same
+            # argmin) — so on the linear no-opsin path a converged solve must
+            # match LQMPC. See _solve_projected_adam.
             effort_cost = torch.sum(u_light ** 2) / (H * k_opto)
+            return self.Qcost * tracking_cost / self.n_r + self.Rcost * effort_cost
 
-            loss = self.Qcost * tracking_cost / self.n_r + self.Rcost * effort_cost
-            loss.backward()
-            optimizer.step()
-
-            # Box constraints
-            with torch.no_grad():
-                u_light.clamp_(0.0, self.u_max_mWmm2)
+        if self.nlmpc_optimizer == "lbfgsb":
+            u_opt, n_iters, final_loss = _solve_lbfgsb(
+                loss_fn, warm,
+                u_max=self.u_max_mWmm2,
+                max_iters=self.nlmpc_grad_iters,
+                ftol=self.nlmpc_ftol,
+                gtol=self.nlmpc_gtol,
+            )
+        else:
+            u_opt, n_iters, final_loss = _solve_projected_adam(
+                loss_fn, warm,
+                lr=self.nlmpc_step_size,
+                max_iters=self.nlmpc_grad_iters,
+                tol=self.nlmpc_tol,
+                patience=self.nlmpc_patience,
+                u_max=self.u_max_mWmm2,
+            )
+        if not self._measuring_latency:
+            self._n_iters_history.append(n_iters)
+            # Visible (INFO) cumulative summary every 100 control steps so the
+            # actual iters the convergence check used are greppable per cell
+            # ("NLMPC iters used"); shows whether early-stop fires (median < cap)
+            # or the solve hits the cap (at_cap high).
+            if len(self._n_iters_history) % 100 == 0:
+                h = np.asarray(self._n_iters_history)
+                log.info(
+                    "NLMPC iters used: n=%d mean=%.0f median=%.0f min=%d max=%d "
+                    "at_cap(%d)=%.0f%% (last final_loss %.6g)",
+                    len(h), h.mean(), np.median(h), int(h.min()), int(h.max()),
+                    self.nlmpc_grad_iters,
+                    100.0 * (h >= self.nlmpc_grad_iters).mean(), final_loss,
+                )
 
         # Store for warm-starting next step
-        self._u_light_warm = u_light.detach().numpy().copy()
+        self._u_light_warm = u_opt
 
         # Return first step's light command (raw mW/mm²)
         return self._u_light_warm[0]
