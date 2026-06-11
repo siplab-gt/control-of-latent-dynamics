@@ -1,0 +1,43 @@
+# =============================================================================
+# testconfig_sweeps_ctrlfix_full.yaml — follow-up experiment after the NLMPC
+# convergence fix (Test 1 confirmed NLMPC@300 ≡ LQMPC on the convex case).
+#
+# Question: with the FIXED (converged) nonlinear controller, does USID+opsin
+# (nonlinear INPUT via opsin-in-loop) beat the opsin-free BRAID baselines on the
+# SATURATING plant, WITHOUT linearizing the opsin? Controlled comparison
+# isolating where the nonlinearity must live:
+#   - braid_stim_rec            : linear input,  linear Cz  (predicted ≈ NULL @φm×1)
+#   - braid_stim_rec_nonlinear  : linear input,  nonlinear Cz readout (control: nonlinearity in readout, not input)
+#   - usid_stim_rec             : NONLINEAR input (opsin-in-loop), linear Cz  (experimental arm)
+# Controllers LQMPC + NLMPC (+ NULL auto). 5 seeds, k=m=32.
+#
+# Run via the φm wrapper tmp/cold_nlmpc_fix/run_ctrlfix_phim_sweep.sbatch which
+# executes this DAG once per phim ∈ {1 (saturating), 60 (linearized positive
+# control)}. nlmpc_grad_iters=300: Test 1 + the real-dim/opsin convergence gates
+# show this fully converges the (non-convex at k=32) opsin solve; the convergence
+# check stops earlier where it can.
+# =============================================================================
+
+sweeps:
+  seed:
+    - 17230616
+    - 18051223
+    - 16320829
+    - 18060520
+    - 18220427
+  ctrl_type:
+    - LQMPC
+    - NLMPC
+  setting:
+    - braid_stim_rec
+    - braid_stim_rec_nonlinear
+    - usid_stim_rec
+  nlmpc_grad_iters:
+    - 300
+  n_trials_sys_id:
+    - 50
+
+q_usid:
+  channel_budget: 64
+  num_stim_ratio_levels: 3
+  target_k: 32

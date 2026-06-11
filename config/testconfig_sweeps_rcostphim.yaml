@@ -1,0 +1,34 @@
+# =============================================================================
+# testconfig_sweeps_rcostphim.yaml — config-level diagnostic grid for the
+# phim=1 (saturating) control failure. USID+opsin only, NLMPC, dims=8.
+#
+# The wrapper run_rcostphim_sweep.sbatch seds phim_scale and R_cost (both config
+# scalars in testconfig_params.yaml, NOT path wildcards) per combo and harvests
+# each separately. Combos run by the wrapper: (phim=1,R=1e-4), (phim=10,R=1e-3),
+# (phim=10,R=1e-4). The (phim=1,R=1e-3) cell is the dims=8 baseline (-0.117).
+# Question: does a MILD de-saturation (phim=10, still nonlinear, between the
+# saturating phim=1 and the linearized phim=30/60) or a lower effort penalty
+# (R_cost 1e-3->1e-4) move USID+opsin NLMPC Q at the (near-)saturating operating
+# point — WITHOUT model changes? Adjudicates saturation-floor vs USID-misID.
+# =============================================================================
+
+sweeps:
+  seed:
+    - 17230616
+    - 18051223
+    - 16320829
+    - 18060520
+    - 18220427
+  ctrl_type:
+    - NLMPC
+  setting:
+    - usid_stim_rec
+  nlmpc_grad_iters:
+    - 300
+  n_trials_sys_id:
+    - 50
+
+q_usid:
+  channel_budget: 64
+  num_stim_ratio_levels: 3
+  target_k: 32

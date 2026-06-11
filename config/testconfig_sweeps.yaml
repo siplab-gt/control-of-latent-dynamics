@@ -27,6 +27,16 @@ sweeps:
     - 16320829
     - 18060520
     - 18220427
+  # Isolated 10-vs-50 system-ID data-quantity comparison. n_trials_sys_id is a
+  # model_fit-level wildcard: sys_id_expts always generates n_trials_sys_id_max
+  # = max(this list) trials, and model_fit slices to the per-cell value. So
+  # [10, 50] keeps the max at 50 (matching the cached default), reusing the
+  # cleo_prep / sys_id_data / natural_electrode_data / opsin artifacts and
+  # re-running only model_fit onward. Do NOT add 100 here — that would bump the
+  # max and force regeneration of every sys_id_data.pkl.gz.
+  n_trials_sys_id:
+    - 10
+    - 50
   ctrl_type:
     - OL
     - LQMPC
