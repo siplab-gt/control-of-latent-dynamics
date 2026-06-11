@@ -42,8 +42,8 @@
 seed: 42                   # Placeholder — overridden by _load_usid_config at runtime.
 
 models:
-  n1: 4                    # Natural subspace dim. Should roughly match fSNN's intrinsic dim.
-  n2: 4                    # Unnatural subspace dim.
+  n1: 8                    # Natural subspace dim. Should roughly match fSNN's intrinsic dim.
+  n2: 8                    # Unnatural subspace dim.
   ny: 1                    # Placeholder — overridden at runtime from sys_id data shape.
   n_clusters: 1            # Placeholder — overridden at runtime from cond_params.k.
   a_param_type: schur      # RealSchurParam (max_radius=0.99); alternative: ShearPolarRealSchurParam.
@@ -228,6 +228,18 @@ usid_hyperparams:
                            # schedule window.
       sroll: 0.0
       spectral: 0.0
+      forced: 1.0          # K-suppressed open-loop forced loss: scores the
+                           # observer-OFF (K1=K2=0) forced rollout — input path
+                           # B'·photocurrent only — against the true output, to
+                           # IDENTIFY B'/A22/A12/Cy2 against the opto->output map.
+                           # The dominant teacher-forced delta and observer-on
+                           # rollout terms leave that map masked (strong K·y feedback
+                           # satisfies them regardless of B'), so without this the
+                           # USID forced/open-loop response the controller plans
+                           # against is unidentified. This is a LOSS TERM, not a
+                           # penalty on K's magnitude. PRIMARY KNOB to sweep; 0 = off
+                           # (recovers the prior behaviour). Reuses the usid rollout
+                           # W/K horizon.
       ifp: 0.5             # Input-free penalty — active in COLD as of the
                            # natural_electrode_data integration in
                            # _prepare_data_bundle. IFP fires on samples marked
@@ -296,6 +308,10 @@ usid_hyperparams:
       delta: 1.0
       rollout: 0.2
       teacher: 0.0
+      forced: 0.0          # Diagnostic only: forced_raw (forced-rollout MSE) is
+                           # tracked at val even at weight 0, so the validation
+                           # forced fit is visible without changing the val-loss
+                           # composition the scheduler / early-stop key on.
       nstep:
         '2': 0.0
         '3': 0.0
