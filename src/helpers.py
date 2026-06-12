@@ -145,7 +145,10 @@ def seed_everything(seed: int, extra_seed_str=""):
 
 def save_pkl_gz(obj, filename):
     assert filename.endswith(".pkl.gz")
-    with gzip.open(filename, "wb") as f:
+    # compresslevel=1: these blobs are mostly incompressible float arrays (gzip ~1.07x),
+    # so level 9 (the default) spends large CPU for ~0.5% size gain. Level 1 is ~4x faster
+    # to write; load is level-agnostic (gzip auto-detects), so bytes round-trip identically.
+    with gzip.open(filename, "wb", compresslevel=1) as f:
         dill.dump(obj, f)
 
 

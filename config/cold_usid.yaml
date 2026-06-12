@@ -89,6 +89,13 @@ data:
   source: cold_inline      # Forces the cold path inside usid_data_interface.
                            # (Code also overrides this defensively in _load_usid_config.)
 
+diagnostics:
+  enabled: false           # COLD inline model_fit: skip the ~98s of matplotlib +
+                           # rollout-R2 diagnostics in usid.py. They are not consumed by
+                           # the LDS handoff or analyze_model_fit; set true for single-cell
+                           # debugging. The synthetic path is unaffected (it calls
+                           # run_shared_diagnostics directly, not via usid.py).
+
 verbose_training_progress: true
 
 natural_hyperparams:

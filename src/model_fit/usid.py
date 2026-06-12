@@ -251,14 +251,17 @@ def fit_lds_to_data(
     )
     log.info(f"Training complete: n1={result.n1}, n2={result.n2}")
 
-    # === 4b. Diagnostics ===
-    try:
-        run_shared_diagnostics(result, data_bundle, cfg, save_root)
-        run_external_diagnostics(result, data_bundle, cfg, save_root)
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        log.warning("Non-critical: diagnostics failed, continuing with LDS conversion")
+    # === 4b. Diagnostics (optional; never feed the LDS handoff or model_fit CSV) ===
+    if cfg.diagnostics.enabled:
+        try:
+            run_shared_diagnostics(result, data_bundle, cfg, save_root)
+            run_external_diagnostics(result, data_bundle, cfg, save_root)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            log.warning("Non-critical: diagnostics failed, continuing with LDS conversion")
+    else:
+        log.info("Diagnostics disabled (cfg.diagnostics.enabled=false); skipping plots")
 
     n1, n2 = result.n1, result.n2
     usid_model = result.usid_model

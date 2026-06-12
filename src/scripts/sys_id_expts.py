@@ -196,11 +196,15 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         SysIDProcessor(sample_period=cleo_prep.fsnn.dt * base_params.subsample_factor)
     )
 
-    # Record per-neuron biophysical photocurrent for opsin-fit validation
-    # (shared with ctrl_expts via src.opsin_monitoring). sys-ID does not need
-    # membrane voltage, so record_v=False keeps its output unchanged.
+    # Record per-neuron photocurrent (Iopto) for opsin-fit validation, shared with
+    # ctrl_expts via src.opsin_monitoring. record_v=False -> no membrane voltage
+    # (V_per_neuron stays None), which is all sys-ID needs. record_dt records Iopto
+    # directly on the X/Y/Z subsample grid, so the StateMonitor holds ~subsample_factor×
+    # fewer samples (the full-resolution array is ~681 MB and bloats the saved
+    # sys_id_data / natural_electrode .pkl.gz); the sampled values match X/Y/Z.
+    record_dt = base_params.subsample_factor * cleo_prep.fsnn.dt
     monitors, channel_neuron_transmittance = attach_opsin_monitors(
-        cleo_prep, record_v=False
+        cleo_prep, record_v=False, record_dt=record_dt
     )
 
     log.info(f"running {n_trials} sys ID trials")
@@ -227,8 +231,8 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
         cleo_prep.light.t[1:] == cleo_prep.fsnn.y_mon.t[:: base_params.subsample_factor]
     )
 
-    # Subsample Iopto onto the same grid as X/Y/Z (shared extractor).
-    Iopto_per_neuron, _ = extract_per_neuron(monitors, base_params.subsample_factor)
+    # Already recorded on the X/Y/Z subsample grid via record_dt -> no further subsample.
+    Iopto_per_neuron, _ = extract_per_neuron(monitors, 1)
 
     expt_data = ExptData.from_cleo_prep(
         cleo_prep,

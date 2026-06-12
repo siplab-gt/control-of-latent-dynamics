@@ -291,6 +291,26 @@ def configfile_inputs_excluding_sweeps(wildcards=None):
     ]
 
 
+def configfile_inputs_for_voperating(wildcards=None):
+    """Configfiles tracked by measure_voperating_range.
+
+    voperating reads config ONLY through its params: functions
+    (_voperating_cond_params / _voperating_base_params, over config['params'],
+    'prep_fsnn', 'prep_fsnn_<task>', 'cleo_prep'); Snakemake's params
+    rerun-trigger already invalidates voperating.json when any of those VALUES
+    change. It never reads the per-combo calibration knobs (target_iopto /
+    phim_scale). Tracking the per-sweep *_params.yaml overlay here only forces a
+    spurious re-run every time a calibration sweep re-sed's those knobs into it,
+    even though voperating.json is invariant to them. So drop the per-sweep
+    *_params.yaml (and *_sweeps.yaml) overlay; keep any stable base configfiles.
+    """
+    return [
+        c for c in getattr(workflow, "configfiles", [])
+        if "_sweeps" not in os.path.basename(c)
+        and "_params" not in os.path.basename(c)
+    ]
+
+
 rule testq1:
     # for easily running one reference condition
     # (doesn't require a super long path with all wildcards)
@@ -613,42 +633,35 @@ def runtime_min(n_trials, n_train_trials=0, multiplier=1):
     return f
 
 
-def _ctrl_expts_runtime(wildcards):
+def _ctrl_expts_runtime(wildcards, attempt):
     """Empirical wall-time allocation for ctrl_expts, in minutes.
 
-    Observed per-trial wall (NLMPC, 100 trials) from run 6679539 fits
-    ~7 + H*N/150 seconds. Total ≈ 100 * per_trial + 1 min setup, scaled
-    by SAFETY_MARGIN, rounded up to the next 5-min bin.
+    Per-trial wall (100 trials) is dominated by the closed-loop Brian2 sim plus a
+    horizon-length L-BFGS-B / iLQR solve whose iteration count is convergence-driven,
+    NOT the nlmpc_grad_iters cap. The old `7 + H*N/150` form assumed the solver runs
+    all N iters; L-BFGS-B converges far short of the cap, so the request was ~10x the
+    real wall (e.g. 34 h reserved for a ~3 h NLMPC@N=300 cell), which barred the cell
+    from backfill and the 8-h embers QOS. Measured ~100 s/trial for NLMPC at H=200
+    (cells 9825445/24, Jun-2026; ~30 wall-s per simulated-s). Model as a Brian2 base
+    + per-horizon solver term, INDEPENDENT of the grad-iter cap.
 
-    FLOOR_MIN: All controllers get at least 60 min. Originally NULL/OL
-    used a flat 30 min on the assumption they're "fast" (no controller
-    compute). But the dominant cost for ALL controllers is Brian2 sim
-    of the cleo_prep network, which scales with chr2 synapse count
-    (= k*m). For dense geometries like (k=22, m=42) → 924 synapses,
-    Brian2 sim alone takes ~32 min per cell, busting NULL's 30-min
-    cap. The floor covers worst-case Brian2 sim across (k, m) for the
-    cheap controllers; the formula still kicks in for NLMPC/LQMPC
-    when their solver compute pushes the total above 60 min.
-
-    SAFETY_MARGIN was 1.5; bumped to 2.25 (=1.5×1.5) on 2026-04-28
-    after the prior testconfig run hit ~14 NLMPC TIMEOUTs.
+    `attempt`-aware: a retry doubles the wall instead of re-timing-out at the same
+    value (the old form re-used the same wall on retry, so an undersized cell failed
+    twice). FLOOR_MIN: all controllers get >= 60 min, covering worst-case (k, m)
+    Brian2 sim for the cheap controllers (NULL/OL).
     """
-    SAFETY_MARGIN = 3.0
+    SAFETY_MARGIN = 1.5
     FLOOR_MIN = 60
     if wildcards.ctrl_type in ("NULL", "OL"):
-        return FLOOR_MIN
-    H = int(wildcards.ctrl_horizon_ms)
-    N = int(wildcards.nlmpc_grad_iters)
-    # iLQR per-iter cost ~4× NLMPC's Adam iter (H per-step autograd
-    # Jacobians + Cholesky on Quu in the backward pass). Bumping the
-    # H·N coefficient by 4 prevents iLQR cells from chronically hitting
-    # the SLURM wall.
-    if wildcards.ctrl_type == "iLQR":
-        per_trial_s = 7 + H * N * 4 / 150
+        base = FLOOR_MIN
     else:
-        per_trial_s = 7 + H * N / 150
-    total_min = (100 * per_trial_s + 60) / 60 * SAFETY_MARGIN
-    return max(FLOOR_MIN, 5 * (int(total_min // 5) + 1))
+        H = int(wildcards.ctrl_horizon_ms)
+        # iLQR per-iter ~4x NLMPC's step (H per-step autograd Jacobians + Cholesky)
+        solver_coeff = 0.8 if wildcards.ctrl_type == "iLQR" else 0.2
+        per_trial_s = 60.0 + solver_coeff * H
+        total_min = (100 * per_trial_s + 60) / 60 * SAFETY_MARGIN
+        base = max(FLOOR_MIN, 5 * (int(total_min // 5) + 1))
+    return base * attempt
 
 
 rule ctrl_expts:
@@ -677,8 +690,11 @@ rule ctrl_expts:
     conda:
         "envs/main.yaml"
     resources:
-        slurm_partition="gpu-rtx6000",
-        gpu=1,
+        # Control loop is pure CPU (scipy L-BFGS-B / torch-CPU + Brian2 cython runtime
+        # mode); no rule in src/ctrl/* touches CUDA. Run on CPU to free the rtx6000 GPU
+        # it used to reserve+idle for the full multi-hour wall and to shorten queue time.
+        slurm_partition="cpu-small",
+        gpu=0,
         mem_mb=4000,
         runtime=_ctrl_expts_runtime,
     log:
@@ -775,8 +791,11 @@ def get_usid_dependencies(wildcards):
         f"{usid_repo}/scripts/utils/checkpoints.py",
         f"{usid_repo}/scripts/usid_data_interface.py",
         f"{usid_repo}/scripts/usid_training_core.py",
-        f"{usid_repo}/scripts/diagnostics.py",
-        f"{usid_repo}/scripts/utils/visualizations.py",
+        # diagnostics.py / visualizations.py are intentionally NOT tracked: they only
+        # produce plots/metrics (run_*_diagnostics in usid.py, now gated off by default)
+        # and never affect the returned LDS / model_fit_pred / analysis CSV, so a
+        # plot-only edit should not invalidate model_fit and its multi-hour ctrl subtree.
+        # They remain ordinary module-level imports at runtime.
     ]
 
 
@@ -898,7 +917,7 @@ rule measure_voperating_range:
         fsnn=_voperating_fsnn_input(),
         script="src/scripts/measure_voperating_range.py",
         cleo_prep_src="src/scripts/cleo_prep.py",
-        configfiles=configfile_inputs_excluding_sweeps,
+        configfiles=configfile_inputs_for_voperating,
     output:
         json="results/opsin_calibration/voperating.json",
         png="results/opsin_calibration/voperating.png",
@@ -1052,7 +1071,10 @@ rule model_fit:
     threads: lambda wc: max(1, 8 * gpu_for_model_fit(wc))
     resources:
         slurm_partition=slurm_extra_for_model_fit,
-        gpu=1,
+        # Track the partition predicate: cpu-small-routed cells (sufficient_stim, or
+        # model_fit_device!=gpu) must NOT also request a GPU (PACE would otherwise
+        # reroute them onto a GPU node and allocate an unused one).
+        gpu=gpu_for_model_fit,
         mem_mb=32000,
         runtime=180,    # raised 120->180 for n_trials_sys_id=50 + rollout/ACF losses (loss-recovery sweep)
     retries: 1
@@ -1372,7 +1394,9 @@ rule _prep_fsnn:
     threads: lambda wc: max(1, 4 * gpu_for_fsnn_train(wc))
     resources:
         slurm_partition=slurm_extra_for_fsnn,
-        gpu=1,
+        # Track the partition predicate: only mode=train (cuda) needs a GPU; cython
+        # demean/test cells route to cpu-small and must not request an unused GPU.
+        gpu=gpu_for_fsnn_train,
         runtime=120,
         mem_mb=64000,
     retries: 1
