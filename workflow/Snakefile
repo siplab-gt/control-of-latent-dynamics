@@ -650,7 +650,13 @@ def _ctrl_expts_runtime(wildcards, attempt):
     twice). FLOOR_MIN: all controllers get >= 60 min, covering worst-case (k, m)
     Brian2 sim for the cheap controllers (NULL/OL).
     """
-    SAFETY_MARGIN = 1.5
+    # 1.5 was tuned to the de-saturated ~100 s/trial measurement; the SATURATED
+    # phim-low regime runs the NLMPC solver ~2-3x longer (H=200 cells observed ~8 h,
+    # timing out at the 1.5x wall, then wasting the killed attempt + a full re-run).
+    # Bumped to 3.5 so saturated H=200 cells (~10 h wall) clear on the first attempt.
+    # Over-reservation is free (PACE bills walltime USED, not reserved); the only cost
+    # is reduced short-job backfill / 8-h-QOS eligibility for the cheaper cells.
+    SAFETY_MARGIN = 3.5
     FLOOR_MIN = 60
     if wildcards.ctrl_type in ("NULL", "OL"):
         base = FLOOR_MIN

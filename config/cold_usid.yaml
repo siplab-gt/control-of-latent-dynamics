@@ -212,6 +212,13 @@ natural_hyperparams:
 
 usid_hyperparams:
   epochs: 100
+  pin_bprime: false        # Post-training: identify the opsin/forced input map B2'
+                           # by a convex fit to the predictor free-run output
+                           # (src/model_fit/usid.py::_pin_bprime), overwriting the
+                           # Kalman-masked B2' from joint training; B1' pinned to 0.
+                           # No other matrix is retrained. Reuses cz_observer_horizon
+                           # as the pooled fit horizon. false = off (masked B2').
+                           # PRIMARY KNOB to sweep alongside forced.
   lr: 1e-2                 # Lowered from 5e-2 (2026-04-29). At 5e-2,
                            # rank-1-input cells (k=1, m=63) diverge after
                            # ~3 USID-phase steps via K=32 rollout

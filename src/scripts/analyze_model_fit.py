@@ -48,6 +48,23 @@ def analyze_model_fit(
     for key in ("Y", "Z", "U", "X", "Natural_YN"):
         metrics[f"n_sanitize_clipped_{key}"] = int(clip_counts.get(key, 0))
 
+    # Horizon-resolved free-run R²(Z) (the load-bearing controllability metric) and the
+    # pin-B' diagnostic, both stashed on lds.metadata by model_fit/usid.py. Absent for
+    # non-USID fits (BRAID/known_factors) — NaN-filled then. R2_freerun_Z_h0 ≈
+    # R2_model_fit_Z_Zhat is the correctness gate; R2_freerun_Z_h7/h10/h20 (70/100/200 ms;
+    # 70 ms ≈ the chr2 opsin time constant) are what actually predict control; pin_dB2_norm
+    # > 0 confirms the pin took effect. The metric computes every depth h0..cz_observer_horizon,
+    # so adding/removing an `h` here is purely a column selection over the saved curve.
+    meta = getattr(lds, "metadata", {}) or {}
+    fr = meta.get("freerun_r2z", {}) or {}
+    for h in (0, 1, 5, 7, 10, 20):
+        metrics[f"R2_freerun_Z_h{h}"] = float(fr.get(f"h{h}", np.nan))
+    metrics["freerun_Z_predictable_horizon"] = float(fr.get("predictable_horizon", np.nan))
+    pin = meta.get("pin_bprime", {}) or {}
+    metrics["pin_bprime"] = bool(pin.get("pin_bprime", False))
+    metrics["pin_dB2_norm"] = float(pin.get("dB2_norm", np.nan))
+    metrics["pin_freerun_r2y_heldout"] = float(pin.get("freerun_r2y_heldout", np.nan))
+
     print(metrics)
     print(f"Saving R2 values to {outfile}")
     pd.DataFrame([metrics]).to_csv(outfile, index=False)

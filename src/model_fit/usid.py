@@ -266,11 +266,7 @@ def fit_lds_to_data(
     n1, n2 = result.n1, result.n2
     usid_model = result.usid_model
 
-    # === 5. Extract SubspaceLDS ===
-    log.info("Converting USID to SubspaceLDS...")
-    subspace_lds = usid_to_subspace_lds(usid_model)
-
-    # Compute predictions on full sys_id data
+    # Compute predictions on full sys_id data (tensors reused by the pin + Cz fit).
     log.info("Computing predictions on sys_id data...")
     y_tensor = torch.tensor(YN, dtype=torch.float32).unsqueeze(0).to(device)
     # Same input space as training: opto_input is raw mW/mm² when use_opsin,
@@ -278,18 +274,21 @@ def fit_lds_to_data(
     u_for_pred = opto_input if use_opsin else UN[:, :k_opto]
     u_tensor = torch.tensor(u_for_pred, dtype=torch.float32).unsqueeze(0).to(device)
 
-    with torch.no_grad():
-        y_pred = usid_model.forward(y_tensor, u_tensor)
-        Yhat = y_pred.squeeze(0).cpu().numpy()
-
+    # Teacher-forced (filtered) state — the controller's running observer estimate;
+    # reused as the pin/Cz free-run seeds.
     Xhat = _compute_state_trajectory(usid_model, y_tensor, u_tensor, device)
 
-    # === 6. Post-processing ===
-    # Fit behavioral decoder. The controller (NLMPC/iLQR) plans against the
-    # OBSERVER free-run state (self-fed y = C·x), not the teacher-forced state
-    # Xhat above — so by default Cz is fit on the pooled observer-rollout state
-    # the controller visits, not on Xhat. See _fit_behavioral_decoder.
-    log.info("Fitting behavioral decoder (Cz)...")
+    # === 5b. Pin B' (optional) ===
+    # Identify the opsin/forced input path B2' by a convex fit to the predictor
+    # free-run output, decoupled from the Kalman-masked joint objective. Mutates
+    # usid_model in place (B2' pinned, B1'=0), so the SubspaceLDS extraction, Cz fit,
+    # and Yhat/Zhat below all see the pinned input map. See _pin_bprime.
+    try:
+        pin_bprime = bool(cfg.usid_hyperparams.pin_bprime)
+    except AttributeError as e:
+        raise AttributeError(
+            "Missing required USID config attribute usid_hyperparams.pin_bprime."
+        ) from e
     try:
         cz_fit_mode = str(cfg.usid_hyperparams.cz_fit_mode)
         cz_observer_horizon = int(cfg.usid_hyperparams.cz_observer_horizon)
@@ -298,6 +297,34 @@ def fit_lds_to_data(
             "Missing required USID config attribute "
             "usid_hyperparams.cz_fit_mode / cz_observer_horizon."
         ) from e
+    if pin_bprime:
+        if not use_opsin:
+            raise ValueError(
+                "pin_bprime=True requires use_opsin=True (the pin identifies the "
+                "opsin/forced input path B2'); got use_opsin=False."
+            )
+        log.info("Pinning B' via convex predictor-free-run fit...")
+        pin_diag = _pin_bprime(usid_model, Xhat, YN, u_tensor, device, cz_observer_horizon)
+        # Recompute the filtered trajectory with the pinned input map so the Cz fit
+        # + Zhat decode from the post-pin state.
+        Xhat = _compute_state_trajectory(usid_model, y_tensor, u_tensor, device)
+    else:
+        pin_diag = {"pin_bprime": False}
+
+    with torch.no_grad():
+        Yhat = usid_model.forward(y_tensor, u_tensor).squeeze(0).cpu().numpy()
+
+    # === 5. Extract SubspaceLDS (reads the pinned input map) ===
+    log.info("Converting USID to SubspaceLDS...")
+    subspace_lds = usid_to_subspace_lds(usid_model)
+    subspace_lds.metadata['pin_bprime'] = pin_diag
+
+    # === 6. Post-processing ===
+    # Fit behavioral decoder. The controller (NLMPC/iLQR) plans against the
+    # OBSERVER free-run state (self-fed y = C·x), not the teacher-forced state
+    # Xhat above — so by default Cz is fit on the pooled observer-rollout state
+    # the controller visits, not on Xhat. See _fit_behavioral_decoder.
+    log.info("Fitting behavioral decoder (Cz)...")
     Cz1, Cz2 = _fit_behavioral_decoder(
         Xhat, ZN, n1, n2,
         usid_model=usid_model,
@@ -311,6 +338,14 @@ def fit_lds_to_data(
     # Zhat reported for the analysis CSV is the teacher-forced readout (the
     # state the model is validated against — what R2_model_fit_Z_Zhat measures).
     Zhat = Xhat[:, :n1] @ Cz1.T + Xhat[:, n1:] @ Cz2.T
+
+    # Load-bearing controllability diagnostic: horizon-resolved free-run R²(Z).
+    # R2_model_fit_Z_Zhat above is 1-step/filtered and decoupled from the open-loop
+    # control the controller plans; this scores the predictor free-run the pin targets.
+    # Reaches model_fit_analysis.csv via analyze_model_fit reading lds.metadata.
+    subspace_lds.metadata['freerun_r2z'] = _freerun_r2z_by_horizon(
+        usid_model, Xhat, ZN, u_tensor, Cz1, Cz2, device, cz_observer_horizon,
+    )
 
     subspace_lds.metadata['k_opto'] = k_opto
 
@@ -857,6 +892,195 @@ def _observer_rollout_pool(usid_model, Xf, u_tensor, device, horizon):
     X_pool = torch.cat(X_pool, dim=0).cpu().numpy()
     Z_idx = torch.cat(Z_idx, dim=0).cpu().numpy()
     return X_pool, Z_idx
+
+
+def _vw_r2(ytrue: torch.Tensor, ypred: torch.Tensor) -> float:
+    """Variance-weighted R² matching sklearn's ``multioutput='variance_weighted'``.
+
+    Equals 1 - Σ_i ss_res_i / Σ_i ss_tot_i over the outputs with non-zero variance
+    (a constant output — e.g. the reaching task's 3rd Z dim — gets zero weight and is
+    excluded, as sklearn does). Returns nan if every output is constant.
+    """
+    ss_res = ((ytrue - ypred) ** 2).sum(dim=0)
+    ss_tot = ((ytrue - ytrue.mean(dim=0)) ** 2).sum(dim=0)
+    mask = ss_tot > 0
+    if not bool(mask.any()):
+        return float("nan")
+    return float(1.0 - ss_res[mask].sum() / ss_tot[mask].sum())
+
+
+def _freerun_r2z_by_horizon(usid_model, Xhat, ZN, u_tensor, Cz1, Cz2, device, horizon):
+    """Horizon-resolved free-run R²(Z) — the load-bearing controllability diagnostic.
+
+    The 1-step teacher-forced ``R2_model_fit_Z_Zhat`` is systematically optimistic about
+    control: it scores the filtered predictor (A+KC), feeding the real y each step, NOT
+    the open-loop free-run the controller actually plans. This rolls the PREDICTOR
+    free-run (self-fed y = C·x — ``USIDModel.predict(forced=False)`` /
+    ``NLMPC._rollout_state``, the same recurrence the pin targets) from each filtered
+    seed ``Xhat[t0]``, decodes Z = [x1,x2]·[Cz1,Cz2]ᵀ at each depth j, and reports
+    variance-weighted R²(Z) vs the true Z at t0+j.
+
+    h0 (the filtered readout at the seed) ≈ ``R2_model_fit_Z_Zhat`` on the windowed
+    starts — a correctness gate. The value at the control horizon (h = ctrl_horizon_ms/dt,
+    e.g. 10 for 100 ms, 20 for 200 ms) is what predicts whether the controller can track;
+    ``predictable_horizon`` is the largest depth (contiguous from h0) with R²(Z) > 0.
+
+    Returns a dict ``{f"h{j}": r2 for j in 0..horizon}`` plus ``predictable_horizon``.
+    """
+    n1, n2 = usid_model.n1, usid_model.n2
+    T = Xhat.shape[0]
+    horizon = int(min(horizon, T - 2))
+    if horizon < 1:
+        return {"h0": float("nan"), "predictable_horizon": 0}
+
+    Cz1_t = torch.as_tensor(Cz1, dtype=torch.float32, device=device)
+    Cz2_t = torch.as_tensor(Cz2, dtype=torch.float32, device=device)
+    Xf_t = torch.as_tensor(Xhat, dtype=torch.float32, device=device)
+    Z_t = torch.as_tensor(ZN, dtype=torch.float32, device=device)
+    n_starts = T - horizon
+
+    usid_model.eval()
+    out = {}
+    with torch.no_grad(), usid_model.natural_model.A_param.cache(), usid_model.A22_param.cache():
+        P = usid_model.compute_photocurrents(u_tensor).squeeze(0)  # (T, k)
+        x1 = Xf_t[:n_starts, :n1].clone()
+        x2 = Xf_t[:n_starts, n1:].clone()
+        start = torch.arange(n_starts, device=device)
+        for j in range(horizon + 1):
+            zhat = x1 @ Cz1_t.T + x2 @ Cz2_t.T          # decoded Z at depth j
+            out[f"h{j}"] = _vw_r2(Z_t[start + j], zhat)
+            if j < horizon:
+                # self-fed y = C1·x1 + C2·x2 (the predictor free-run, forced=False)
+                yhat = x1 @ usid_model.natural_model.Cy1.T + x2 @ usid_model.Cy2.T
+                x1, x2, _ = usid_model.step(x1, x2, yhat, P[start + j])
+
+    pred_h = 0
+    for j in range(horizon + 1):
+        r = out[f"h{j}"]
+        if r == r and r > 0:  # r == r filters nan
+            pred_h = j
+        else:
+            break
+    out["predictable_horizon"] = int(pred_h)
+    return out
+
+
+def _pin_bprime(usid_model, Xhat, YN, u_tensor, device, horizon, *, max_iter=300,
+                train_frac=0.8):
+    """Pin the opsin/forced input map B2' by a convex fit to the predictor free-run.
+
+    The controller plans against the OBSERVER free-run (self-fed y = C·x) — the
+    ``forced=False`` rollout in ``USIDModel.predict`` / ``NLMPC._rollout_state`` —
+    where the unnatural update is x2[t+1] = (A22 + K2·Cy2)·x2 + B2'·photocurrent.
+    Opto enters ONLY through B2'; the (possibly masked) observer K2 acts on the
+    self-fed innovation Cy2·x2 and is therefore INERT w.r.t. opto in free-run.
+    Because that free-run output is LINEAR in B2', fitting B2' to reproduce the true
+    output YN over pooled rollout depths j=1..horizon is a CONVEX least-squares
+    problem with a unique optimum. This identifies the input/forced path that the
+    joint teacher-forced objective leaves Kalman-masked (the strong K·y_real feedback
+    explains the opto response regardless of B2'), WITHOUT retraining any other
+    matrix. B1' is pinned to 0 (opto kept out of the *direct* x1 input path; it can
+    still reach x1 indirectly via A12·x2); all other params are frozen.
+
+    Mirrors ``_observer_rollout_pool``'s rollout (reusing ``usid_model.step`` as the
+    single source of the recurrence) but keeps grad on B2' and scores the free-run
+    OUTPUT against YN. Seeds are the filtered states ``Xhat`` (held fixed during the
+    fit; their weak B2'-dependence is a benign transient the horizon pooling averages
+    over — generalization is checked on a held-out start split).
+
+    Returns a diagnostic dict (``||ΔB2'||``, free-run output R²(Y) train/held-out).
+    """
+    n1, n2 = usid_model.n1, usid_model.n2
+    T = Xhat.shape[0]
+    if T <= horizon + 1:
+        raise ValueError(
+            f"Sequence too short to pin B': T={T}, horizon={horizon}. Need T > horizon + 1."
+        )
+
+    usid_model.eval()
+    # Freeze everything; pin B1'=0; leave ONLY B2' trainable.
+    for p in usid_model.parameters():
+        p.requires_grad_(False)
+    with torch.no_grad():
+        usid_model.B1_prime.zero_()
+    usid_model.B2_prime.requires_grad_(True)
+    B2_old = usid_model.B2_prime.detach().clone()
+
+    Xf_t = torch.as_tensor(Xhat, dtype=torch.float32, device=device)
+    Y_t = torch.as_tensor(YN, dtype=torch.float32, device=device)
+    # Photocurrents are fixed (opsin frozen) — precompute once, no grad.
+    with torch.no_grad():
+        P = usid_model.compute_photocurrents(u_tensor).squeeze(0)  # (T, k)
+
+    n_starts = T - horizon
+    n_train = max(1, int(round(train_frac * n_starts)))
+    train_starts = torch.arange(n_train, device=device)
+    val_starts = torch.arange(n_train, n_starts, device=device)
+    if val_starts.numel() == 0:
+        log.warning(
+            "[pin_bprime] held-out start split is empty (n_starts=%d, train_frac=%g); "
+            "held-out R2 will be nan.", n_starts, train_frac,
+        )
+
+    def free_run_sse(starts):
+        """Sum of squared free-run output error over depths j=0..horizon-1.
+
+        From each filtered seed Xf[t0], self-feed the model's own y (the predictor
+        free-run) and accumulate (yhat[t0+j] - YN[t0+j])^2. Linear in B2'.
+        Returns (sse, ss_tot, count) for variance-weighted R².
+        """
+        x1 = Xf_t[starts, :n1]
+        x2 = Xf_t[starts, n1:]
+        sse = x1.new_zeros(())
+        ytrue_pool = []
+        for j in range(horizon):
+            yhat = x1 @ usid_model.natural_model.Cy1.T + x2 @ usid_model.Cy2.T
+            ytrue = Y_t[starts + j]
+            sse = sse + ((yhat - ytrue) ** 2).sum()
+            ytrue_pool.append(ytrue)
+            x1, x2, _ = usid_model.step(x1, x2, yhat, P[starts + j])
+        ytrue_pool = torch.cat(ytrue_pool, dim=0)
+        ss_tot = ((ytrue_pool - ytrue_pool.mean(dim=0)) ** 2).sum()
+        return sse, ss_tot, ytrue_pool.numel()
+
+    opt = torch.optim.LBFGS(
+        [usid_model.B2_prime], max_iter=max_iter, line_search_fn="strong_wolfe",
+    )
+
+    def closure():
+        opt.zero_grad()
+        sse, _ss_tot, n = free_run_sse(train_starts)
+        loss = sse / n
+        loss.backward()
+        return loss
+
+    opt.step(closure)
+    usid_model.B2_prime.requires_grad_(False)
+    # Terminal freeze: usid_model is only READ after this (SubspaceLDS extraction,
+    # Cz fit, Yhat) and never trained further, so leaving all params frozen is intended.
+
+    with torch.no_grad():
+        def r2(starts):
+            if starts.numel() == 0:
+                return float("nan")
+            sse, ss_tot, _ = free_run_sse(starts)
+            return float(1.0 - sse / ss_tot) if ss_tot > 0 else float("nan")
+        diag = {
+            "pin_bprime": True,
+            "dB2_norm": float((usid_model.B2_prime - B2_old).norm()),
+            "B2_old_norm": float(B2_old.norm()),
+            "B2_new_norm": float(usid_model.B2_prime.norm()),
+            "freerun_r2y_train": r2(train_starts),
+            "freerun_r2y_heldout": r2(val_starts),
+            "horizon": int(horizon),
+        }
+    log.info(
+        f"[pin_bprime] ||dB2'||={diag['dB2_norm']:.4g} "
+        f"(|B2'|: {diag['B2_old_norm']:.4g} -> {diag['B2_new_norm']:.4g}); "
+        f"free-run R2(Y) train={diag['freerun_r2y_train']:.4f} "
+        f"heldout={diag['freerun_r2y_heldout']:.4f} @h{horizon}"
+    )
+    return diag
 
 
 def _fit_behavioral_decoder(
