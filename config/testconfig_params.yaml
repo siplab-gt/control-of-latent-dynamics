@@ -34,6 +34,16 @@ params:
   signals: lfp
   n_trials_sys_id: 50
   model_task_inputs: false
+  # USID model_fit-level wildcards (route into usid_overrides via
+  # src/scripts/model_fit.py): forced = usid_hyperparams.loss.loss_weights.forced
+  # (forced-loss weight), pin_bprime = usid_hyperparams.pin_bprime (int 0/1, NOT
+  # bool — Snakemake wildcards are strings and bool("0") is True). Defaults match
+  # the static cold_usid.yaml values (forced 1.0, pin_bprime off) so a run that
+  # does not sweep them carries the committed behaviour.
+  forced: 1.0
+  pin_bprime: 0
+  usid_rollout: 0.1      # USID open-loop rollout loss weight (model_fit wildcard); 0.1 = committed default
+  opsin_sustain: default  # cold-opsin variant: default (rule) | moderate | high (pre-staged, pinned via opsin_checkpoint_path)
   latency: false
   ctrl_type: LQMPC
   ctrl_horizon_ms: 200

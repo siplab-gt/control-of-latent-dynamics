@@ -87,7 +87,7 @@ steps_params = {
         "signals",
     ],
     "sys_id_expts": [],
-    "model_fit": ["n_trials_sys_id", "model_task_inputs"],
+    "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "pin_bprime", "usid_rollout", "opsin_sustain"],
     "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
     "analysis": [],
 }
@@ -831,6 +831,10 @@ def get_cold_opsin_input(wildcards):
     if _resolve_model_fit_method(wildcards.setting) != "usid":
         return []
     if not _use_opsin_for_setting(wildcards.setting):
+        return []
+    # opsin_sustain ∈ {moderate,high} pins a PRE-STAGED cold opsin via
+    # opsin_checkpoint_path (model_fit.py) — no opsin_train_cold dependency.
+    if getattr(wildcards, "opsin_sustain", "default") != "default":
         return []
     return "results/opsin_train_cold/best_model.path"
 

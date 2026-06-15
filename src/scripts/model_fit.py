@@ -1,5 +1,6 @@
 import importlib
 import logging
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -43,6 +44,26 @@ def is_flat(arr, axis=0, thr=0):
         np.array of bool: array of result for whether each dimension was flat or not
     """
     return (np.max(arr, axis=axis) - np.min(arr, axis=axis)) <= thr
+
+
+def _deep_merge_overrides(base: dict, override: dict) -> dict:
+    """Deep merge `override` into `base` (override wins on conflicts).
+
+    Recurses into nested dicts so a leaf override (e.g.
+    usid_hyperparams.loss.loss_weights.forced) replaces only that leaf and
+    keeps sibling keys. Mirrors src/model_fit/usid.py::_deep_merge — kept as a
+    small local copy so model_fit.py has no cross-module import for a 6-line
+    helper (and no import-fallback). Used to fold the forced/pin_bprime
+    wildcard values into config["usid_overrides"] without clobbering a
+    per-setting usid_overrides block.
+    """
+    result = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge_overrides(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 def model_fit(
@@ -200,6 +221,69 @@ if __name__ == "__main__" and "snakemake" in locals():
                     f"{k}={old!r} -> {v!r}"
                 )
             config_dict[k] = v
+
+    # Route the model_fit-level `forced` / `pin_bprime` wildcards into the
+    # USID override stack. These are promoted to sweep wildcards (Snakefile
+    # steps_params["model_fit"]) so a sweep over them parallelizes into one
+    # model_fit output subtree per combo, rather than needing a sequential
+    # config-sed of cold_usid.yaml. _load_usid_config deep-merges
+    # config["usid_overrides"] LAST (after cold_usid.yaml + runtime fields),
+    # so these leaves win at the usid.py read sites
+    # (usid_hyperparams.pin_bprime, usid_hyperparams.loss.loss_weights.forced).
+    #
+    # Snakemake wildcards are strings; parse explicitly. bool("0") is True
+    # (non-empty), so pin_bprime MUST go through int() first ("0"->False,
+    # "1"->True); forced is a float ("0.0", "2.0"). Deep-merge so a per-setting
+    # usid_overrides block (e.g. the usid_loss_* loss schedules) is preserved.
+    wc_forced = getattr(snakemake.wildcards, "forced", None)
+    wc_pin_bprime = getattr(snakemake.wildcards, "pin_bprime", None)
+    wc_usid_rollout = getattr(snakemake.wildcards, "usid_rollout", None)
+    if any(w is not None for w in (wc_forced, wc_pin_bprime, wc_usid_rollout)):
+        wildcard_usid_overrides = {"usid_hyperparams": {}}
+        # forced + usid_rollout share the loss.{loss_weights,schedule} leaves.
+        loss_weights = {}
+        if wc_forced is not None:
+            loss_weights["forced"] = float(wc_forced)
+        if wc_usid_rollout is not None:
+            loss_weights["rollout"] = float(wc_usid_rollout)
+        loss_block = {}
+        if loss_weights:
+            loss_block["loss_weights"] = loss_weights
+        # cold_usid.yaml pins rollout via a USID-phase SCHEDULE (linear 0.1→0.1,
+        # which persists past its window), so setting loss_weights.rollout alone is
+        # silently overridden. Override the schedule to the swept value too.
+        if wc_usid_rollout is not None:
+            r = float(wc_usid_rollout)
+            loss_block["schedule"] = {
+                "rollout": {"mode": "linear", "start": r, "end": r, "epochs": 20}
+            }
+        if loss_block:
+            wildcard_usid_overrides["usid_hyperparams"]["loss"] = loss_block
+        if wc_pin_bprime is not None:
+            wildcard_usid_overrides["usid_hyperparams"]["pin_bprime"] = bool(
+                int(wc_pin_bprime)
+            )
+        existing = config_dict.get("usid_overrides", {}) or {}
+        config_dict["usid_overrides"] = _deep_merge_overrides(
+            existing, wildcard_usid_overrides
+        )
+        log.info(
+            f"[model_fit] wildcard usid_overrides: forced={wc_forced!r}, "
+            f"pin_bprime={wc_pin_bprime!r}, usid_rollout={wc_usid_rollout!r}"
+        )
+
+    # Route the opsin_sustain wildcard to a pre-staged cold-opsin checkpoint dir.
+    # Each variant ({moderate,high}) is a separately-trained NN opsin (different
+    # sustained-light training data); "default" keeps the opsin_train_cold rule's
+    # discovery. usid.py reads config['opsin_checkpoint_path'] as the load dir.
+    wc_opsin_sustain = getattr(snakemake.wildcards, "opsin_sustain", None)
+    if wc_opsin_sustain is not None and wc_opsin_sustain != "default":
+        repo = os.environ["USID_REPO_ROOT"]
+        ckpt_dir = (f"{repo}/experiments/opsin_results_external/"
+                    f"cold_{wc_opsin_sustain}")
+        config_dict["opsin_checkpoint_path"] = ckpt_dir
+        log.info(f"[model_fit] opsin_sustain={wc_opsin_sustain!r} -> "
+                 f"opsin_checkpoint_path={ckpt_dir}")
 
     model_fit(
         preprocess_params(snakemake.wildcards),
