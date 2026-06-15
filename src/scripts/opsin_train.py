@@ -55,6 +55,36 @@ def _v_clamp_dummy_neuron_eqs(v_clamp: float) -> str:
     )
 
 
+def _block_trace(rng, time_steps, u_max, amp_max, sustain_min, sustain_max,
+                 off_min, off_max, on_prob):
+    """Piecewise-constant on/off block light trace.
+
+    ON blocks hold a CONSTANT amplitude ~ Uniform(0, amp_max) for
+    sustain_min..sustain_max steps — sustained light at levels spanning up to
+    amp_max. With a high amp_max this reaches the saturating regime and holds it,
+    exciting the four-state ChR2 desensitization/saturation that the pure-white
+    lognormal trace never sustains (its longest run >20 mW/mm² is ~5 steps, vs the
+    controller's 7-10+, and a single per-block lognormal draw rarely lands high).
+    Uniform-over-amplitude gives even coverage of the steady-state saturation
+    curve. OFF blocks hold zero for off_min..off_max steps — sustained zero, which
+    pins the learned Iopto(0)=0 (fixing the observed −0.074 zero-light offset).
+
+    amp_max (and the sustain length) are the opsin_sustain sweep knobs: a moderate
+    variant covers up to the operating band; a high variant covers deep saturation
+    with longer holds."""
+    trace = np.zeros(time_steps, dtype=np.float64)
+    pos = 0
+    while pos < time_steps:
+        if rng.random() < on_prob:
+            L = int(rng.integers(sustain_min, sustain_max + 1))
+            amp = float(min(rng.uniform(0.0, amp_max), u_max))
+            trace[pos:pos + L] = amp
+        else:
+            L = int(rng.integers(off_min, off_max + 1))
+        pos += L
+    return trace[:time_steps]
+
+
 def _generate_one_sequence(
     seq_idx: int,
     *,
@@ -69,11 +99,24 @@ def _generate_one_sequence(
     model_period_ms: float,
     fiber_distance_um: float,
     seed: int,
+    is_block: bool = False,
+    amp_max: float = 75.0,
+    sustain_min: int = 20,
+    sustain_max: int = 60,
+    off_min: int = 5,
+    off_max: int = 30,
+    on_prob: float = 0.5,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Generate a single lognormal trace + photocurrent pair under a fresh
-    Brian2 scope. Keeps loky workers isolated."""
+    """Generate a single light trace + photocurrent pair under a fresh Brian2
+    scope. ``is_block`` selects a piecewise-constant on/off block trace (sustained
+    drive, constant amplitude ~U(0, amp_max)) vs the pure-white lognormal trace.
+    Keeps loky workers isolated."""
     rng = np.random.default_rng(seed + seq_idx)
-    trace = rng.lognormal(mu, sigma, size=time_steps).clip(0, u_max_mWmm2)
+    if is_block:
+        trace = _block_trace(rng, time_steps, u_max_mWmm2, amp_max,
+                             sustain_min, sustain_max, off_min, off_max, on_prob)
+    else:
+        trace = rng.lognormal(mu, sigma, size=time_steps).clip(0, u_max_mWmm2)
 
     b2.start_scope()
     opsin = UnitlessChr2FourState(g0=g0, E=E, phim=phim)
@@ -109,11 +152,24 @@ def generate_cold_opsin_pool(
     model_period_ms: float,
     fiber_distance_um: float,
     seed: int,
+    const_block_fraction: float = 0.0,
+    amp_max: float = 75.0,
+    sustain_min: int = 20,
+    sustain_max: int = 60,
+    off_min: int = 5,
+    off_max: int = 30,
+    on_prob: float = 0.5,
     verbose: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Drive N independent single-neuron sims; stack to (N, T, 1) arrays."""
+    """Drive N independent single-neuron sims; stack to (N, T, 1) arrays.
+
+    The first ``round(const_block_fraction * n_sequences)`` sequences use
+    piecewise-constant on/off block light (sustained drive); the rest use the
+    pure-white lognormal trace. const_block_fraction=0 reproduces the legacy
+    all-white behaviour."""
     mu = float(np.log(typical_Irr0_mWmm2))
     sigma = float(np.log(u_max_mWmm2) / 3.0)
+    n_const = int(round(const_block_fraction * n_sequences))
 
     if verbose:
         log.info(
@@ -132,6 +188,13 @@ def generate_cold_opsin_pool(
     if verbose:
         log.info(f"  Parallel workers: {n_jobs}")
 
+    if verbose and n_const > 0:
+        log.info(
+            f"  Block traces: {n_const}/{n_sequences} sequences are piecewise-"
+            f"constant on/off (on-block amp ~U(0,{amp_max}), sustain "
+            f"{sustain_min}-{sustain_max} steps, off-block {off_min}-{off_max}, "
+            f"p_on={on_prob}); rest pure-white.")
+
     results = Parallel(n_jobs=n_jobs)(
         delayed(_generate_one_sequence)(
             i,
@@ -141,6 +204,10 @@ def generate_cold_opsin_pool(
             model_period_ms=model_period_ms,
             fiber_distance_um=fiber_distance_um,
             seed=seed,
+            is_block=(i < n_const),
+            amp_max=amp_max,
+            sustain_min=sustain_min, sustain_max=sustain_max,
+            off_min=off_min, off_max=off_max, on_prob=on_prob,
         )
         for i in range(n_sequences)
     )
@@ -189,6 +256,17 @@ def main(snakemake) -> None:
     model_period_ms = float(
         config["prep_fsnn"]["dt_ms"] * config["cleo_prep"]["subsample_factor"])
 
+    # Sustained on/off block light (optional; default 0 reproduces all-white).
+    # sustain_steps_max is the knob the opsin_sustain sweep varies (moderate vs
+    # high/further-sustained constant-on duration).
+    const_block_fraction = float(train_cfg.get("const_block_fraction", 0.0))
+    sustain_amp_max = float(train_cfg.get("sustain_amp_max", u_max_mWmm2))
+    sustain_min = int(train_cfg.get("sustain_steps_min", 20))
+    sustain_max = int(train_cfg.get("sustain_steps_max", 60))
+    off_min = int(train_cfg.get("off_steps_min", 5))
+    off_max = int(train_cfg.get("off_steps_max", 30))
+    on_prob = float(train_cfg.get("block_on_probability", 0.5))
+
     light, photocurrent = generate_cold_opsin_pool(
         g0=g0, E=E, phim=phim, v_clamp=v_clamp,
         typical_Irr0_mWmm2=typical_Irr0_mWmm2,
@@ -198,6 +276,10 @@ def main(snakemake) -> None:
         model_period_ms=model_period_ms,
         fiber_distance_um=fiber_distance_um,
         seed=seed,
+        const_block_fraction=const_block_fraction,
+        amp_max=sustain_amp_max,
+        sustain_min=sustain_min, sustain_max=sustain_max,
+        off_min=off_min, off_max=off_max, on_prob=on_prob,
     )
 
     usid_repo = os.environ.get("USID_REPO_ROOT")

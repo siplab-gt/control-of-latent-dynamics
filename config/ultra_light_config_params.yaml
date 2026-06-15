@@ -188,6 +188,21 @@ opsin_train_cold:
   scheduler_factor: 0.8
   scheduler_min_lr: 1.0e-6
   seed: 42
+  # Sustained on/off block light (opsin saturation-coverage fix, 2026-06-14). Trains
+  # the NN on piecewise-constant ON blocks (amp ~U(0,sustain_amp_max), held for
+  # sustain_steps) + sustained-zero OFF blocks, instead of pure-white lognormal.
+  # Fixes the zero-light offset (off-blocks) and the high-light marginal-slope
+  # over-statement (sustained-high blocks). The "high" variant (amp_max=75,
+  # sustain<=160) is best on commanded light: dynamic R²(NN,biophysical 500um) 0.9993
+  # vs white 0.9973, deep-saturation [50,75) bin 0.86->0.98. const_block_fraction=0
+  # reproduces legacy all-white. See personal_notes cold_eval opsin_block_training doc.
+  const_block_fraction: 0.6
+  sustain_amp_max: 75
+  sustain_steps_min: 40
+  sustain_steps_max: 160
+  off_steps_min: 10
+  off_steps_max: 40
+  block_on_probability: 0.5
 
 model_fit:
   linear_Cz: true
