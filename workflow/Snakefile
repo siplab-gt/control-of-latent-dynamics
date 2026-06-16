@@ -1,11 +1,14 @@
+import itertools
+import warnings
+from math import ceil
 from copy import deepcopy
 from functools import cache
-from math import ceil
+
 import numpy as np
 import pandas as pd
-import itertools
+from snakemake.io import Namedlist
+
 from src.helpers import str2bool
-import warnings
 
 # Main entrypoint of the workflow.
 # Please follow the best practices:
@@ -69,7 +72,7 @@ _cond_params_in_cfg = [
         "manual_sweep_params",
         "grid_sweep_params",
         "star_sweep_params",
-        "star_sweep_params_measurement_only",
+        "star_sweep_params_optimal_stim_rec",
     ]
     for param in config[param_type].keys()
 ]
@@ -106,10 +109,9 @@ def cond_params_for_step(step: str) -> list[str]:
     return params
 
 
-def wildcard_path(file: str, fill_in_ref=False, **kwargs) -> str:
+def wildcard_path(file: str, ref_params: dict = {}, **kwargs) -> str:
     step = step_from_filename(file)
-    params = config["reference_params"].copy() if fill_in_ref else {}
-    params |= kwargs
+    params = ref_params | kwargs
     wildcards = set(all_cond_params) - params.keys()
 
     cond_params = cond_params_for_step(step)
@@ -142,56 +144,28 @@ def wildcard_path(file: str, fill_in_ref=False, **kwargs) -> str:
     return out
 
 
+def ref_wildcard_path(file: str, **kwargs) -> str:
+    def wc_fn(wildcards):
+        wc_with_kwargs = Namedlist(toclone=wildcards, fromdict=kwargs)
+        ref = subcfg("reference_params")(wc_with_kwargs)
+        return wildcard_path(file, ref, **kwargs)
+
+    return wc_fn
+
+
 NA = "NA"  # when a parameter is not applicable (e.g. ctrl_type for cleo_prep)
 
 
-def params_from_cfg(*params: str, keep_parent_keys=False, keep_target_key=True) -> dict:
-    """easy way to get params from config dict. can go past first level with /"""
-    result = {}
-    for param in params:
-        keys = param.split("/")
-        d = result
-        subcfg = config
-        for key in keys[:-1]:
-            if keep_parent_keys:
-                if key not in d:
-                    d[key] = {}
-                d = d[key]
-            subcfg = subcfg[key]
-        if not keep_target_key:
-            d |= subcfg[keys[-1]]
-        else:
-            d[keys[-1]] = subcfg[keys[-1]]
-    return result
-
-
-def params_from_cfg_with_wildcards(
-    *queries: str, keep_parent_keys=False, keep_target_key=True
-) -> callable:
-    def replace_wildcards(wildcards):
-        results = {}
-        for query in queries:
-            results |= params_from_cfg(
-                *expand(query, **wildcards),
-                keep_parent_keys=keep_parent_keys,
-                keep_target_key=keep_target_key,
-            )
-        # print(f"{results=}")
-        return results
-
-    return replace_wildcards
-
-
-def step_cfg(*steps: str) -> callable:
-    subcfg_vars = ["task", "mode", "setting", "ctrl_type"]
+def subcfg(*steps: str) -> callable:
+    override_vars = ["task", "mode", "setting", "ctrl_type"]
 
     def wc_fn(wildcards):
         params = {}
         for step in steps:
             params |= config[step]
-            for var in subcfg_vars:
+            for var in override_vars:
                 try:
-                    params |= config.get(f"{step}_{getattr(wildcards, var)}", {})
+                    params |= config.get(f"{step}_{wildcards.get(var)}", {})
                 except (KeyError, AttributeError):
                     pass
         return params
@@ -203,8 +177,7 @@ rule testq1:
     # for easily running one reference condition
     # (doesn't require a super long path with all wildcards)
     input:
-        lambda wc: wildcard_path(
-            fill_in_ref=True,
+        lambda wc: ref_wildcard_path(
             file=wc.file,
             setting="sufficient_stim",
             task="reaching",
@@ -238,8 +211,7 @@ test_k, test_m = list(get_q2_kms())[-1]
 
 rule testq2:
     input:
-        lambda wc: wildcard_path(
-            fill_in_ref=True,
+        lambda wc: ref_wildcard_path(
             file=wc.file,
             setting="optimal_stim_rec",
             task="reaching",
@@ -308,7 +280,7 @@ rule sufficient_stim_tabulate:
     input:
         # to get main fig
         [
-            wildcard_path(
+            ref_wildcard_path(
                 file="summary.csv",
                 setting="sufficient_stim",
                 latency=latency,
@@ -317,13 +289,12 @@ rule sufficient_stim_tabulate:
                 k=config["q1"]["k"],
                 seed=config["grid_sweep_params"]["seed"],
                 signals=NA,
-                fill_in_ref=True,
             )
             for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
         ],
         # exploratory variables
         [
-            wildcard_path(
+            ref_wildcard_path(
                 file="summary.csv",
                 setting="sufficient_stim",
                 latency=False,
@@ -332,10 +303,11 @@ rule sufficient_stim_tabulate:
                 m=NA,
                 seed=config["grid_sweep_params"]["seed"],
                 signals=NA,
-                **{var: config["star_sweep_params"][var]},
-                fill_in_ref=True,
+                **{var: values},
             )
-            for var in config["star_sweep_params"]
+            for var, values in (
+                subcfg("star_sweep_params")({"setting": "sufficient_stim"})
+            ).items()
         ],
     output:
         protected("<results>/sufficient_stim_{task}.csv"),
@@ -352,7 +324,7 @@ rule optimal_stim_rec_tabulate:
     input:
         # to get main fig
         [
-            wildcard_path(
+            ref_wildcard_path(
                 file="summary.csv",
                 setting="optimal_stim_rec",
                 latency=latency,
@@ -360,14 +332,13 @@ rule optimal_stim_rec_tabulate:
                 k=k,
                 m=m,
                 seed=config["grid_sweep_params"]["seed"],
-                fill_in_ref=True,
             )
             for ctrl, latency in [("OL", False), ("LQMPC", False), ("LQMPC", True)]
             for k, m in get_q2_kms()
         ],
         # exploratory variables
         [
-            wildcard_path(
+            ref_wildcard_path(
                 file="summary.csv",
                 setting="optimal_stim_rec",
                 latency=False,
@@ -376,11 +347,9 @@ rule optimal_stim_rec_tabulate:
                 m=m,
                 seed=config["grid_sweep_params"]["seed"],
                 **{var: values},
-                fill_in_ref=True,
             )
             for var, values in (
-                config["star_sweep_params"]
-                | config["star_sweep_params_measurement_only"]
+                subcfg("star_sweep_params")({"setting": "optimal_stim_rec"})
             ).items()
             for k, m in get_q2_kms()
         ],
@@ -437,6 +406,11 @@ def fsnn_mem_required(wc):
 def runtime_min(n_trials, n_train_trials=0, multiplier=1):
     def f(wc):
         scale = float(wc["density_scale"]) * float(wc["network_area_scale"])
+        # scale also for k>100: k=1000 -> multiply by 2
+        if "k" in wc.keys():
+            k = int(wc["k"])
+            if k > 100:
+                scale *= 1 + (k - 100) / (1024 - 100)
         # observed per-trial runtimes for small networks
         # got 5.4 seconds per trial for demean on big network (*6)
         # get ~1s/trial on Myelin, but ~7 for PACE.
@@ -460,18 +434,18 @@ rule ctrl_expts:
         "src/ctrl/{ctrl_type}.py",
         cleo_prep=wildcard_path("cleo_prep.pkl.gz"),
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
-    params:
-        step_cfg("cleo_prep", "expts", "ctrl_expts"),
     output:
         data=wildcard_path("ctrl_data.pkl.gz"),
+    log:
+        wildcard_path("ctrl_expts.log"),
+    retries: 1
     conda:
         "cold"
     resources:
         mem_mb=lambda wc: fsnn_mem_required(wc) * 1.5,
         runtime=runtime_min(config["ctrl_expts"]["n_trials_ctrl"], multiplier=8),
-    log:
-        wildcard_path("ctrl_expts.log"),
-    retries: 1
+    params:
+        subcfg("cleo_prep", "expts", "ctrl_expts"),
     script:
         "../src/scripts/ctrl_expts.py"
 
@@ -490,9 +464,9 @@ rule plot_model_fit_pred:
 
 
 use rule plot_model_fit_pred as plot_model_fit_pred_default with:
-    localrule: True
     output:
         wildcard_path("model_fit_pred_plot.png"),
+    localrule: True
 
 
 rule analyze_model_fit:
@@ -545,12 +519,14 @@ rule model_fit:
             otherwise="src/model_fit/braid.py",
         ),
         sys_id_data=wildcard_path("sys_id_data.pkl.gz"),
-    params:
-        step_cfg("model_fit"),
-        braid_basename=wildcard_path("model_fit_braid"),
     output:
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
         pred_data=wildcard_path("model_fit_pred_data.pkl.gz"),
+    log:
+        wildcard_path("model_fit.log"),
+    retries: 1
+    conda:
+        "cold"
     threads: lambda wc: max(1, 8 * gpu_for_model_fit(wc))
     resources:
         gpu=gpu_for_model_fit,
@@ -559,11 +535,9 @@ rule model_fit:
         # since slurm executor sets to 1, which breaks
         tasks_per_gpu=0,
         runtime=lambda wc: 120 if wc.setting != "sufficient_stim" else 10,
-    retries: 1
-    conda:
-        "cold"
-    log:
-        wildcard_path("model_fit.log"),
+    params:
+        subcfg("model_fit"),
+        braid_basename=wildcard_path("model_fit_braid"),
     script:
         "../src/scripts/model_fit.py"
 
@@ -601,19 +575,19 @@ n_trials_sys_id_max = config["star_sweep_params"]["n_trials_sys_id"][-1]
 rule sys_id_expts:
     input:
         wildcard_path("cleo_prep.pkl.gz"),
-    params:
-        step_cfg("cleo_prep", "expts", "sys_id_expts"),
-        n_trials_sys_id_max=n_trials_sys_id_max,
     output:
         wildcard_path("sys_id_data.pkl.gz"),
     log:
         wildcard_path("sys_id_expts.log"),
+    retries: 1  # since there can be conflicts hitting the cython cache
     conda:
         "cold"
     resources:
         mem_mb=fsnn_mem_required,
-        runtime=runtime_min(n_trials_sys_id_max, multiplier=1.5),
-    retries: 1  # since there can be conflicts hitting the cython cache
+        runtime=runtime_min(n_trials_sys_id_max, multiplier=2),
+    params:
+        subcfg("cleo_prep", "expts", "sys_id_expts"),
+        n_trials_sys_id_max=n_trials_sys_id_max,
     script:
         "../src/scripts/sys_id_expts.py"
 
@@ -621,12 +595,12 @@ rule sys_id_expts:
 rule impulse_responses:
     input:
         wildcard_path("cleo_prep.pkl.gz"),
-    params:
-        step_cfg("expts"),
     output:
         wildcard_path("impulse_responses_wide_plot.png"),
         wildcard_path("impulse_responses_trials_plot.png"),
     localrule: True
+    params:
+        subcfg("expts"),
     script:
         "../src/scripts/impulse_responses.py"
 
@@ -662,10 +636,10 @@ rule plot_cleo:
         "src/plot_style.py",
     output:
         wildcard_path("cleo_plot.{ext}"),
+    localrule: True
     params:
         fsnn_params,
-        step_cfg("cleo_prep"),
-    localrule: True
+        subcfg("cleo_prep"),
     script:
         "../src/scripts/plot_cleo.py"
 
@@ -677,13 +651,14 @@ rule cleo_prep:
         "src/grouped_light.py",
         "src/cleo_prep_{setting}.py",
         "src/interface_array.py",
-    params:
-        step_cfg("prep_fsnn", "cleo_prep"),
     output:
         wildcard_path("cleo_prep.pkl.gz"),
     log:
         wildcard_path("cleo_prep.log"),
     localrule: True
+    threads: 1
+    params:
+        subcfg("prep_fsnn", "cleo_prep"),
     script:
         "../src/scripts/cleo_prep.py"
 
@@ -764,10 +739,11 @@ def fsnn_runtime(wc):
 rule _prep_fsnn:
     input:
         unpack(fsnn_inputs),
-    params:
-        fsnn_params,
     log:
         wildcard_path("prep_fsnn_{mode}.log"),
+    retries: 1
+    conda:
+        "cold"
     # only use 2 threads; more requires a lot of memory for parallel compilation
     threads: lambda wc: max(1, 4 * gpu_for_fsnn_train(wc))
     resources:
@@ -775,9 +751,8 @@ rule _prep_fsnn:
         gpu_jobs=gpu_for_fsnn_train,
         runtime=fsnn_runtime,
         mem_mb=lambda wc: fsnn_mem_required(wc) if wc["mode"] != "train" else 64000,
-    retries: 1
-    conda:
-        "cold"
+    params:
+        fsnn_params,
     script:
         "../src/scripts/prep_fsnn.py"
 
@@ -809,8 +784,8 @@ rule plot_schematic:
     output:
         top=wildcard_path("cleo_prep_top_schematic.{ext}"),
         side=wildcard_path("cleo_prep_side_schematic.{ext}"),
-    params:
-        step_cfg("prep_fsnn", "cleo_prep"),
     localrule: True
+    params:
+        subcfg("prep_fsnn", "cleo_prep"),
     script:
         "../src/scripts/plot_schematic.py"

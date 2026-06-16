@@ -359,16 +359,19 @@ class fSNN(BaseDataClass):
         seed = seed_everything(cond_params["seed"], "train_fsnn")
         rng = np.random.default_rng(seed)
 
-        # TODO: calculate volume, num neurons per layer
-        # to concentrate neurons, we'll just do L2/3
+        # for now, just using L2/3
         z_top, z_bottom = base_params.layer_boundaries[[0, 1]]
         thickness = z_bottom - z_top
         side_length_um = (
             base_params.array_side_length * np.sqrt(cond_params.network_area_scale)
         ) / b2.um
         vol = (side_length_um * b2.um) ** 2 * thickness
-        density = base_params.base_neuron_density * cond_params.density_scale
-        n_ng = vol * (density * b2.mm**-3)
+        n_ng = (
+            base_params.n_neurons_base
+            * cond_params.density_scale
+            * cond_params.network_area_scale
+            / base_params.network_area_scale_base
+        )
         n_ng = int(round(n_ng))
         print(f"side_length_um: {side_length_um}, volume: {vol}, n_ng: {n_ng}")
         hor_lim = (-side_length_um / 2, side_length_um / 2)

@@ -56,8 +56,10 @@ def model_fit(
     else:
         U = expt_data.Uopto
     U = U[:T]
+    Uopto = expt_data.Uopto[:T]
 
-    for arr in ("Y", "Z", "U"):
+    # Utask could have flat direction dimensions for low trial counts
+    for arr in ("Y", "Z", "Uopto"):
         if is_flat(locals()[arr], axis=0).any():
             log.warning(
                 f"Warning: some dimensions of {arr} are flat. This may cause issues with model fitting."
@@ -74,18 +76,15 @@ def model_fit(
 
     # Normalize data (removing the mean is essential before training):
     y_mean, y_std = np.mean(Y, axis=0), np.std(Y, axis=0)
-    # ensure no zero stds
-    y_std[y_std == 0] = 1.0
-    # YtrainN, YtestN = (Ytrain - yMean) / yStd, (Ytest - yMean) / yStd
     YN = (Y - y_mean) / y_std
-    assert np.all(np.isfinite(YN))
     z_mean, z_std = np.mean(Z, axis=0), np.std(Z, axis=0)
-    # ZtrainN, ZtestN = (Ztrain - zMean) / zStd, (Ztest - zMean) / zStd
     ZN = (Z - z_mean) / z_std
     # remember U is normalized, will need to be unnormalized for constraints/costs
     u_mean, u_std = np.mean(U, axis=0), np.std(U, axis=0)
-    # UtrainN, UtestN = (Utrain - uMean) / uStd, (Utest - uMean) / uStd
+    # ensure no zero stds
+    u_std[u_std == 0] = 1.0
     UN = (U - u_mean) / u_std
+    assert np.all(np.isfinite(UN))
     # normalize X too so origin reflects u_mean, y_mean, z_mean inputs
     x_mean, x_std = np.mean(X, axis=0), np.std(X, axis=0)
     XN = (X - x_mean) / x_std

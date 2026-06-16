@@ -6,11 +6,14 @@
 #########################################
 grid_sweep_params:
   seed:
+    - 16320829
+    - 16890118
     - 17230616
     - 18051223
-    - 16320829
     - 18060520
     - 18220427
+    - 18990508
+    - 19120731
 
 # exploratory vars to sweep one at a time in Q1, Q2
 # i.e., explore space in star pattern
@@ -36,6 +39,23 @@ star_sweep_params:
     - 1.33
     - 1.67
     - 2
+  model_task_inputs:
+    - false
+    - true
+
+star_sweep_params_sufficient_stim:
+  network_area_scale: # proportional to array area
+    - 1.06348 # provides padding of just the pitch for 32x32 array
+    - 2
+    - 3
+  beam_width_um:
+    - 5
+    - 35
+    - 65
+    - 95
+    - 125
+
+star_sweep_params_optimal_stim_rec:
   network_area_scale: # proportional to array area
     - 1.44 # minimum for 0.4 mm padding around 4x4mm array, which we want for LFP
     - 2
@@ -46,11 +66,6 @@ star_sweep_params:
     - 100
     - 200
     - 400
-  model_task_inputs:
-    - false
-    - true
-
-star_sweep_params_measurement_only:
   signals:
     - spikes
     - lfp
@@ -81,10 +96,16 @@ reference_params:
   n_trials_sys_id: 100
   n_latent_dims_offset: 0
   density_scale: 1
-  network_area_scale: 1.44
-  beam_width_um: 100
   latency: false
   model_task_inputs: true
+  
+reference_params_sufficient_stim:
+  network_area_scale: 1.06348 # provides padding of just the pitch for 32x32 array
+  beam_width_um: 35
+  
+reference_params_optimal_stim_rec:
+  network_area_scale: 1.44
+  beam_width_um: 100
   signals: lfp
 
 ##############################
@@ -108,6 +129,14 @@ q1: # a.k.a. sufficient stim, how many channels are good enough?
     - 80
     - 90
     - 100
+    - 120
+    - 140
+    - 160
+    - 180
+    - 200
+    - 400
+    - 700
+    - 1024
   m: NA
 
 q2: # a.k.a. optimal stim/rec balance
@@ -129,7 +158,10 @@ prep_fsnn:
   dt_ms: 1
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
-  base_neuron_density: 125 # neurons per mm^3. 65k is realistic
+  # in reference density/area configuration. 1024 to match max channels in Q1
+  n_neurons_base: 1024 
+  # so that the base condition in Q1 has exactly 1024 neurons
+  network_area_scale_base: 1.06348
   layer_density_ratios:
     - 1.231 # L2/3, =80/65
     - 1.539 # L4, =100/65
@@ -139,8 +171,6 @@ prep_fsnn:
     - 550 # L4 start
     - 900 # L5 start
     - 1450 # L5 end
-  connection_distance_penalty_max: 1
-  connection_layer_penalty_max: 0.1 # TODO
 
   n_init_trials: 0
   n_main_trials: 0
@@ -190,6 +220,9 @@ cleo_prep:
   typical_Irr0_mWmm2: 5
   # needed early for LFP
   subsample_factor: 10 # ctrl/sample period relative to fsnn dt
+  
+cleo_prep_sufficient_stim:
+  array_n_per_side: 32
 
 model_fit:
   linear_Cz: true
