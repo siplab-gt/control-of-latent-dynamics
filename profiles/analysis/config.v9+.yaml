@@ -1,0 +1,20 @@
+# This is for when all the main experiments are done and we want to simply
+# do analysis and plotting without fear of triggering giant re-runs
+consider-ancient:
+  main_figs: 0
+  diagnostic_figs: csvs
+  # key_metrics_table: 0
+  # dependence_analysis: 0
+
+allowed-rules:
+  - dependence_analysis
+  - dependence_analysis_default
+  - aggregate_dependence_analysis
+  - key_metrics_table
+  - main_figs
+  - diagnostic_figs
+  - diagnostic_figs_combined
+  - example_figs
+  - combined_example_figs
+  - stats_table
+  - key_ref_stats_table

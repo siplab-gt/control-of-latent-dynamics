@@ -22,6 +22,8 @@ dependencies = [
     'tqdm',
     'tensorflow[and-cuda]',
     'marimo',
+    'kneed',
+    'xgboost',
 ]
 
 [tool.setuptools]

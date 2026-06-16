@@ -22,6 +22,7 @@ configfile: "config/config.yaml"
 wildcard_constraints:
     task="|".join(config["manual_sweep_params"]["task"]),
     setting="|".join(config["manual_sweep_params"]["setting"] + ["NA"]),
+    analysis="key|control",
 
 
 rule all:
@@ -31,12 +32,23 @@ rule all:
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
+        expand(
+            "<results>/{setting}_{task}_key_metrics.csv",
+            task=config["manual_sweep_params"]["task"],
+            setting=config["manual_sweep_params"]["setting"],
+        ),
         "<results>/figs/diagnostics.pdf",
         expand(
             "<results>/figs/{setting}_{task}_diagnostics.pdf",
             task=config["manual_sweep_params"]["task"],
             setting=config["manual_sweep_params"]["setting"],
         ),
+        expand(
+            "<results>/{setting}_{task}_dependence/stats-table.tex",
+            task=config["manual_sweep_params"]["task"],
+            setting=config["manual_sweep_params"]["setting"],
+        ),
+        "<results>/figs/combined_reaching_LQMPC_example_figs.pdf",
     localrule: True
 
 
@@ -162,7 +174,7 @@ def subcfg(*steps: str) -> callable:
     def wc_fn(wildcards):
         params = {}
         for step in steps:
-            params |= config[step]
+            params |= config.get(step, {})
             for var in override_vars:
                 try:
                     params |= config.get(f"{step}_{wildcards.get(var)}", {})
@@ -183,7 +195,7 @@ rule testq1:
             task="reaching",
             latency=False,
             ctrl_type="LQMPC",
-            k=100,
+            # k=484,
             m=NA,
             seed=17230616,
             signals=NA,
@@ -206,7 +218,7 @@ def get_q2_kms():
     return zip(kk.tolist(), mm.tolist())
 
 
-test_k, test_m = list(get_q2_kms())[-1]
+test_k, test_m = list(get_q2_kms())[2]
 
 
 rule testq2:
@@ -231,21 +243,49 @@ rule testq2:
         "find $(dirname {input}) -maxdepth 1 -type f -print0 | xargs -0 cp -t $(dirname {output})"
 
 
+rule test_sweep:
+    input:
+        [
+            wildcard_path(
+                fill_in_ref=True,
+                file="summary.csv",
+                setting="sufficient_stim",
+                task="reaching",
+                latency=False,
+                ctrl_type="LQMPC",
+                seed=s,
+                signals=NA,
+            )
+            for s in [17230616, 18051223, 16320829]
+        ],
+    localrule: True
+
+
 fig_exts = [".webp", ".pdf"]
+
+
+def multi_exts(base, *extensions):
+    return multiext(base, *extensions)
 
 
 rule main_figs:
     input:
         "<results>/{setting}_{task}.csv",
+        "<results>/{setting}_{task}_key_metrics.csv",
         "src/plot_style.py",
+        dependence_key="<results>/{setting}_{task}_dependence/key.pkl.gz",
+        dependence_control="<results>/{setting}_{task}_dependence/control.pkl.gz",
+        key_ref_stats="<results>/{setting}_{task}_key_ref_stats.csv",
     output:
         main=multiext("<results>/figs/{setting}_{task}", *fig_exts),
-        lineplots=multiext("<results>/figs/{setting}_{task}_lineplots", *fig_exts),
+        # lineplots=multiext("<results>/figs/{setting}_{task}_lineplots", *fig_exts),
         heatmaps_mean=multiext(
             "<results>/figs/{setting}_{task}_heatmaps_mean", *fig_exts
         ),
-        heatmaps_std=multiext("<results>/figs/{setting}_{task}_heatmaps_std", *fig_exts),
+        # heatmaps_std=multiext("<results>/figs/{setting}_{task}_heatmaps_std", *fig_exts),
     localrule: True
+    params:
+        subcfg("analysis"),
     script:
         "../src/scripts/main_figs.py"
 
@@ -274,6 +314,63 @@ rule diagnostic_figs_combined:
     localrule: True
     script:
         "../src/scripts/diagnostic_figs.py"
+
+
+def example_ctrl_data_files(setting: str, seed: int):
+    def wc_fn(wc):
+        if setting == "sufficient_stim":
+            q1_k = config["q1"]["k"]
+            param_sets = [
+                {"k": 5, "m": NA},
+                {"k": 100, "m": NA},
+                {"k": q1_k[-1], "m": NA},
+            ]
+        elif setting == "optimal_stim_rec":
+            kms = list(get_q2_kms())
+            i_mid = len(kms) // 2
+            param_sets = [
+                {"k": kms[1][0], "m": kms[1][1]},
+                {"k": kms[i_mid][0], "m": kms[i_mid][1]},
+                {"k": kms[-2][0], "m": kms[-2][1]},
+            ]
+        else:
+            raise ValueError(f"Unsupported setting for example figs: {setting}")
+        return [
+            ref_wildcard_path("ctrl_data.pkl.gz", setting=setting, seed=seed, **param_set)(
+                wc
+            )
+            for param_set in param_sets
+        ]
+
+    return wc_fn
+
+
+EXAMPLE_SEED = config["grid_sweep_params"]["seed"][0]
+
+
+rule combined_example_figs:
+    input:
+        "src/plot_style.py",
+        q1_files=example_ctrl_data_files("sufficient_stim", EXAMPLE_SEED),
+        q2_files=example_ctrl_data_files("optimal_stim_rec", EXAMPLE_SEED),
+    output:
+        multiext("<results>/figs/combined_{task}_{ctrl_type}_example_figs", *fig_exts),
+    localrule: True
+    script:
+        "../src/scripts/combined_example_figs.py"
+
+
+rule example_figs:
+    input:
+        "src/plot_style.py",
+        data_files=lambda wc: example_ctrl_data_files(wc.setting, EXAMPLE_SEED)(wc),
+    output:
+        multi_exts(
+            "<results>/figs/{setting}_{task}_{ctrl_type}_example_figs", *fig_exts
+        ),
+    localrule: True
+    script:
+        "../src/scripts/example_figs.py"
 
 
 rule sufficient_stim_tabulate:
@@ -364,6 +461,98 @@ rule optimal_stim_rec_tabulate:
         print(f"wrote optimal stim rec results to {output[0]}")
 
 
+rule key_metrics_table:
+    input:
+        "<results>/{setting}_{task}.csv",
+    output:
+        "<results>/{setting}_{task}_key_metrics.csv",
+    localrule: True
+    params:
+        lookup(dpath="analysis_{setting}", within=config),
+    script:
+        "../src/scripts/key_metrics_table.py"
+
+
+rule key_ref_stats_table:
+    input:
+        "<results>/{setting}_{task}_key_metrics.csv",
+    output:
+        "<results>/{setting}_{task}_key_ref_stats.csv",
+    params:
+        subcfg("analysis"),
+    script:
+        "../src/scripts/key_ref_stats_table.py"
+
+
+est_type = config["dependence_analysis"]["estimator_type"]
+
+
+rule dependence_analysis:
+    input:
+        branch(
+            lambda wc: wc.analysis == "key",
+            then="<results>/{setting}_{task}_key_metrics.csv",
+            otherwise="<results>/{setting}_{task}.csv",
+        ),
+        "src/cmi_estimation.py",
+    output:
+        "<results>/{setting}_{task}_dependence/{ep}_{analysis}_{estimator_type}.pkl.gz",
+    log:
+        "<logs>/{setting}_{task}_dependence/{ep}_{analysis}_{estimator_type}.log",
+    conda:
+        "cold"
+    resources:
+        mem_mb=4000,
+        runtime=10,
+    params:
+        subcfg("dependence_analysis", "analysis"),
+    script:
+        "../src/scripts/dependence_analysis.py"
+
+
+rule dependence_analysis_default:
+    input:
+        f"<results>/{{setting}}_{{task}}_dependence/{{ep}}_{{analysis}}_{est_type}.pkl.gz",
+    output:
+        "<results>/{setting}_{task}_dependence/{ep}_{analysis}.pkl.gz",
+    localrule: True
+    shell:
+        "ln -s -r {input} {output}"
+
+
+rule aggregate_dependence_analysis:
+    input:
+        lambda wc: expand(
+            "<results>/{{setting}}_{{task}}_dependence/{ep}_{{analysis}}_{estimator_type}.pkl.gz",
+            ep=(
+                list(config["star_sweep_params"].keys())
+                + list(config[f"star_sweep_params_{wc.setting}"].keys())
+            ),
+            estimator_type=est_type,
+        ),
+    output:
+        "<results>/{setting}_{task}_dependence/{analysis}.pkl.gz",
+    localrule: True
+    params:
+        subcfg("dependence_analysis", "analysis"),
+    script:
+        "../src/scripts/aggregate_dependence_analysis.py"
+
+
+rule stats_table:
+    input:
+        "<results>/{setting}_{task}_dependence/control.pkl.gz",
+        "<results>/{setting}_{task}_dependence/key.pkl.gz",
+    output:
+        "<results>/{setting}_{task}_dependence/stats-table.csv",
+        "<results>/{setting}_{task}_dependence/stats-table.tex",
+    localrule: True
+    params:
+        subcfg("analysis"),
+    script:
+        "../src/scripts/stats_table.py"
+
+
 rule analyze_ctrl_data:
     input:
         ctrl_data=wildcard_path("ctrl_data.pkl.gz"),
@@ -410,7 +599,7 @@ def runtime_min(n_trials, n_train_trials=0, multiplier=1):
         if "k" in wc.keys():
             k = int(wc["k"])
             if k > 100:
-                scale *= 1 + (k - 100) / (1024 - 100)
+                scale *= 2 * (k - 100) / (1024 - 100)
         # observed per-trial runtimes for small networks
         # got 5.4 seconds per trial for demean on big network (*6)
         # get ~1s/trial on Myelin, but ~7 for PACE.
@@ -656,7 +845,6 @@ rule cleo_prep:
     log:
         wildcard_path("cleo_prep.log"),
     localrule: True
-    threads: 1
     params:
         subcfg("prep_fsnn", "cleo_prep"),
     script:

@@ -44,7 +44,8 @@ star_sweep_params:
     - true
 
 star_sweep_params_sufficient_stim:
-  network_area_scale: # proportional to array area
+  network_area_scale:
+    # proportional to array area
     - 1.06348 # provides padding of just the pitch for 32x32 array
     - 2
     - 3
@@ -56,7 +57,8 @@ star_sweep_params_sufficient_stim:
     - 125
 
 star_sweep_params_optimal_stim_rec:
-  network_area_scale: # proportional to array area
+  network_area_scale:
+    # proportional to array area
     - 1.44 # minimum for 0.4 mm padding around 4x4mm array, which we want for LFP
     - 2
     - 3
@@ -98,11 +100,13 @@ reference_params:
   density_scale: 1
   latency: false
   model_task_inputs: true
-  
+
 reference_params_sufficient_stim:
   network_area_scale: 1.06348 # provides padding of just the pitch for 32x32 array
   beam_width_um: 35
-  
+  m: NA
+  signals: NA
+
 reference_params_optimal_stim_rec:
   network_area_scale: 1.44
   beam_width_um: 100
@@ -112,7 +116,8 @@ reference_params_optimal_stim_rec:
 # question-specific parameters
 ##############################
 
-q1: # a.k.a. sufficient stim, how many channels are good enough?
+q1:
+  # a.k.a. sufficient stim, how many channels are good enough?
   ##############################################################
   sufficient_ctrl: 0.9
   k:
@@ -125,21 +130,16 @@ q1: # a.k.a. sufficient stim, how many channels are good enough?
     - 40
     - 50
     - 60
-    - 70
     - 80
-    - 90
     - 100
-    - 120
-    - 140
-    - 160
-    - 180
     - 200
     - 400
     - 700
     - 1024
   m: NA
 
-q2: # a.k.a. optimal stim/rec balance
+q2:
+  # a.k.a. optimal stim/rec balance
   ###################################
   channel_budget: 100
   num_stim_ratio_levels: 11
@@ -159,7 +159,7 @@ prep_fsnn:
   # from Narayanan 2017:
   # L5 is the sparsest, serves as base.
   # in reference density/area configuration. 1024 to match max channels in Q1
-  n_neurons_base: 1024 
+  n_neurons_base: 1024
   # so that the base condition in Q1 has exactly 1024 neurons
   network_area_scale_base: 1.06348
   layer_density_ratios:
@@ -207,7 +207,7 @@ prep_fsnn_cycling:
   t_event_s: [0.5, 1.95]
   muf: -0.5 # recurrent inhibtion
 prep_fsnn_reaching:
-  iti_min_s: .4
+  iti_min_s: 0.4
   iti_lambda_s: 2
   t_event_s: [0.35, 0.15, 0.31]
   n_rate_neurons: 800 # 800
@@ -221,6 +221,9 @@ cleo_prep:
   # needed early for LFP
   subsample_factor: 10 # ctrl/sample period relative to fsnn dt
   
+cleo_prep_sufficient_stim:
+  array_n_per_side: 32
+
 cleo_prep_sufficient_stim:
   array_n_per_side: 32
 
@@ -240,7 +243,8 @@ model_fit_optimal_stim_rec:
   # steps_ahead_model_code: "ObsUKfw_ObsUCfw_sta1;9;10"
   steps_ahead_model_code: ""
 
-expts: # common to sys ID and ctrl expts
+expts:
+  # common to sys ID and ctrl expts
   u_max_mWmm2: 75
 
 sys_id_expts:
@@ -260,7 +264,7 @@ ctrl_expts:
 ctrl_expts_OL:
   time_limit_ms: 2000 # representative of inter-trial interval for reaching
   solver_args:
-    max_iter: 1e8 # very high since we want to rely on time limit
+    max_iter: 1e+8 # very high since we want to rely on time limit
     eps_infeas: 1e-8 # smaller is less sensitive
     # derived from above, subtracting baseline and overhead
     # time_limit: 2
@@ -270,7 +274,7 @@ ctrl_expts_OL:
 ctrl_expts_LQMPC:
   time_limit_ms: 20
   solver_args:
-    max_iter: 1e8 # very high since we want to rely on time limit
+    max_iter: 1e+8 # very high since we want to rely on time limit
     eps_infeas: 1e-8 # smaller is less sensitive
     # derived from above, subtracting baseline and overhead
     # time_limit: 0.02
@@ -282,6 +286,24 @@ ctrl_expts_sufficient_stim:
 
 ctrl_expts_optimal_stim_rec:
   ref_type: Z # controlling output
+
+analysis_sufficient_stim:
+  ctrl_metric: Q_track_Xref_Xhat_lds
+  # ctrl_metric: Q_track_Xref_X_fsnn
+  key_metrics:
+    - "k_knee"
+    - "k_0.9"
+
+analysis_optimal_stim_rec:
+  ctrl_metric: Q_track_Zref_Z
+  key_metrics:
+    - optimal_alpha_stim
+    - alpha_centroid
+
+dependence_analysis:
+  n_shuffle_boot: 1000
+  significance_threshold: 0.05
+  estimator_type: kernel
 
 # non-essential stuff, don't need to pass in as params to trigger re-runs when changed
 ######################################################################################
