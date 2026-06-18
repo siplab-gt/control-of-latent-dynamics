@@ -13,6 +13,7 @@ statistics are stamped onto it by model_fit.py after return.
 Usage in Snakefile:
     Set config["model_fit_method"] = "usid" to use this module.
 """
+import copy
 import logging
 import os
 import sys
@@ -244,11 +245,84 @@ def fit_lds_to_data(
     save_root.mkdir(parents=True, exist_ok=True)
 
     log.info("Starting USID inline training...")
-    result = run_training(
-        cfg, data_bundle, save_root,
-        trained_opsin_model=opsin_model,
-        no_opsin=not use_opsin,
-    )
+    try:
+        n_restarts = int(cfg.usid_hyperparams.n_restarts)
+    except AttributeError as e:
+        raise AttributeError(
+            "Missing required USID config attribute usid_hyperparams.n_restarts."
+        ) from e
+    if n_restarts <= 1:
+        result = run_training(
+            cfg, data_bundle, save_root,
+            trained_opsin_model=opsin_model,
+            no_opsin=not use_opsin,
+        )
+    else:
+        # Multistart: fit n_restarts independent models (distinct torch init seed,
+        # same sys-id data) and keep the best by the configured selection metric.
+        # The USID+opsin objective is multimodal (the seed lottery); multistart
+        # escapes bad local optima. Selection metric (usid_hyperparams.multistart_selector):
+        #   'freerun_r2y' (corrected default) — MAX held-out observer-OFF forced-path
+        #     R2(Y): a self-fed free-run where opto reaches the output ONLY through B2',
+        #     so it scores the control-relevant input path the Kalman observer cannot
+        #     fake. For pin_bprime it is scored on a pinned deepcopy (the deployed-
+        #     equivalent model); otherwise on the trained model as-is.
+        #   'val_loss' — MIN held-out USID validation loss (observer-ON, Kalman-masked;
+        #     ~uncorrelated with control Q — the prior, broken criterion).
+        # Each restart writes its own save_root subdir; the selected result object
+        # drives everything downstream (LDS handoff, model_fit metrics).
+        try:
+            multistart_selector = str(cfg.usid_hyperparams.multistart_selector)
+        except AttributeError as e:
+            raise AttributeError(
+                "Missing required USID config attribute usid_hyperparams.multistart_selector."
+            ) from e
+        if multistart_selector not in ("freerun_r2y", "val_loss"):
+            raise ValueError(
+                f"Unknown multistart_selector={multistart_selector!r}; "
+                "expected 'freerun_r2y' or 'val_loss'."
+            )
+        _ms_pin = bool(cfg.usid_hyperparams.pin_bprime)
+        _ms_horizon = int(cfg.usid_hyperparams.cz_observer_horizon)
+        y_tensor_ms = torch.tensor(YN, dtype=torch.float32).unsqueeze(0).to(device)
+        u_for_pred_ms = opto_input if use_opsin else UN[:, :k_opto]
+        u_tensor_ms = torch.tensor(u_for_pred_ms, dtype=torch.float32).unsqueeze(0).to(device)
+        log.info(
+            f"[multistart] {n_restarts} restarts; selector={multistart_selector} "
+            f"(pin_bprime={_ms_pin}, horizon={_ms_horizon})"
+        )
+        candidates = []
+        for i in range(n_restarts):
+            torch.manual_seed(10007 * (i + 1))
+            sr_i = save_root / f"restart_{i}"
+            sr_i.mkdir(parents=True, exist_ok=True)
+            r_i = run_training(
+                cfg, data_bundle, sr_i,
+                trained_opsin_model=opsin_model,
+                no_opsin=not use_opsin,
+            )
+            v_loss = float(r_i.usid_val_hist[-1]) if r_i.usid_val_hist else float("inf")
+            if multistart_selector == "val_loss":
+                score = -v_loss          # argmax over score; lower val loss wins
+                metric = v_loss
+            else:  # freerun_r2y: held-out forced-path R2(Y) of the deployed-equivalent model
+                Xh_i = _compute_state_trajectory(r_i.usid_model, y_tensor_ms, u_tensor_ms, device)
+                if _ms_pin:
+                    m_i = copy.deepcopy(r_i.usid_model)
+                    r2y = _pin_bprime(m_i, Xh_i, YN, u_tensor_ms, device, _ms_horizon)["freerun_r2y_heldout"]
+                else:
+                    r2y = _freerun_r2y_heldout(r_i.usid_model, Xh_i, YN, u_tensor_ms, device, _ms_horizon)
+                score = r2y if (r2y == r2y) else float("-inf")   # nan -> -inf
+                metric = r2y
+            log.info(f"[multistart] restart {i}: val_loss={v_loss:.6g}, "
+                     f"{multistart_selector}={metric:.6g}")
+            candidates.append((score, i, r_i, metric))
+        _, i_sel, result, metric_sel = max(candidates, key=lambda c: c[0])
+        log.info(
+            f"[multistart] selected restart {i_sel}/{n_restarts} "
+            f"(selector={multistart_selector}, metric={metric_sel:.6g}); "
+            f"all={[(c[1], round(c[3], 6)) for c in candidates]}"
+        )
     log.info(f"Training complete: n1={result.n1}, n2={result.n2}")
 
     # === 4b. Diagnostics (optional; never feed the LDS handoff or model_fit CSV) ===
@@ -965,6 +1039,30 @@ def _freerun_r2z_by_horizon(usid_model, Xhat, ZN, u_tensor, Cz1, Cz2, device, ho
     return out
 
 
+def _forced_freerun_sse(usid_model, Xf_t, Y_t, P, starts, horizon, n1):
+    """Self-fed observer-off forced-path free-run: SSE of output vs YN over depths
+    j=0..horizon-1, with total output variance and sample count for a variance-weighted
+    R2. From each filtered seed Xf[t0] the model self-feeds its own y, so opto reaches
+    the output ONLY through B2' (via precomputed photocurrents P); the observer K2 acts
+    on the self-fed innovation and is inert w.r.t. opto. Linear in B2'. Single source of
+    the free-run rollout, shared by the B2' pin (grad on B2') and the multistart
+    selection metric (eval), so the two cannot diverge.
+    """
+    x1 = Xf_t[starts, :n1]
+    x2 = Xf_t[starts, n1:]
+    sse = x1.new_zeros(())
+    ytrue_pool = []
+    for j in range(horizon):
+        yhat = x1 @ usid_model.natural_model.Cy1.T + x2 @ usid_model.Cy2.T
+        ytrue = Y_t[starts + j]
+        sse = sse + ((yhat - ytrue) ** 2).sum()
+        ytrue_pool.append(ytrue)
+        x1, x2, _ = usid_model.step(x1, x2, yhat, P[starts + j])
+    ytrue_pool = torch.cat(ytrue_pool, dim=0)
+    ss_tot = ((ytrue_pool - ytrue_pool.mean(dim=0)) ** 2).sum()
+    return sse, ss_tot, ytrue_pool.numel()
+
+
 def _pin_bprime(usid_model, Xhat, YN, u_tensor, device, horizon, *, max_iter=300,
                 train_frac=0.8):
     """Pin the opsin/forced input map B2' by a convex fit to the predictor free-run.
@@ -1023,25 +1121,10 @@ def _pin_bprime(usid_model, Xhat, YN, u_tensor, device, horizon, *, max_iter=300
         )
 
     def free_run_sse(starts):
-        """Sum of squared free-run output error over depths j=0..horizon-1.
-
-        From each filtered seed Xf[t0], self-feed the model's own y (the predictor
-        free-run) and accumulate (yhat[t0+j] - YN[t0+j])^2. Linear in B2'.
-        Returns (sse, ss_tot, count) for variance-weighted R².
-        """
-        x1 = Xf_t[starts, :n1]
-        x2 = Xf_t[starts, n1:]
-        sse = x1.new_zeros(())
-        ytrue_pool = []
-        for j in range(horizon):
-            yhat = x1 @ usid_model.natural_model.Cy1.T + x2 @ usid_model.Cy2.T
-            ytrue = Y_t[starts + j]
-            sse = sse + ((yhat - ytrue) ** 2).sum()
-            ytrue_pool.append(ytrue)
-            x1, x2, _ = usid_model.step(x1, x2, yhat, P[starts + j])
-        ytrue_pool = torch.cat(ytrue_pool, dim=0)
-        ss_tot = ((ytrue_pool - ytrue_pool.mean(dim=0)) ** 2).sum()
-        return sse, ss_tot, ytrue_pool.numel()
+        # Single source of the free-run rollout (shared with the multistart selector
+        # eval via _forced_freerun_sse) so the pin objective and the selection metric
+        # cannot diverge. Keeps grad on B2' here (B2_prime.requires_grad_(True) above).
+        return _forced_freerun_sse(usid_model, Xf_t, Y_t, P, starts, horizon, n1)
 
     opt = torch.optim.LBFGS(
         [usid_model.B2_prime], max_iter=max_iter, line_search_fn="strong_wolfe",
@@ -1081,6 +1164,35 @@ def _pin_bprime(usid_model, Xhat, YN, u_tensor, device, horizon, *, max_iter=300
         f"heldout={diag['freerun_r2y_heldout']:.4f} @h{horizon}"
     )
     return diag
+
+
+def _freerun_r2y_heldout(usid_model, Xhat, YN, u_tensor, device, horizon, *, train_frac=0.8):
+    """Held-out observer-off forced-path R2(Y) of the model AS-IS (no pin/optimization).
+
+    Same self-fed free-run as ``_pin_bprime.free_run_sse`` (opto enters only through
+    B2'; the self-fed observer is inert w.r.t. opto), evaluated on the held-out start
+    split with the SAME train_frac so the split matches the pin's. Used as the
+    multistart selection metric on the pin_bprime=False path: it ranks restarts by how
+    well their forced path predicts held-out output — the control-relevant quantity the
+    Kalman-masked validation loss is blind to. Returns nan if too short / empty split.
+    """
+    n1 = usid_model.n1
+    T = Xhat.shape[0]
+    if T <= horizon + 1:
+        return float("nan")
+    usid_model.eval()
+    Xf_t = torch.as_tensor(Xhat, dtype=torch.float32, device=device)
+    Y_t = torch.as_tensor(YN, dtype=torch.float32, device=device)
+    with torch.no_grad():
+        P = usid_model.compute_photocurrents(u_tensor).squeeze(0)  # (T, k)
+        n_starts = T - horizon
+        n_train = max(1, int(round(train_frac * n_starts)))
+        val_starts = torch.arange(n_train, n_starts, device=device)
+        if val_starts.numel() == 0:
+            return float("nan")
+        sse, ss_tot, _ = _forced_freerun_sse(
+            usid_model, Xf_t, Y_t, P, val_starts, horizon, n1)
+        return float(1.0 - sse / ss_tot) if ss_tot > 0 else float("nan")
 
 
 def _fit_behavioral_decoder(

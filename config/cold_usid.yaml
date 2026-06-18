@@ -212,6 +212,22 @@ natural_hyperparams:
 
 usid_hyperparams:
   epochs: 100
+  n_restarts: 1            # Multistart: fit this many independent USID models
+                           # (distinct torch init seed, same sys-id data) and keep the
+                           # best one by multistart_selector (src/model_fit/usid.py).
+                           # The USID+opsin objective is multimodal, so different inits
+                           # land in different optima (the seed lottery). Selection is
+                           # open-loop / pre-control (no closed-loop Q peeking), the
+                           # deployable criterion. 1 = single fit (no multistart),
+                           # byte-identical to the pre-multistart path.
+  multistart_selector: freerun_r2y  # How multistart (n_restarts>1) picks the kept model.
+                           # 'freerun_r2y' (corrected default): MAX held-out observer-OFF
+                           # forced-path R2(Y) — self-fed free-run where opto reaches the
+                           # output ONLY through B2', scoring the control-relevant input
+                           # path the Kalman observer cannot fake (for pin_bprime, scored
+                           # on a pinned deepcopy). 'val_loss': MIN held-out USID validation
+                           # loss (observer-ON, Kalman-masked; ~uncorrelated with control
+                           # Q — the prior, broken criterion).
   pin_bprime: false        # Post-training: identify the opsin/forced input map B2'
                            # by a convex fit to the predictor free-run output
                            # (src/model_fit/usid.py::_pin_bprime), overwriting the

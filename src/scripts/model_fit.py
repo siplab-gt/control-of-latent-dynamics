@@ -238,7 +238,9 @@ if __name__ == "__main__" and "snakemake" in locals():
     wc_forced = getattr(snakemake.wildcards, "forced", None)
     wc_pin_bprime = getattr(snakemake.wildcards, "pin_bprime", None)
     wc_usid_rollout = getattr(snakemake.wildcards, "usid_rollout", None)
-    if any(w is not None for w in (wc_forced, wc_pin_bprime, wc_usid_rollout)):
+    wc_n_restarts = getattr(snakemake.wildcards, "n_restarts", None)
+    if any(w is not None for w in (wc_forced, wc_pin_bprime, wc_usid_rollout,
+                                   wc_n_restarts)):
         wildcard_usid_overrides = {"usid_hyperparams": {}}
         # forced + usid_rollout share the loss.{loss_weights,schedule} leaves.
         loss_weights = {}
@@ -263,13 +265,18 @@ if __name__ == "__main__" and "snakemake" in locals():
             wildcard_usid_overrides["usid_hyperparams"]["pin_bprime"] = bool(
                 int(wc_pin_bprime)
             )
+        if wc_n_restarts is not None:
+            wildcard_usid_overrides["usid_hyperparams"]["n_restarts"] = int(
+                wc_n_restarts
+            )
         existing = config_dict.get("usid_overrides", {}) or {}
         config_dict["usid_overrides"] = _deep_merge_overrides(
             existing, wildcard_usid_overrides
         )
         log.info(
             f"[model_fit] wildcard usid_overrides: forced={wc_forced!r}, "
-            f"pin_bprime={wc_pin_bprime!r}, usid_rollout={wc_usid_rollout!r}"
+            f"pin_bprime={wc_pin_bprime!r}, usid_rollout={wc_usid_rollout!r}, "
+            f"n_restarts={wc_n_restarts!r}"
         )
 
     # Route the opsin_sustain wildcard to a pre-staged cold-opsin checkpoint dir.
