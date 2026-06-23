@@ -66,6 +66,33 @@ def _deep_merge_overrides(base: dict, override: dict) -> dict:
     return result
 
 
+# Presets for the `k2_treat` model_fit wildcard. Each maps the wildcard value to a
+# partial override of usid_hyperparams.loss, deep-merged onto cold_usid.yaml at the
+# usid.py read site. This keeps the K2-identification arm (free / k_reg strength /
+# hard zero) a single path axis instead of two coupled wildcards. The k_reg lambdas
+# anneal start->end over k_reg.schedule_epochs (from cold_usid.yaml) as a penalty on
+# ||K2||; "zero" hard-freezes K2==0 (the lambda->inf limit). Overridable per-run via
+# snakemake config["k2_treatments"]; the built-in default keeps every model_fit cell
+# resolvable (default wildcard value "free") without requiring the dict in config.
+_DEFAULT_K2_TREATMENTS = {
+    "free": {},
+    "kreg_weak": {"k_reg": {"enabled": True, "lambda_start": 0.1, "lambda_end": 0.001}},
+    "kreg_strong": {"k_reg": {"enabled": True, "lambda_start": 1.0, "lambda_end": 0.01}},
+    "zero": {"k2_zero": True},
+}
+
+# Presets for the `cz_treat` model_fit wildcard — the behavioral-decoder arm. Each maps the wildcard
+# value to a partial override of usid_hyperparams (top level, NOT loss). "ridge" = the post-hoc ridge
+# (committed default). "learned" = the Option-2-reframed Phase-3 learnable-Cz finetune; it sets
+# learnable_cz=True only — the z_recon hyperparams live in cold_usid.yaml, and the required k2_zero is
+# supplied by pairing with k2_treat=zero in the sweep (usid.py asserts it). Orthogonal to k2_treat so
+# the two axes don't collide on k2_zero. Overridable per-run via snakemake config["cz_treatments"].
+_DEFAULT_CZ_TREATMENTS = {
+    "ridge": {},
+    "learned": {"learnable_cz": True},
+}
+
+
 def model_fit(
     cond_params, base_params, expt_data_file, method_module_file, outfiles, config
 ):
@@ -131,6 +158,10 @@ def model_fit(
     config['y_std'] = y_std
     config['u_mean'] = u_mean
     config['u_std'] = u_std
+    # z_mean/z_std let usid.py normalize the opto-free natural behavior (natural_expt.Z) into the
+    # controller's Z coordinates for the STAGE 1b Cz1 fit (learnable_cz path).
+    config['z_mean'] = z_mean
+    config['z_std'] = z_std
 
     # Opsin-fit validation data (only present when sys_id_expts recorded it).
     # Sliced to the same T window used for YN/UN/ZN so downstream diagnostics
@@ -239,26 +270,80 @@ if __name__ == "__main__" and "snakemake" in locals():
     wc_pin_bprime = getattr(snakemake.wildcards, "pin_bprime", None)
     wc_usid_rollout = getattr(snakemake.wildcards, "usid_rollout", None)
     wc_n_restarts = getattr(snakemake.wildcards, "n_restarts", None)
+    wc_k2_treat = getattr(snakemake.wildcards, "k2_treat", None)
+    wc_cz_fit_mode = getattr(snakemake.wildcards, "cz_fit_mode", None)
+    wc_cz_lambda = getattr(snakemake.wildcards, "cz_lambda", None)
+    wc_cz_treat = getattr(snakemake.wildcards, "cz_treat", None)
+    # Staged-Cz loss-weight wildcards: B1' pretrain (b1_recon) + Cz2/B2' retrain (z_recon) z/y weights,
+    # plus the USID teacher loss (which — like rollout — also has a SCHEDULE that must be co-overridden).
+    wc_b1_z = getattr(snakemake.wildcards, "b1_z", None)
+    wc_b1_y = getattr(snakemake.wildcards, "b1_y", None)
+    wc_b2_z = getattr(snakemake.wildcards, "b2_z", None)
+    wc_b2_y = getattr(snakemake.wildcards, "b2_y", None)
+    wc_usid_teacher = getattr(snakemake.wildcards, "usid_teacher", None)
+    # usid_delta routes loss_weights.delta (the delta-of-rollout loss, parallel to
+    # the rollout level loss). It has NO schedule entry, so it is a plain leaf write
+    # like forced — no schedule co-override needed. Held at 0 to isolate the rollout
+    # axis when usid_rollout is swept.
+    wc_usid_delta = getattr(snakemake.wildcards, "usid_delta", None)
     if any(w is not None for w in (wc_forced, wc_pin_bprime, wc_usid_rollout,
-                                   wc_n_restarts)):
+                                   wc_n_restarts, wc_k2_treat, wc_cz_fit_mode,
+                                   wc_cz_lambda, wc_cz_treat, wc_b1_z, wc_b1_y,
+                                   wc_b2_z, wc_b2_y, wc_usid_teacher, wc_usid_delta)):
         wildcard_usid_overrides = {"usid_hyperparams": {}}
-        # forced + usid_rollout share the loss.{loss_weights,schedule} leaves.
+        # forced + usid_rollout + usid_teacher share the loss.{loss_weights,schedule} leaves.
         loss_weights = {}
         if wc_forced is not None:
             loss_weights["forced"] = float(wc_forced)
         if wc_usid_rollout is not None:
             loss_weights["rollout"] = float(wc_usid_rollout)
+        if wc_usid_teacher is not None:
+            loss_weights["teacher"] = float(wc_usid_teacher)
+        if wc_usid_delta is not None:
+            loss_weights["delta"] = float(wc_usid_delta)
         loss_block = {}
         if loss_weights:
             loss_block["loss_weights"] = loss_weights
-        # cold_usid.yaml pins rollout via a USID-phase SCHEDULE (linear 0.1→0.1,
-        # which persists past its window), so setting loss_weights.rollout alone is
-        # silently overridden. Override the schedule to the swept value too.
+        # cold_usid.yaml pins rollout AND teacher via USID-phase SCHEDULEs (linear ramps that persist
+        # past their window), so setting loss_weights.{rollout,teacher} alone is silently overridden.
+        # Co-override the schedule to the swept value (flat start=end=v) so a 0 stays 0 with no ramp.
+        schedule = {}
         if wc_usid_rollout is not None:
             r = float(wc_usid_rollout)
-            loss_block["schedule"] = {
-                "rollout": {"mode": "linear", "start": r, "end": r, "epochs": 20}
-            }
+            schedule["rollout"] = {"mode": "linear", "start": r, "end": r, "epochs": 20}
+        if wc_usid_teacher is not None:
+            t = float(wc_usid_teacher)
+            schedule["teacher"] = {"mode": "linear", "start": t, "end": t, "epochs": 20}
+        if schedule:
+            loss_block["schedule"] = schedule
+        # B1' pretrain (b1_recon) + Cz2/B2' retrain (z_recon) z/y weight overrides — plain leaf writes
+        # (these blocks have no schedule). Swept independently here (default b1 ↔ b2 equal in cold_usid).
+        b1_recon = {}
+        if wc_b1_z is not None:
+            b1_recon["z_weight"] = float(wc_b1_z)
+        if wc_b1_y is not None:
+            b1_recon["y_weight"] = float(wc_b1_y)
+        if b1_recon:
+            loss_block["b1_recon"] = b1_recon
+        z_recon = {}
+        if wc_b2_z is not None:
+            z_recon["z_weight"] = float(wc_b2_z)
+        if wc_b2_y is not None:
+            z_recon["y_weight"] = float(wc_b2_y)
+        if z_recon:
+            loss_block["z_recon"] = z_recon
+        # k2_treat selects the K2-identification arm (free / k_reg strength / hard
+        # zero) via a preset partial-override of usid_hyperparams.loss, merged into
+        # the same loss_block so it coexists with the forced/rollout leaves.
+        if wc_k2_treat is not None:
+            presets = snakemake.config.get("k2_treatments") or _DEFAULT_K2_TREATMENTS
+            if wc_k2_treat not in presets:
+                raise KeyError(
+                    f"k2_treat={wc_k2_treat!r} not found in k2_treatments "
+                    f"(have {sorted(presets)}); add it to config['k2_treatments'] "
+                    f"or model_fit._DEFAULT_K2_TREATMENTS."
+                )
+            loss_block = _deep_merge_overrides(loss_block, presets[wc_k2_treat] or {})
         if loss_block:
             wildcard_usid_overrides["usid_hyperparams"]["loss"] = loss_block
         if wc_pin_bprime is not None:
@@ -269,6 +354,31 @@ if __name__ == "__main__" and "snakemake" in locals():
             wildcard_usid_overrides["usid_hyperparams"]["n_restarts"] = int(
                 wc_n_restarts
             )
+        # cz_fit_mode / cz_lambda select the behavioral-decoder (Cz) fit: the
+        # decode-only observer_rollout default vs the two_term blend (decode +
+        # 2SLS opto-response) with interpolation weight cz_lambda. Read at
+        # usid.py usid_hyperparams.{cz_fit_mode,cz_lambda}.
+        if wc_cz_fit_mode is not None:
+            wildcard_usid_overrides["usid_hyperparams"]["cz_fit_mode"] = str(
+                wc_cz_fit_mode
+            )
+        if wc_cz_lambda is not None:
+            wildcard_usid_overrides["usid_hyperparams"]["cz_lambda"] = float(
+                wc_cz_lambda
+            )
+        # cz_treat selects the behavioral-decoder arm (ridge / learned) via a preset partial-override
+        # of usid_hyperparams, deep-merged so it coexists with the cz_fit_mode/loss leaves above.
+        if wc_cz_treat is not None:
+            cz_presets = snakemake.config.get("cz_treatments") or _DEFAULT_CZ_TREATMENTS
+            if wc_cz_treat not in cz_presets:
+                raise KeyError(
+                    f"cz_treat={wc_cz_treat!r} not found in cz_treatments "
+                    f"(have {sorted(cz_presets)}); add it to config['cz_treatments'] "
+                    f"or model_fit._DEFAULT_CZ_TREATMENTS."
+                )
+            wildcard_usid_overrides["usid_hyperparams"] = _deep_merge_overrides(
+                wildcard_usid_overrides["usid_hyperparams"], cz_presets[wc_cz_treat] or {}
+            )
         existing = config_dict.get("usid_overrides", {}) or {}
         config_dict["usid_overrides"] = _deep_merge_overrides(
             existing, wildcard_usid_overrides
@@ -276,7 +386,11 @@ if __name__ == "__main__" and "snakemake" in locals():
         log.info(
             f"[model_fit] wildcard usid_overrides: forced={wc_forced!r}, "
             f"pin_bprime={wc_pin_bprime!r}, usid_rollout={wc_usid_rollout!r}, "
-            f"n_restarts={wc_n_restarts!r}"
+            f"n_restarts={wc_n_restarts!r}, k2_treat={wc_k2_treat!r}, "
+            f"cz_fit_mode={wc_cz_fit_mode!r}, cz_lambda={wc_cz_lambda!r}, "
+            f"cz_treat={wc_cz_treat!r}, b1_z={wc_b1_z!r}, b1_y={wc_b1_y!r}, "
+            f"b2_z={wc_b2_z!r}, b2_y={wc_b2_y!r}, usid_teacher={wc_usid_teacher!r}, "
+            f"usid_delta={wc_usid_delta!r}"
         )
 
     # Route the opsin_sustain wildcard to a pre-staged cold-opsin checkpoint dir.

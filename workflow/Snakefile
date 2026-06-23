@@ -87,7 +87,7 @@ steps_params = {
         "signals",
     ],
     "sys_id_expts": [],
-    "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "pin_bprime", "usid_rollout", "opsin_sustain", "n_restarts"],
+    "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "pin_bprime", "usid_rollout", "opsin_sustain", "n_restarts", "k2_treat", "cz_fit_mode", "cz_lambda", "cz_treat", "b1_z", "b1_y", "b2_z", "b2_y", "usid_teacher", "usid_delta"],
     "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
     "analysis": [],
 }
