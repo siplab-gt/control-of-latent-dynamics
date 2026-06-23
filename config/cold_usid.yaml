@@ -297,6 +297,51 @@ usid_hyperparams:
       lambda_end: 0.01
       schedule_epochs: 30
       schedule_mode: exponential
+    k2_zero: false           # Hard K2==0 for the whole USID phase (observer-off
+                             # unnatural subspace). |lambda|->inf limit of k_reg;
+                             # x2 driven only by B2'·p (+ autonomous A22). Routed
+                             # per-cell by the k2_treat model_fit wildcard via the
+                             # k2_treatments presets below. Default off.
+    z_recon:                 # STAGE 4 — learnable-Cz Phase-3 finetune of {Cz2,B2'} (Cz1 frozen from
+                             # STAGE 1b). Inert unless usid_hyperparams.learnable_cz=True (which also
+                             # requires k2_zero=True). Trains on z_weight·decode_Z + y_weight·forced_Y
+                             # (the retained Y anchor). See src/model_fit/usid.py::_finetune_cz_phase3.
+                             # ATTRIBUTION/SCIENCE version (deferred, out of scope): would hold B2'
+                             # minimal (penalize ‖B2'‖/‖Cz2·x2‖) + keep a clean residual split, and
+                             # REQUIRES the D2 colored-noise natural model (not built). See
+                             # scratchpad/natural_unnatural_d2_and_cz_handling.md.
+      z_weight: 10.0         # z/anchor weight ratio; frontier sweet spot ~10 (large opto->Z direction
+                             # gain, ΔR2(Y)≈-0.02). Higher -> more Z, more Y cost.
+      y_weight: 1.0          # forced-path Y anchor weight (was hard-coded 1.0; now in config).
+      horizon: 10            # observer-rollout depth (matches the 100ms / 10-sample control horizon).
+                             # NOTE: the model is TRAINED to fit Z at depths 1..10, but the diagnostic
+                             # R2_freerun_Z_h* / cz_r2y_* are also reported at h20 (cz_observer_horizon)
+                             # — beyond the training horizon. Compare learned-vs-ridge at h10 (the honest
+                             # apples-to-apples horizon); h20 understates the learned arm.
+      steps: 400             # Adam finetune steps over the (subsampled) rollout pool
+      lr: 5.0e-3
+      huber_delta: 0.0       # 0 -> MSE; >0 -> Huber on the kept (variance-carrying) channels
+    b1_recon:                # STAGE 2 — B1' pretrain (in run_training, BEFORE the unnatural matrices).
+                             # Trains ONLY B1' (x2≡0; pure natural-path readouts) on
+                             # z_weight·decode_Z(Cz1·x1) + y_weight·forced_Y(Cy1·x1) so the natural opto
+                             # input map is shaped by behavior (z) and LFP (y). Independent z/y weights
+                             # let us tune B1' to be more z- or y-faithful; set EQUAL to z_recon for now.
+                             # Inert unless learnable_cz=True. ATTRIBUTION version would BOUND B1' (norm
+                             # / typical-regime cap); see the scratchpad reference above.
+      z_weight: 10.0
+      y_weight: 1.0
+      horizon: 10
+      steps: 400
+      lr: 5.0e-3
+      huber_delta: 0.0
+    cz1_recon:               # STAGE 1b — Cz1 fit on OPTO-FREE behavior, then frozen (the behavioral
+                             # gatekeeper). Ridge warm-start (the standalone-linear decode is convex →
+                             # this IS the optimum) + a Cz1-only gradient finetune, run for COHESION with
+                             # the gradient-trained Cz2/B1' (it stays at the ridge optimum). Inert unless
+                             # learnable_cz=True. No z/y weights: pure behavioral decode (Cz1 doesn't
+                             # touch Y), so only the finetune hyperparams.
+      steps: 400
+      lr: 5.0e-3
     sliding_rollout:
       burn_in: 30
       stride: 3
@@ -317,11 +362,6 @@ usid_hyperparams:
         mode: linear
         start: 1.0
         end: 0.1
-        epochs: 20
-      delta:
-        mode: linear
-        start: 1.0
-        end: 1.0
         epochs: 20
       nstep_2:
         mode: linear
@@ -374,6 +414,8 @@ usid_hyperparams:
   #     validated on the cached usid_stim_rec chr2 cells; see
   #     tmp/cold_investigation/wave3_B_solution_integration.md PART 1b).
   cz_fit_mode: observer_rollout
+  # NOTE: when learnable_cz=True, cz_fit_mode selects the WARM-START ridge only (the deployed Cz is
+  # then the Phase-3 trained one); it governs the deployed decoder only when learnable_cz=False.
   # Rollout depth (in samples) to pool the observer free-run state over when
   # cz_fit_mode == "observer_rollout". 20 = the 200 ms control horizon at the
   # subsample_factor=10 (10 ms) controller grid (ctrl_horizon_ms=200). Pooling
@@ -381,5 +423,19 @@ usid_hyperparams:
   # readout — which the replanning MPC realizes most — intact while still
   # lifting the tail.
   cz_observer_horizon: 20
+  # Opto-response weight for cz_fit_mode == "two_term". The Cz fit blends the
+  # observer_rollout decode term with an opto-response term that aligns Cz to
+  # the 2SLS opto-as-instrument estimate of the opto-evoked behavior (see
+  # src/model_fit/usid.py::_fit_behavioral_decoder). 0.0 == pure decode
+  # (reproduces observer_rollout); 1.0 == pure opto-response. Inert unless
+  # cz_fit_mode == "two_term".
+  cz_lambda: 0.0
+  # Learnable behavioral decoder (Option 2 reframed). When True, Cz1/Cz2 become trained
+  # nn.Parameters: a Phase-3 finetune (after the dynamics are trained on neural Y) warm-starts them
+  # from the ridge, then trains {Cz1,Cz2,B2'} on the loss.z_recon objective + the retained forced-path
+  # Y anchor. Requires k2_zero=True, pin_bprime=False, n_restarts==1, use_opsin=True (asserted in
+  # usid.py). False -> the post-hoc ridge governs (cz_fit_mode/cz_lambda). COLD-only (no behavioral Z
+  # in standalone synthetic). Routed per-cell by the cz_treat model_fit wildcard.
+  learnable_cz: false
 
 # (oracle_usid omitted — architecturally incompatible with COLD; same as oracle_natural.)
