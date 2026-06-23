@@ -184,12 +184,36 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
                 # Zero irradiance → zero photocurrent → pure natural dynamics
                 value = np.zeros(k) * b2.mwatt / b2.mm2
             else:
-                u_logmean = np.log(base_params.typical_Irr0_mWmm2)
-                u_logstd = np.log(u_max) / 3
-                value = (
-                    rng.lognormal(u_logmean, u_logstd, k).clip(0, u_max)
-                    * b2.mwatt / b2.mm2
-                )
+                stim_regime = getattr(base_params, 'stim_regime', 'broadband')
+                if stim_regime == 'broadband':
+                    # Legacy default: all k channels driven each step by an
+                    # independent heavy-tailed lognormal up to u_max (75 mW/mm²).
+                    # Sustained + near-saturating → exercises a saturated, broadband
+                    # region of the opto-driven subspace.
+                    u_logmean = np.log(base_params.typical_Irr0_mWmm2)
+                    u_logstd = np.log(u_max) / 3
+                    amp = rng.lognormal(u_logmean, u_logstd, k).clip(0, u_max)
+                elif stim_regime == 'linear_sparse':
+                    # Sub-saturating, per-channel-independent, temporally-varied,
+                    # sparse excitation — persistently excites the opto input space
+                    # in the LINEAR (control) operating regime so the identified
+                    # opto→behavior map covers the directions the controller actually
+                    # uses. The broadband/saturating default explores a near-orthogonal
+                    # region of x2 (principal angle 56–77° vs control on hard seeds),
+                    # leaving the controllable opto→Z direction outside the sys-ID
+                    # covariance. See tmp/B2_identification.md (local) / sys-ID excitation fix.
+                    stim_u_max = float(base_params.stim_u_max_mWmm2)
+                    p_active = float(base_params.stim_active_frac)
+                    u_logmean = np.log(base_params.typical_Irr0_mWmm2)
+                    u_logstd = np.log(stim_u_max) / 3
+                    amp = rng.lognormal(u_logmean, u_logstd, k).clip(0, stim_u_max)
+                    amp = amp * (rng.random(k) < p_active)
+                else:
+                    raise ValueError(
+                        f"Unknown sys-ID stim_regime={stim_regime!r}; "
+                        "expected 'broadband' or 'linear_sparse'."
+                    )
+                value = amp * b2.mwatt / b2.mm2
             return {"light array": value}, t_samp
 
     cleo_prep.sim.set_io_processor(
