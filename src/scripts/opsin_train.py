@@ -69,9 +69,9 @@ def _block_trace(rng, time_steps, u_max, amp_max, sustain_min, sustain_max,
     curve. OFF blocks hold zero for off_min..off_max steps — sustained zero, which
     pins the learned Iopto(0)=0 (fixing the observed −0.074 zero-light offset).
 
-    amp_max (and the sustain length) are the opsin_sustain sweep knobs: a moderate
-    variant covers up to the operating band; a high variant covers deep saturation
-    with longer holds."""
+    amp_max (and the sustain length) set the saturation coverage: the canonical
+    config uses amp_max=75 with long holds (sustain<=160) so the NN covers the deep-
+    saturation regime the controller drives into."""
     trace = np.zeros(time_steps, dtype=np.float64)
     pos = 0
     while pos < time_steps:
@@ -257,8 +257,7 @@ def main(snakemake) -> None:
         config["prep_fsnn"]["dt_ms"] * config["cleo_prep"]["subsample_factor"])
 
     # Sustained on/off block light (optional; default 0 reproduces all-white).
-    # sustain_steps_max is the knob the opsin_sustain sweep varies (moderate vs
-    # high/further-sustained constant-on duration).
+    # sustain_steps_max sets the constant-on hold length (canonical config: 160).
     const_block_fraction = float(train_cfg.get("const_block_fraction", 0.0))
     sustain_amp_max = float(train_cfg.get("sustain_amp_max", u_max_mWmm2))
     sustain_min = int(train_cfg.get("sustain_steps_min", 20))
