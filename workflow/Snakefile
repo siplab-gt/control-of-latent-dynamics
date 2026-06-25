@@ -53,6 +53,7 @@ wildcard_constraints:
     ctrl_type=_wc_constraint("ctrl_type", extras=("NULL",)),
     ctrl_horizon_ms=r"\d+",
     nlmpc_grad_iters=r"\d+",
+    cz2_warm="ridge|random",
 
 
 rule all:
@@ -86,8 +87,8 @@ steps_params = {
         "beam_width_um",
         "signals",
     ],
-    "sys_id_expts": [],
-    "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "pin_bprime", "usid_rollout", "opsin_sustain", "n_restarts", "k2_treat", "cz_fit_mode", "cz_lambda", "cz_treat", "b1_z", "b1_y", "b2_z", "b2_y", "usid_teacher", "usid_delta"],
+    "sys_id_expts": ["stim_u_max_mWmm2", "stim_active_frac"],
+    "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "usid_rollout", "n_restarts", "b1_z", "b1_y", "b2_z", "b2_y", "usid_teacher", "usid_delta", "cz2_warm"],
     "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
     "analysis": [],
 }
@@ -811,7 +812,14 @@ def get_natural_data_input(wildcards):
         return []
     if _resolve_model_fit_method(wildcards.setting) != "usid":
         return []
-    return wildcard_path("natural_electrode_data.pkl.gz")
+    # natural_electrode is opto-free (zero irradiance) → stim-independent. Pin the
+    # sys-ID stim wildcards to their defaults so it is built once and shared across
+    # a stim sweep instead of re-simulated per (stim_u_max_mWmm2, stim_active_frac).
+    return wildcard_path(
+        "natural_electrode_data.pkl.gz",
+        stim_u_max_mWmm2=config["params"]["stim_u_max_mWmm2"],
+        stim_active_frac=config["params"]["stim_active_frac"],
+    )
 
 
 def _use_opsin_for_setting(setting: str) -> bool:
@@ -831,10 +839,6 @@ def get_cold_opsin_input(wildcards):
     if _resolve_model_fit_method(wildcards.setting) != "usid":
         return []
     if not _use_opsin_for_setting(wildcards.setting):
-        return []
-    # opsin_sustain ∈ {moderate,high} pins a PRE-STAGED cold opsin via
-    # opsin_checkpoint_path (model_fit.py) — no opsin_train_cold dependency.
-    if getattr(wildcards, "opsin_sustain", "default") != "default":
         return []
     return "results/opsin_train_cold/best_model.path"
 

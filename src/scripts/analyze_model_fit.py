@@ -48,45 +48,34 @@ def analyze_model_fit(
     for key in ("Y", "Z", "U", "X", "Natural_YN"):
         metrics[f"n_sanitize_clipped_{key}"] = int(clip_counts.get(key, 0))
 
-    # Horizon-resolved free-run R²(Z) (the load-bearing controllability metric) and the
-    # pin-B' diagnostic, both stashed on lds.metadata by model_fit/usid.py. Absent for
-    # non-USID fits (BRAID/known_factors) — NaN-filled then. R2_freerun_Z_h0 ≈
-    # R2_model_fit_Z_Zhat is the correctness gate; R2_freerun_Z_h7/h10/h20 (70/100/200 ms;
-    # 70 ms ≈ the chr2 opsin time constant) are what actually predict control; pin_dB2_norm
-    # > 0 confirms the pin took effect. The metric computes every depth h0..cz_observer_horizon,
-    # so adding/removing an `h` here is purely a column selection over the saved curve.
+    # Horizon-resolved free-run R²(Z) — the load-bearing controllability metric, stashed on
+    # lds.metadata by model_fit/usid.py. Absent for non-USID fits (BRAID/known_factors) —
+    # NaN-filled then. R2_freerun_Z_h0 ≈ R2_model_fit_Z_Zhat is the correctness gate;
+    # R2_freerun_Z_h7/h10/h20 (70/100/200 ms; 70 ms ≈ the chr2 opsin time constant) are what
+    # actually predict control. The metric computes every depth h0..cz_observer_horizon, so
+    # adding/removing an `h` here is purely a column selection over the saved curve.
     meta = getattr(lds, "metadata", {}) or {}
     fr = meta.get("freerun_r2z", {}) or {}
     for h in (0, 1, 5, 7, 10, 20):
         metrics[f"R2_freerun_Z_h{h}"] = float(fr.get(f"h{h}", np.nan))
     metrics["freerun_Z_predictable_horizon"] = float(fr.get("predictable_horizon", np.nan))
-    pin = meta.get("pin_bprime", {}) or {}
-    metrics["pin_bprime"] = bool(pin.get("pin_bprime", False))
-    metrics["pin_dB2_norm"] = float(pin.get("dB2_norm", np.nan))
-    metrics["pin_freerun_r2y_heldout"] = float(pin.get("freerun_r2y_heldout", np.nan))
-    # Learnable-Cz Phase 3 (Option 2 reframed). cz_learnable flags the arm; the LEARNED free-run R²(Z)
-    # is the R2_freerun_Z_h* above (computed with the deployed/learned Cz), and cz_ridge_R2_freerun_Z_h*
-    # is the warm-start ridge baseline on the SAME states/horizons — so the learned-vs-ridge gain is a
-    # column subtraction. cz_r2y_pre/post are the load-bearing forced-path Y cost of shaping B2'.
+    # Learnable-Cz Phase 4 finetune of {Cz2, B2'}. cz_learnable flags the COLD path; the deployed
+    # free-run R²(Z) is the R2_freerun_Z_h* above (computed with the trained Cz). cz_r2y_pre/post are
+    # the load-bearing forced-path Y cost of shaping B2'.
     cz = meta.get("cz_phase3", {}) or {}
     metrics["cz_learnable"] = bool(cz.get("learnable_cz", False))
     metrics["cz_z_weight"] = float(cz.get("z_weight", np.nan))
     metrics["cz_dB2_norm"] = float(cz.get("dB2_norm", np.nan))
     metrics["cz_r2y_pre"] = float(cz.get("freerun_r2y_pre", np.nan))
     metrics["cz_r2y_post"] = float(cz.get("freerun_r2y_post", np.nan))
-    czr = cz.get("ridge_freerun_r2z", {}) or {}
-    for h in (0, 7, 10, 20):
-        metrics[f"cz_ridge_R2_freerun_Z_h{h}"] = float(czr.get(f"h{h}", np.nan))
     metrics["cz_z_weight_y"] = float(cz.get("y_weight", np.nan))
 
-    # STAGE 2 B1' z_recon pretrain provenance (learnable_cz staged path; NaN otherwise).
+    # Phase 2 {B1', Cz1} joint z+y pretrain provenance (learnable_cz COLD path; NaN otherwise).
     b1 = meta.get("b1_phase", {}) or {}
     metrics["b1_z_weight"] = float(b1.get("b1_z_weight", np.nan))
     metrics["b1_y_weight"] = float(b1.get("b1_y_weight", np.nan))
     metrics["b1_dB1_norm"] = float(b1.get("dB1_norm", np.nan))
     metrics["b1_norm_post"] = float(b1.get("B1_new_norm", np.nan))
-    cz1s = meta.get("cz1_stage1b", {}) or {}
-    metrics["cz1_norm"] = float(cz1s.get("cz1_norm", np.nan))
 
     print(metrics)
     print(f"Saving R2 values to {outfile}")

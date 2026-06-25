@@ -13,7 +13,6 @@ statistics are stamped onto it by model_fit.py after return.
 Usage in Snakefile:
     Set config["model_fit_method"] = "usid" to use this module.
 """
-import copy
 import logging
 import os
 import sys
@@ -73,12 +72,13 @@ def fit_lds_to_data(
     LQMPCController consumes. This eliminates the intermediate LDS conversion.
 
     Steps:
-    1. Load USID config from merged YAML, apply COLD overrides
+    1. Load USID config from cold_usid.yaml, apply COLD overrides
     2. Load and normalize natural electrode data using model_fit stats
     3. Prepare DataBundle from normalized sys_id + natural data
-    4. Train Natural + USID models via run_training()
-    5. Extract SubspaceLDS from trained USID model
-    6. Fit behavioral decoder (Cz)
+    4. Train the 4-phase flow via run_training(): Natural -> Phase 2 ({B1', Cz1})
+       -> Unnatural -> (Cz1 frozen)
+    5. Phase 4: finetune {Cz2, B2'} on the y-anchored z-aware loss
+    6. Extract SubspaceLDS, read the trained Cz1/Cz2 off the model
     7. Return SubspaceLDS with predictions
 
     Args:
@@ -141,14 +141,15 @@ def fit_lds_to_data(
     u_mean = config['u_mean']
     u_std = config['u_std']
 
-    # STAGE 1b (learnable_cz) fits Cz1 on opto-free behavior — load it normalized in the controller's
-    # Z coordinates (z_mean/z_std are threaded from model_fit.py). Non-staged path leaves natural_ZN None.
+    # Phase 2 (learnable_cz) trains {B1', Cz1} jointly against the natural behavior — load it normalized
+    # in the controller's Z coordinates (z_mean/z_std are threaded from model_fit.py). Non-COLD path
+    # (learnable_cz absent) leaves natural_ZN None.
     _staged_cz = bool(cfg.usid_hyperparams.learnable_cz)
     z_mean = config.get('z_mean') if _staged_cz else None
     z_std = config.get('z_std') if _staged_cz else None
     if _staged_cz and (z_mean is None or z_std is None):
         raise ValueError("learnable_cz=True requires z_mean/z_std in config (thread them from "
-                         "model_fit.py) so STAGE 1b can fit Cz1 on opto-free behavior in Z coords.")
+                         "model_fit.py) so Phase 2 can train {B1', Cz1} against natural behavior in Z coords.")
     natural_YN, natural_ZN, nat_yn_clipped = _load_and_normalize_natural_data(
         natural_data_path, y_mean, y_std, z_mean=z_mean, z_std=z_std
     )
@@ -261,13 +262,6 @@ def fit_lds_to_data(
         raise AttributeError(
             "Missing required USID config attribute usid_hyperparams.n_restarts."
         ) from e
-    # Early guard for the expensive case: the learnable-Cz multistart selector scores Y, not Z, so it
-    # would discard the best-for-Z restart — and running N fits before failing wastes hours. Fail here,
-    # before the multistart loop. (The full preconditions — k2_zero/pin_bprime/use_opsin — are asserted
-    # below, after training; only the n_restarts one needs to gate the loop.)
-    if bool(cfg.usid_hyperparams.learnable_cz) and n_restarts > 1:
-        raise ValueError("learnable_cz=True requires n_restarts==1 (the multistart selector scores Y, "
-                         "not Z, and would discard the best-for-Z restart).")
     if n_restarts <= 1:
         result = run_training(
             cfg, data_bundle, save_root,
@@ -275,39 +269,20 @@ def fit_lds_to_data(
             no_opsin=not use_opsin,
         )
     else:
-        # Multistart: fit n_restarts independent models (distinct torch init seed,
-        # same sys-id data) and keep the best by the configured selection metric.
-        # The USID+opsin objective is multimodal (the seed lottery); multistart
-        # escapes bad local optima. Selection metric (usid_hyperparams.multistart_selector):
-        #   'freerun_r2y' (corrected default) — MAX held-out observer-OFF forced-path
-        #     R2(Y): a self-fed free-run where opto reaches the output ONLY through B2',
-        #     so it scores the control-relevant input path the Kalman observer cannot
-        #     fake. For pin_bprime it is scored on a pinned deepcopy (the deployed-
-        #     equivalent model); otherwise on the trained model as-is.
-        #   'val_loss' — MIN held-out USID validation loss (observer-ON, Kalman-masked;
-        #     ~uncorrelated with control Q — the prior, broken criterion).
-        # Each restart writes its own save_root subdir; the selected result object
-        # drives everything downstream (LDS handoff, model_fit metrics).
-        try:
-            multistart_selector = str(cfg.usid_hyperparams.multistart_selector)
-        except AttributeError as e:
-            raise AttributeError(
-                "Missing required USID config attribute usid_hyperparams.multistart_selector."
-            ) from e
-        if multistart_selector not in ("freerun_r2y", "val_loss"):
-            raise ValueError(
-                f"Unknown multistart_selector={multistart_selector!r}; "
-                "expected 'freerun_r2y' or 'val_loss'."
-            )
-        _ms_pin = bool(cfg.usid_hyperparams.pin_bprime)
+        # Multistart over the BASE fit: fit n_restarts independent base models
+        # (distinct torch init seed, same sys-ID data) and keep the one with the best
+        # held-out forced-path R2(Y) — an observer-OFF free-run where opto reaches the
+        # output ONLY through B2', so it scores the control-relevant input path the
+        # Kalman observer cannot fake. The USID+opsin objective is multimodal (the seed
+        # lottery); selecting the base on the forced path picks the best opto dynamics.
+        # The Phase-4 {Cz2, B2'} finetune then runs ONCE on the winner (below) — Y
+        # selects the dynamics, Phase-4 does the Z optimization on that winner.
         _ms_horizon = int(cfg.usid_hyperparams.cz_observer_horizon)
         y_tensor_ms = torch.tensor(YN, dtype=torch.float32).unsqueeze(0).to(device)
         u_for_pred_ms = opto_input if use_opsin else UN[:, :k_opto]
         u_tensor_ms = torch.tensor(u_for_pred_ms, dtype=torch.float32).unsqueeze(0).to(device)
-        log.info(
-            f"[multistart] {n_restarts} restarts; selector={multistart_selector} "
-            f"(pin_bprime={_ms_pin}, horizon={_ms_horizon})"
-        )
+        log.info(f"[multistart] {n_restarts} restarts; selector=freerun_r2y "
+                 f"(horizon={_ms_horizon})")
         candidates = []
         for i in range(n_restarts):
             torch.manual_seed(10007 * (i + 1))
@@ -318,28 +293,15 @@ def fit_lds_to_data(
                 trained_opsin_model=opsin_model,
                 no_opsin=not use_opsin,
             )
-            v_loss = float(r_i.usid_val_hist[-1]) if r_i.usid_val_hist else float("inf")
-            if multistart_selector == "val_loss":
-                score = -v_loss          # argmax over score; lower val loss wins
-                metric = v_loss
-            else:  # freerun_r2y: held-out forced-path R2(Y) of the deployed-equivalent model
-                Xh_i = _compute_state_trajectory(r_i.usid_model, y_tensor_ms, u_tensor_ms, device)
-                if _ms_pin:
-                    m_i = copy.deepcopy(r_i.usid_model)
-                    r2y = _pin_bprime(m_i, Xh_i, YN, u_tensor_ms, device, _ms_horizon)["freerun_r2y_heldout"]
-                else:
-                    r2y = _freerun_r2y_heldout(r_i.usid_model, Xh_i, YN, u_tensor_ms, device, _ms_horizon)
-                score = r2y if (r2y == r2y) else float("-inf")   # nan -> -inf
-                metric = r2y
-            log.info(f"[multistart] restart {i}: val_loss={v_loss:.6g}, "
-                     f"{multistart_selector}={metric:.6g}")
-            candidates.append((score, i, r_i, metric))
+            Xh_i = _compute_state_trajectory(r_i.usid_model, y_tensor_ms, u_tensor_ms, device)
+            r2y = _freerun_r2y_heldout(r_i.usid_model, Xh_i, YN, u_tensor_ms, device, _ms_horizon)
+            score = r2y if (r2y == r2y) else float("-inf")   # nan -> -inf
+            log.info(f"[multistart] restart {i}: freerun_r2y={r2y:.6g}")
+            candidates.append((score, i, r_i, r2y))
         _, i_sel, result, metric_sel = max(candidates, key=lambda c: c[0])
-        log.info(
-            f"[multistart] selected restart {i_sel}/{n_restarts} "
-            f"(selector={multistart_selector}, metric={metric_sel:.6g}); "
-            f"all={[(c[1], round(c[3], 6)) for c in candidates]}"
-        )
+        log.info(f"[multistart] selected restart {i_sel}/{n_restarts} "
+                 f"(freerun_r2y={metric_sel:.6g}); "
+                 f"all={[(c[1], round(c[3], 6)) for c in candidates]}")
     log.info(f"Training complete: n1={result.n1}, n2={result.n2}")
 
     # === 4b. Diagnostics (optional; never feed the LDS handoff or model_fit CSV) ===
@@ -357,7 +319,7 @@ def fit_lds_to_data(
     n1, n2 = result.n1, result.n2
     usid_model = result.usid_model
 
-    # Compute predictions on full sys_id data (tensors reused by the pin + Cz fit).
+    # Compute predictions on full sys_id data (tensors reused by the Phase-4 Cz finetune).
     log.info("Computing predictions on sys_id data...")
     y_tensor = torch.tensor(YN, dtype=torch.float32).unsqueeze(0).to(device)
     # Same input space as training: opto_input is raw mW/mm² when use_opsin,
@@ -366,80 +328,32 @@ def fit_lds_to_data(
     u_tensor = torch.tensor(u_for_pred, dtype=torch.float32).unsqueeze(0).to(device)
 
     # Teacher-forced (filtered) state — the controller's running observer estimate;
-    # reused as the pin/Cz free-run seeds.
+    # reused as the Phase-4 Cz free-run seeds.
     Xhat = _compute_state_trajectory(usid_model, y_tensor, u_tensor, device)
 
-    # === 5b. Pin B' (optional) ===
-    # Identify the opsin/forced input path B2' by a convex fit to the predictor
-    # free-run output, decoupled from the Kalman-masked joint objective. Mutates
-    # usid_model in place (B2' pinned, B1'=0), so the SubspaceLDS extraction, Cz fit,
-    # and Yhat/Zhat below all see the pinned input map. See _pin_bprime.
     try:
-        pin_bprime = bool(cfg.usid_hyperparams.pin_bprime)
-    except AttributeError as e:
-        raise AttributeError(
-            "Missing required USID config attribute usid_hyperparams.pin_bprime."
-        ) from e
-    try:
-        cz_fit_mode = str(cfg.usid_hyperparams.cz_fit_mode)
         cz_observer_horizon = int(cfg.usid_hyperparams.cz_observer_horizon)
-        cz_lambda = float(cfg.usid_hyperparams.cz_lambda)
         learnable_cz = bool(cfg.usid_hyperparams.learnable_cz)
     except AttributeError as e:
         raise AttributeError(
             "Missing required USID config attribute "
-            "usid_hyperparams.cz_fit_mode / cz_observer_horizon / cz_lambda / learnable_cz."
+            "usid_hyperparams.cz_observer_horizon / learnable_cz."
         ) from e
-    if learnable_cz:
-        # B-faithful staged finetune (STAGE 1b Cz1 -> STAGE 2 B1' -> STAGE 4 {Cz2,B2'}). Hard
-        # preconditions, fail-fast: no B'-pin (the pin overwrites the Z-shaped B2'), single fit (the
-        # multistart selector is Z-blind). k2_zero and use_opsin are NO LONGER required — both are
-        # swept as control ablations (see below).
-        if pin_bprime:
-            raise ValueError("learnable_cz=True is incompatible with pin_bprime=True "
-                             "(the pin overwrites the Z-shaped B2').")
-        if n_restarts > 1:
-            raise ValueError("learnable_cz=True requires n_restarts==1 "
-                             "(the multistart selector scores Y, not Z, and would discard the "
-                             "best-for-Z restart).")
-        # k2≠0 (k2_treat=free) is allowed: STAGE 2 temp-zeros K2 internally so its x2≡0 B1' fit holds,
-        # and STAGE 4's {Cz2,B2'}-only optimizer isolates regardless of K2. The clean natural/unnatural
-        # split is a science-version concern, not a correctness blocker for the control sweep.
-        # no-opsin is allowed: compute_photocurrents is the identity, so B1'/B2' are shaped on z-scored
-        # LIGHT (matching the controller's linearized-subspace rollout). The opsin de-saturation lever
-        # does not apply, but the staged behavior-supervision of B1'/Cz2 still does.
-    if pin_bprime:
-        if not use_opsin:
-            raise ValueError(
-                "pin_bprime=True requires use_opsin=True (the pin identifies the "
-                "opsin/forced input path B2'); got use_opsin=False."
-            )
-        log.info("Pinning B' via convex predictor-free-run fit...")
-        pin_diag = _pin_bprime(usid_model, Xhat, YN, u_tensor, device, cz_observer_horizon)
-        # Recompute the filtered trajectory with the pinned input map so the Cz fit
-        # + Zhat decode from the post-pin state.
-        Xhat = _compute_state_trajectory(usid_model, y_tensor, u_tensor, device)
-    else:
-        pin_diag = {"pin_bprime": False}
+    if not learnable_cz:
+        raise ValueError(
+            "fit_lds_to_data requires learnable_cz=True (the COLD path trains Cz in "
+            "Phase 2/4; there is no post-hoc ridge-deploy fallback)."
+        )
 
-    # === 5c. Learnable Cz — Phase 3 (Option 2 reframed; optional) ===
-    # Warm-start Cz2 from the ridge residual (Cz1 is FIXED from STAGE 1b), then finetune {Cz2,B2'} on the
-    # behavioral-Z loss + retained forced-path Y anchor (z_recon weight ≈ 10× the anchor). Mutates
-    # usid_model (B2' + Cz) HERE — before the SubspaceLDS extraction — so the extracted B and the
-    # deployed Cz are consistent (same place the pin mutates B2'). The ridge is always computed (the
-    # warm-start AND the learned-vs-ridge diagnostic baseline).
-    cz_phase3_diag = {"learnable_cz": False}
-    if learnable_cz:
-        z_recon_cfg = cfg.usid_hyperparams.loss.z_recon
-        # Ridge BASELINE (joint Cz1,Cz2) — diagnostic only (learned-vs-ridge R²(Z)); NOT copied to the
-        # model. Cz1 is authoritative from STAGE 1b (opto-free); STAGE 4 trains only {Cz2, B2'}.
-        Cz1_ridge, Cz2_ridge = _fit_behavioral_decoder(
-            Xhat, ZN, n1, n2, usid_model=usid_model, u_tensor=u_tensor, device=device,
-            cz_fit_mode=cz_fit_mode, cz_observer_horizon=cz_observer_horizon, cz_lambda=cz_lambda)
-        ridge_r2z = _freerun_r2z_by_horizon(
-            usid_model, Xhat, ZN, u_tensor, Cz1_ridge, Cz2_ridge, device, cz_observer_horizon)
-        # Cz2-ONLY warm-start: fit Cz2 on the observer-rollout pool to the residual Z − Cz1·x1, with
-        # Cz1 read off the model (frozen from STAGE 1b) and NOT overwritten.
+    # === Phase 4: learnable Cz — finetune {Cz2, B2'} on the y-anchored z-aware loss ===
+    # Cz1 is FROZEN + authoritative from Phase 2. Warm-start Cz2 on the observer-rollout ridge
+    # residual Z − Cz1·x1, then finetune {Cz2, B2'} with x1 detached in the z-readout (the Y anchor
+    # keeps x1 live). Mutates usid_model (Cz2 + B2') HERE — before the SubspaceLDS extraction — so the
+    # extracted B and the deployed Cz are consistent.
+    z_recon_cfg = cfg.usid_hyperparams.loss.z_recon
+    cz2_warm_start = bool(z_recon_cfg.cz2_warm_start)
+    if cz2_warm_start:
+        # Warm-start Cz2 from the observer-rollout ridge residual Z − Cz1·x1 before finetune.
         with torch.no_grad():
             Cz1_fixed = usid_model.Cz1.detach().cpu().numpy()
         X_pool, Z_idx = _observer_rollout_pool(usid_model, Xhat, u_tensor, device, cz_observer_horizon)
@@ -447,67 +361,49 @@ def fit_lds_to_data(
         Cz2_warm = Ridge(alpha=1.0, fit_intercept=False).fit(X_pool[:, n1:], z_resid).coef_
         with torch.no_grad():
             usid_model.Cz2.data.copy_(torch.as_tensor(Cz2_warm, dtype=torch.float32, device=device))
-        # Y-cost guard: forced-path R²(Y) BEFORE the finetune (ridge B2') — the load-bearing trade.
-        r2y_pre = _freerun_r2y_heldout(usid_model, Xhat, YN, u_tensor, device, cz_observer_horizon)
-        # ATTRIBUTION/SCIENCE version (deferred, out of scope): would hold B2' minimal (penalize
-        # ‖B2'‖/‖Cz2·x2‖) + bound B1', keeping a clean residual split; REQUIRES the D2 colored-noise
-        # natural model (not built). See scratchpad/natural_unnatural_d2_and_cz_handling.md.
-        log.info("STAGE 4: learnable-Cz finetune {Cz2,B2'} (Cz1 frozen from STAGE 1b; Cz2 residual warm-start)...")
-        cz_phase3_diag = _finetune_cz_phase3(
-            usid_model, Xhat, ZN, YN, u_tensor, device,
-            z_weight=float(z_recon_cfg.z_weight), y_weight=float(z_recon_cfg.y_weight),
-            horizon=int(z_recon_cfg.horizon),
-            steps=int(z_recon_cfg.steps), lr=float(z_recon_cfg.lr),
-            huber_delta=float(z_recon_cfg.huber_delta))
-        cz_phase3_diag['ridge_freerun_r2z'] = ridge_r2z
-        cz_phase3_diag['freerun_r2y_pre'] = r2y_pre
-        # Recompute the filtered trajectory with the finetuned B2' so extraction + diagnostics match.
-        Xhat = _compute_state_trajectory(usid_model, y_tensor, u_tensor, device)
-        cz_phase3_diag['freerun_r2y_post'] = _freerun_r2y_heldout(
-            usid_model, Xhat, YN, u_tensor, device, cz_observer_horizon)
-        log.info("[phase3_cz] forced-path R2(Y) %.4f -> %.4f (the Y cost); learned-vs-ridge R2(Z) "
-                 "stamped to metadata.cz_phase3", r2y_pre, cz_phase3_diag['freerun_r2y_post'])
+        log.info("Phase 4: Cz2 ridge warm-start, then finetune {Cz2, B2'}")
+    else:
+        # Random-init arm: skip the ridge — Cz2 stays at its randn*0.1 init (frozen through the
+        # base fit), so the finetune below starts Cz2 from random. Tests whether the warm-start
+        # is load-bearing or Adam can find Cz2 from scratch.
+        log.info("Phase 4: Cz2 RANDOM init (ridge warm-start skipped), then finetune {Cz2, B2'}")
+    # Y-cost guard: forced-path R²(Y) BEFORE the finetune.
+    r2y_pre = _freerun_r2y_heldout(usid_model, Xhat, YN, u_tensor, device, cz_observer_horizon)
+    log.info("Phase 4: learnable-Cz finetune {Cz2, B2'}")
+    cz_phase3_diag = _finetune_cz_phase3(
+        usid_model, Xhat, ZN, YN, u_tensor, device,
+        z_weight=float(z_recon_cfg.z_weight), y_weight=float(z_recon_cfg.y_weight),
+        horizon=int(z_recon_cfg.horizon),
+        steps=int(z_recon_cfg.steps), lr=float(z_recon_cfg.lr),
+        huber_delta=float(z_recon_cfg.huber_delta))
+    cz_phase3_diag['freerun_r2y_pre'] = r2y_pre
+    # Recompute the filtered trajectory with the finetuned B2' so extraction + diagnostics match.
+    Xhat = _compute_state_trajectory(usid_model, y_tensor, u_tensor, device)
+    cz_phase3_diag['freerun_r2y_post'] = _freerun_r2y_heldout(
+        usid_model, Xhat, YN, u_tensor, device, cz_observer_horizon)
+    log.info("[phase4_cz] forced-path R2(Y) %.4f -> %.4f (the Y cost)",
+             r2y_pre, cz_phase3_diag['freerun_r2y_post'])
 
     with torch.no_grad():
         Yhat = usid_model.forward(y_tensor, u_tensor).squeeze(0).cpu().numpy()
 
-    # === 5. Extract SubspaceLDS (reads the pinned input map) ===
+    # === 5. Extract SubspaceLDS (reads the Phase-4 finetuned input map) ===
     log.info("Converting USID to SubspaceLDS...")
     subspace_lds = usid_to_subspace_lds(usid_model)
-    subspace_lds.metadata['pin_bprime'] = pin_diag
 
-    # === 6. Post-processing ===
-    # Fit behavioral decoder. The controller (NLMPC/iLQR) plans against the
-    # OBSERVER free-run state (self-fed y = C·x), not the teacher-forced state
-    # Xhat above — so by default Cz is fit on the pooled observer-rollout state
-    # the controller visits, not on Xhat. See _fit_behavioral_decoder.
-    if learnable_cz:
-        # Cz was trained in Phase 3 (warm-started from ridge); read it off the model (torch->numpy)
-        # instead of the post-hoc ridge. B2' was also finetuned (in the model + the extracted LDS).
-        with torch.no_grad():
-            Cz1 = usid_model.Cz1.detach().cpu().numpy()
-            Cz2 = usid_model.Cz2.detach().cpu().numpy()
-        log.info("Using learnable Cz (Phase 3) [z_weight=%.3g, dB2'=%.4g]",
-                 cz_phase3_diag.get('z_weight', float('nan')), cz_phase3_diag.get('dB2_norm', float('nan')))
-    else:
-        log.info(
-            "Fitting behavioral decoder (Cz) [mode=%s, lambda=%.3g]...",
-            cz_fit_mode, cz_lambda,
-        )
-        Cz1, Cz2 = _fit_behavioral_decoder(
-            Xhat, ZN, n1, n2,
-            usid_model=usid_model,
-            u_tensor=u_tensor,
-            device=device,
-            cz_fit_mode=cz_fit_mode,
-            cz_observer_horizon=cz_observer_horizon,
-            cz_lambda=cz_lambda,
-        )
+    # === 6. Post-processing: read the Phase-4 trained behavioral decoder off the model ===
+    # Cz1/Cz2 were trained in Phase 2/4 (Cz2 warm-started from the observer-rollout ridge); B2' was
+    # also finetuned (in the model + the extracted LDS). Read them straight off the model — there is
+    # no post-hoc ridge-deploy fallback.
+    with torch.no_grad():
+        Cz1 = usid_model.Cz1.detach().cpu().numpy()
+        Cz2 = usid_model.Cz2.detach().cpu().numpy()
+    log.info("Using learnable Cz (Phase 4) [z_weight=%.3g, dB2'=%.4g]",
+             cz_phase3_diag.get('z_weight', float('nan')), cz_phase3_diag.get('dB2_norm', float('nan')))
     subspace_lds.Cz1 = Cz1
     subspace_lds.Cz2 = Cz2
     subspace_lds.metadata['cz_phase3'] = cz_phase3_diag
-    # STAGE 1b/2 provenance (learnable_cz only; None otherwise) — analyze_model_fit reads these.
-    subspace_lds.metadata['cz1_stage1b'] = result.cz1_diag
+    # Phase-2 {B1', Cz1} provenance — analyze_model_fit reads this.
     subspace_lds.metadata['b1_phase'] = result.b1_phase_diag
     # Zhat reported for the analysis CSV is the teacher-forced readout (the
     # state the model is validated against — what R2_model_fit_Z_Zhat measures).
@@ -515,7 +411,7 @@ def fit_lds_to_data(
 
     # Load-bearing controllability diagnostic: horizon-resolved free-run R²(Z).
     # R2_model_fit_Z_Zhat above is 1-step/filtered and decoupled from the open-loop
-    # control the controller plans; this scores the predictor free-run the pin targets.
+    # control the controller plans; this scores the predictor free-run the controller realizes.
     # Reaches model_fit_analysis.csv via analyze_model_fit reading lds.metadata.
     subspace_lds.metadata['freerun_r2z'] = _freerun_r2z_by_horizon(
         usid_model, Xhat, ZN, u_tensor, Cz1, Cz2, device, cz_observer_horizon,
@@ -625,9 +521,9 @@ def _load_and_normalize_natural_data(
     format. Cast path is float64 → clip → float32 so raw overflow doesn't
     pre-populate ±inf before the sanitizer can act.
 
-    When (z_mean, z_std) are provided (the learnable_cz / staged-Cz path), also load and normalize the
-    opto-free behavior ``natural_expt.Z`` in the controller's Z coordinates — STAGE 1b fits Cz1 against
-    it. Returns natural_ZN=None when z-stats are absent (the non-staged path never needs it).
+    When (z_mean, z_std) are provided (the learnable_cz path), also load and normalize the natural
+    behavior ``natural_expt.Z`` in the controller's Z coordinates — Phase 2 trains {B1', Cz1} against
+    it. Returns natural_ZN=None when z-stats are absent (the non-COLD path never needs it).
 
     Returns:
         Tuple of (normalized natural_YN, normalized natural_ZN or None, clip count for summary.csv).
@@ -647,7 +543,7 @@ def _load_and_normalize_natural_data(
         natural_ZN, _ = sanitize_normalized(natural_ZN, "Natural_ZN", log=log)
         natural_ZN = natural_ZN.astype(np.float32)
         log.info(f"Natural behavior: T={natural_ZN.shape[0]}, nz={natural_ZN.shape[1]} "
-                 f"(opto-free Z for STAGE 1b Cz1 fit)")
+                 f"(natural Z for the Phase 2 {{B1', Cz1}} fit)")
 
     log.info(
         f"Natural data: T={natural_YN.shape[0]}, ny={natural_YN.shape[1]}, "
@@ -975,7 +871,7 @@ def _prepare_data_bundle(
         val_light_raw_seqs=val_light_raw_list,
         channel_neuron_transmittance=channel_neuron_transmittance,
         metadata=metadata,
-        # Full-trajectory arrays for the in-core staged-Cz fits (STAGE 1b/2; learnable_cz only).
+        # Full-trajectory arrays for the in-core Phase-2 {B1', Cz1} fit (learnable_cz only).
         natural_full_y=natural_YN,
         natural_full_z=natural_ZN,
         opto_full_y=opto_YN,
@@ -1168,8 +1064,7 @@ def _forced_freerun_sse(usid_model, Xf_t, Y_t, P, starts, horizon, n1):
     R2. From each filtered seed Xf[t0] the model self-feeds its own y, so opto reaches
     the output ONLY through B2' (via precomputed photocurrents P); the observer K2 acts
     on the self-fed innovation and is inert w.r.t. opto. Linear in B2'. Single source of
-    the free-run rollout, shared by the B2' pin (grad on B2') and the multistart
-    selection metric (eval), so the two cannot diverge.
+    the free-run rollout used by the Phase-4 forced-path R2(Y) guard (_freerun_r2y_heldout).
     """
     x1 = Xf_t[starts, :n1]
     x2 = Xf_t[starts, n1:]
@@ -1186,118 +1081,14 @@ def _forced_freerun_sse(usid_model, Xf_t, Y_t, P, starts, horizon, n1):
     return sse, ss_tot, ytrue_pool.numel()
 
 
-def _pin_bprime(usid_model, Xhat, YN, u_tensor, device, horizon, *, max_iter=300,
-                train_frac=0.8):
-    """Pin the opsin/forced input map B2' by a convex fit to the predictor free-run.
-
-    The controller plans against the OBSERVER free-run (self-fed y = C·x) — the
-    ``forced=False`` rollout in ``USIDModel.predict`` / ``NLMPC._rollout_state`` —
-    where the unnatural update is x2[t+1] = (A22 + K2·Cy2)·x2 + B2'·photocurrent.
-    Opto enters ONLY through B2'; the (possibly masked) observer K2 acts on the
-    self-fed innovation Cy2·x2 and is therefore INERT w.r.t. opto in free-run.
-    Because that free-run output is LINEAR in B2', fitting B2' to reproduce the true
-    output YN over pooled rollout depths j=1..horizon is a CONVEX least-squares
-    problem with a unique optimum. This identifies the input/forced path that the
-    joint teacher-forced objective leaves Kalman-masked (the strong K·y_real feedback
-    explains the opto response regardless of B2'), WITHOUT retraining any other
-    matrix. B1' is pinned to 0 (opto kept out of the *direct* x1 input path; it can
-    still reach x1 indirectly via A12·x2); all other params are frozen.
-
-    Mirrors ``_observer_rollout_pool``'s rollout (reusing ``usid_model.step`` as the
-    single source of the recurrence) but keeps grad on B2' and scores the free-run
-    OUTPUT against YN. Seeds are the filtered states ``Xhat`` (held fixed during the
-    fit; their weak B2'-dependence is a benign transient the horizon pooling averages
-    over — generalization is checked on a held-out start split).
-
-    Returns a diagnostic dict (``||ΔB2'||``, free-run output R²(Y) train/held-out).
-    """
-    n1, n2 = usid_model.n1, usid_model.n2
-    T = Xhat.shape[0]
-    if T <= horizon + 1:
-        raise ValueError(
-            f"Sequence too short to pin B': T={T}, horizon={horizon}. Need T > horizon + 1."
-        )
-
-    usid_model.eval()
-    # Freeze everything; pin B1'=0; leave ONLY B2' trainable.
-    for p in usid_model.parameters():
-        p.requires_grad_(False)
-    with torch.no_grad():
-        usid_model.B1_prime.zero_()
-    usid_model.B2_prime.requires_grad_(True)
-    B2_old = usid_model.B2_prime.detach().clone()
-
-    Xf_t = torch.as_tensor(Xhat, dtype=torch.float32, device=device)
-    Y_t = torch.as_tensor(YN, dtype=torch.float32, device=device)
-    # Photocurrents are fixed (opsin frozen) — precompute once, no grad.
-    with torch.no_grad():
-        P = usid_model.compute_photocurrents(u_tensor).squeeze(0)  # (T, k)
-
-    n_starts = T - horizon
-    n_train = max(1, int(round(train_frac * n_starts)))
-    train_starts = torch.arange(n_train, device=device)
-    val_starts = torch.arange(n_train, n_starts, device=device)
-    if val_starts.numel() == 0:
-        log.warning(
-            "[pin_bprime] held-out start split is empty (n_starts=%d, train_frac=%g); "
-            "held-out R2 will be nan.", n_starts, train_frac,
-        )
-
-    def free_run_sse(starts):
-        # Single source of the free-run rollout (shared with the multistart selector
-        # eval via _forced_freerun_sse) so the pin objective and the selection metric
-        # cannot diverge. Keeps grad on B2' here (B2_prime.requires_grad_(True) above).
-        return _forced_freerun_sse(usid_model, Xf_t, Y_t, P, starts, horizon, n1)
-
-    opt = torch.optim.LBFGS(
-        [usid_model.B2_prime], max_iter=max_iter, line_search_fn="strong_wolfe",
-    )
-
-    def closure():
-        opt.zero_grad()
-        sse, _ss_tot, n = free_run_sse(train_starts)
-        loss = sse / n
-        loss.backward()
-        return loss
-
-    opt.step(closure)
-    usid_model.B2_prime.requires_grad_(False)
-    # Terminal freeze: usid_model is only READ after this (SubspaceLDS extraction,
-    # Cz fit, Yhat) and never trained further, so leaving all params frozen is intended.
-
-    with torch.no_grad():
-        def r2(starts):
-            if starts.numel() == 0:
-                return float("nan")
-            sse, ss_tot, _ = free_run_sse(starts)
-            return float(1.0 - sse / ss_tot) if ss_tot > 0 else float("nan")
-        diag = {
-            "pin_bprime": True,
-            "dB2_norm": float((usid_model.B2_prime - B2_old).norm()),
-            "B2_old_norm": float(B2_old.norm()),
-            "B2_new_norm": float(usid_model.B2_prime.norm()),
-            "freerun_r2y_train": r2(train_starts),
-            "freerun_r2y_heldout": r2(val_starts),
-            "horizon": int(horizon),
-        }
-    log.info(
-        f"[pin_bprime] ||dB2'||={diag['dB2_norm']:.4g} "
-        f"(|B2'|: {diag['B2_old_norm']:.4g} -> {diag['B2_new_norm']:.4g}); "
-        f"free-run R2(Y) train={diag['freerun_r2y_train']:.4f} "
-        f"heldout={diag['freerun_r2y_heldout']:.4f} @h{horizon}"
-    )
-    return diag
-
-
 def _freerun_r2y_heldout(usid_model, Xhat, YN, u_tensor, device, horizon, *, train_frac=0.8):
-    """Held-out observer-off forced-path R2(Y) of the model AS-IS (no pin/optimization).
+    """Held-out observer-off forced-path R2(Y) of the model AS-IS (no optimization).
 
-    Same self-fed free-run as ``_pin_bprime.free_run_sse`` (opto enters only through
-    B2'; the self-fed observer is inert w.r.t. opto), evaluated on the held-out start
-    split with the SAME train_frac so the split matches the pin's. Used as the
-    multistart selection metric on the pin_bprime=False path: it ranks restarts by how
-    well their forced path predicts held-out output — the control-relevant quantity the
-    Kalman-masked validation loss is blind to. Returns nan if too short / empty split.
+    Self-fed free-run (opto enters only through B2'; the self-fed observer is inert
+    w.r.t. opto), evaluated on the held-out start split (the last 1−train_frac of the
+    starts). Phase 4 uses it as the forced-path Y-cost guard — the control-relevant
+    quantity the Kalman-masked validation loss is blind to — before and after the
+    {Cz2, B2'} finetune. Returns nan if too short / empty split.
     """
     n1 = usid_model.n1
     T = Xhat.shape[0]
@@ -1320,21 +1111,21 @@ def _freerun_r2y_heldout(usid_model, Xhat, YN, u_tensor, device, horizon, *, tra
 
 def _finetune_cz_phase3(usid_model, Xhat, ZN, YN, u_tensor, device, *, z_weight, y_weight, horizon,
                         steps, lr, huber_delta, n_starts_cap=4000):
-    """Phase 3 (Option 2 reframed): finetune the learnable behavioral decoder + opto input map.
+    """Phase 4: finetune the learnable behavioral decoder + opto input map.
 
-    Trains EXACTLY ``{Cz2, B2'}`` (Cz1 frozen + authoritative from STAGE 1b; everything else — A22,
-    Cy2, A12, K2≡0, the natural model, B1', opsin — frozen) on the observer-rollout pool, with the loss
+    Trains EXACTLY ``{Cz2, B2'}`` (Cz1 frozen + authoritative from Phase 2; everything else — A22,
+    Cy2, A12, K2, the natural model, B1', opsin — frozen) on the observer-rollout pool, with the loss
 
         z_weight · ‖Cz1·x1.detach() + Cz2·x2 − Z‖²   (behavioral readout; Cz1·x1.detach() is a fixed
                                                         offset, so the gradient flows only to {Cz2, B2'-via-x2})
               1 · ‖Cy1·x1 + Cy2·x2 − Y‖²              (the RETAINED forced-path Y anchor; x1 LIVE so
                                                         it constrains B2' through the A12·x2→x1 path)
 
-    Under ``k2_zero`` (required) the unnatural state is a pure exogenous-opto filter, so the gradient
-    reaches only {Cz2, B2'} — the natural/unnatural split is preserved
-    (validated offline: scratchpad/cz_learnable_implementation_plan.md §1.4–§1.46). z_weight ≈ 10×
-    the anchor is the frontier sweet spot (large opto→Z direction gain, ΔR²(Y) ≈ −0.02). Cz must be
-    warm-started from the ridge before calling. Mutates usid_model in place; returns a diagnostic dict.
+    With x1 detached in the z-readout, the Z gradient reaches only {Cz2, B2'-via-x2}, keeping the
+    opto-behavior in the unnatural channel; the Y anchor keeps x1 live so it constrains B2' through
+    the A12·x2→x1 path. z_weight ≈ 10× the anchor is the frontier sweet spot (large opto→Z direction
+    gain, ΔR²(Y) ≈ −0.02). Cz2 must be warm-started from the ridge before calling. Mutates usid_model
+    in place; returns a diagnostic dict.
 
     Seeds are the filtered states ``Xhat`` (the controller's running observer estimate), reused as the
     self-fed observer-rollout seeds — the same recurrence the NLMPC controller plans against.
@@ -1343,10 +1134,11 @@ def _finetune_cz_phase3(usid_model, Xhat, ZN, YN, u_tensor, device, *, z_weight,
     usid_model.eval()
     for p in usid_model.parameters():
         p.requires_grad_(False)
-    # STAGE 4 trains ONLY {Cz2, B2'} — Cz1 is frozen (authoritative from STAGE 1b); its Cz1·x1.detach()
-    # term in the z readout is a fixed offset (correct: anchors Z to the natural contribution).
-    usid_model.Cz2.requires_grad_(True)
-    usid_model.B2_prime.requires_grad_(True)
+    # Trains EXACTLY {Cz2, B2'} (Cz1 frozen from Phase 2). x1 is detached in the z-readout below so the
+    # Z gradient stays off the x1 recurrence, keeping opto-behavior in the unnatural channel.
+    train_params = [usid_model.Cz2, usid_model.B2_prime]
+    for p in train_params:
+        p.requires_grad_(True)
     B2_old = usid_model.B2_prime.detach().clone()
 
     Xf = torch.as_tensor(Xhat, dtype=torch.float32, device=device)
@@ -1366,7 +1158,7 @@ def _finetune_cz_phase3(usid_model, Xhat, ZN, YN, u_tensor, device, *, z_weight,
     arange_h = torch.arange(1, horizon + 1, device=device)
     hd = huber_delta if (huber_delta and huber_delta > 0) else None
     Cy1 = usid_model.natural_model.Cy1
-    opt = torch.optim.Adam([usid_model.Cz2, usid_model.B2_prime], lr=lr)
+    opt = torch.optim.Adam(train_params, lr=lr)
     z0 = zN = float("nan")
     with usid_model.natural_model.A_param.cache(), usid_model.A22_param.cache():
         P = usid_model.compute_photocurrents(u_tensor).squeeze(0)        # (T, n_clusters)
@@ -1378,7 +1170,7 @@ def _finetune_cz_phase3(usid_model, Xhat, ZN, YN, u_tensor, device, *, z_weight,
         for it in range(steps):
             opt.zero_grad()
             x1r, x2r = usid_model.observer_freerun(x1_seed, x2_seed, P, start_idx, horizon)
-            z_pred = usid_model.decode_z(x1r.detach(), x2r)             # x1 detached
+            z_pred = usid_model.decode_z(x1r.detach(), x2r)
             y_pred = x1r @ Cy1.T + x2r @ usid_model.Cy2.T               # x1 live (full B2' anchor)
             z_loss = behavioral_recon_loss(z_pred, z_true, channel_mask=zmask, huber_delta=hd)
             y_loss = behavioral_recon_loss(y_pred, y_true, channel_mask=ymask, huber_delta=hd)
@@ -1391,172 +1183,15 @@ def _finetune_cz_phase3(usid_model, Xhat, ZN, YN, u_tensor, device, *, z_weight,
         p.requires_grad_(False)
     diag = {
         "learnable_cz": True, "z_weight": float(z_weight), "y_weight": float(y_weight),
+        "cz_train_params": ["Cz2", "B2_prime"], "detach_x1": True,
         "horizon": int(horizon), "steps": int(steps), "lr": float(lr),
         "dB2_norm": float((usid_model.B2_prime - B2_old).norm()),
         "B2_old_norm": float(B2_old.norm()), "B2_new_norm": float(usid_model.B2_prime.norm()),
         "z_loss_train": [z0, zN],
     }
-    log.info("[phase3_cz] ||dB2'||=%.4g (|B2'|: %.4g -> %.4g); z_loss %.4g -> %.4g @h%d, z_weight=%.3g",
+    log.info("[phase4_cz] ||dB2'||=%.4g (|B2'|: %.4g -> %.4g); z_loss %.4g -> %.4g @h%d, z_weight=%.3g",
              diag["dB2_norm"], diag["B2_old_norm"], diag["B2_new_norm"], z0, zN, horizon, z_weight)
     return diag
 
-
-def _opto_freerun_latent(usid_model, u_tensor, device):
-    """Opto-attributable latent on the sys-ID trajectory: the self-fed,
-    observer-off free-run state from x0=0 driven only by the photocurrents.
-
-    Rolls the SAME recurrence the controller plans against (``usid_model.step``
-    self-feeding ``yhat = C·x`` — see ``_observer_rollout_pool``) from a zero
-    initial state over the whole continuous trajectory. The unnatural observer
-    gain K2 acts only on the self-fed innovation ``Cy2·x2`` and is therefore
-    inert w.r.t. opto, so x2 is driven purely by ``B2'·photocurrent``; the
-    returned state is the opto-attributable component the two-term Cz fit aligns
-    its opto-response term to. ``dx[t]`` is the state BEFORE step ``t`` (so
-    ``dx[0]=0``), shape (T, n1+n2), aligned to ``ZN[t]``. Mirrors the offline
-    ``selffed_freerun`` validated in the two-term prototype.
-    """
-    usid_model.eval()
-    n1, n2 = usid_model.n1, usid_model.n2
-    with torch.no_grad(), usid_model.natural_model.A_param.cache(), usid_model.A22_param.cache():
-        P = usid_model.compute_photocurrents(u_tensor).squeeze(0)  # (T, k)
-        T = P.shape[0]
-        x1 = torch.zeros(1, n1, device=device)
-        x2 = torch.zeros(1, n2, device=device)
-        X = []
-        for t in range(T):
-            X.append(torch.cat([x1, x2], dim=1))  # state at time t (x[0]=0)
-            yhat = x1 @ usid_model.natural_model.Cy1.T + x2 @ usid_model.Cy2.T
-            x1, x2, _ = usid_model.step(x1, x2, yhat, P[t:t + 1])
-    return torch.cat(X, dim=0).cpu().numpy()  # (T, n1+n2)
-
-
-def _iv_dz_opto(dx_sys, ZN, ridge=1e-6):
-    """2SLS opto-as-instrument estimate of the opto-evoked behavior.
-
-    The opto-attributable latent ``dx_sys`` is a deterministic function of the
-    exogenous sys-ID light, so it is a valid instrument: its column space is the
-    opto-attributable Z subspace, dodging the A12 x1<->x2 confound that a direct
-    state->Z regression would suffer. Project the centered behavior ``ZN`` onto
-    ``col(dx_sys)`` -> the opto-evoked behavior the two-term fit's opto-response
-    term targets. Uses sys-ID data ONLY (no control trajectories). Returns
-    ``dZ_opto`` (T, nz).
-    """
-    ZNc = ZN - ZN.mean(axis=0, keepdims=True)
-    G = dx_sys.T @ dx_sys + ridge * np.eye(dx_sys.shape[1])
-    W = np.linalg.solve(G, dx_sys.T @ ZNc)
-    return dx_sys @ W
-
-
-def _fit_twoterm_cz(X_dec, Z_dec, X_opt, Z_opt, lam, ridge_rel=1e-6):
-    """Closed-form weighted-ridge two-term decoder Cz (nz, n1+n2).
-
-      min (1-lam)/Nd ||X_dec·Czᵀ − Z_dec||² + lam/No ||X_opt·Czᵀ − Z_opt||²
-            + ρ·||Cz||²_F
-
-    First term: decode the behavior off the observer-rollout pool the controller
-    plans on (the production observer_rollout fit). Second term: align Cz to the
-    opto-evoked behavior (``Z_opt = dZ_opto``) along the opto-attributable latent
-    (``X_opt = dx_sys``). The per-term 1/N weighting makes ``lam`` a true
-    interpolation: at lam=0 this reproduces the production observer_rollout Cz
-    (the ~10⁵ decode rows would otherwise swamp the opto rows until lam≈1); at
-    lam=1 it is the pure opto-response fit. ρ = ridge_rel·trace(weighted gram)/nx
-    scales the ridge with the per-N-weighted data so it conditions the solve
-    without over-shrinking. Solved via the shared normal equations.
-    """
-    nx = X_dec.shape[1]
-    Nd = max(len(X_dec), 1)
-    No = max(len(X_opt), 1)
-    wd = (1.0 - lam) / Nd
-    wo = lam / No
-    A = wd * (X_dec.T @ X_dec) + wo * (X_opt.T @ X_opt)
-    A = A + ridge_rel * (np.trace(A) / nx) * np.eye(nx)
-    Bm = wd * (X_dec.T @ Z_dec) + wo * (X_opt.T @ Z_opt)
-    CzT = np.linalg.solve(A, Bm)  # (nx, nz)
-    return CzT.T  # (nz, nx)
-
-
-def _fit_behavioral_decoder(
-    Xhat, ZN, n1, n2, *,
-    usid_model=None, u_tensor=None, device=None,
-    cz_fit_mode="teacher_forced", cz_observer_horizon=20, cz_lambda=0.0,
-    alpha=1.0,
-):
-    """Fit linear decoder from states to behavioral output Z.
-
-    Two modes (see config/cold_usid.yaml usid_hyperparams.cz_fit_mode):
-
-    * ``teacher_forced`` — Ridge-fit Cz on the 1-step teacher-forced (filtered)
-      state ``Xhat``. This is the state the model is *trained/validated* against,
-      but NOT the one the controller plans against. Legacy behaviour.
-
-    * ``observer_rollout`` (default) — Ridge-fit Cz on the OBSERVER free-run
-      state pooled over rollout depths ``j = 1..cz_observer_horizon`` (see
-      ``_observer_rollout_pool``). This is the state the NLMPC/iLQR controllers
-      actually visit during planning, so the decoder reads Z out of the right
-      trajectory. Offline-validated to lift observer-form held-out R²(Z) at the
-      control horizon (≈ −0.04 → +0.16 @h20) on the cached usid_stim_rec chr2
-      cells.
-
-    * ``two_term`` — weighted blend of the ``observer_rollout`` decode term and
-      an opto-RESPONSE term: at weight ``cz_lambda`` the fit additionally aligns
-      Cz to the opto-evoked behavior ``dZ_opto`` along the opto-attributable
-      latent ``dx_sys``. ``dZ_opto`` is a control-free 2SLS opto-as-instrument
-      estimate (``_iv_dz_opto``); ``dx_sys`` is the self-fed opto free-run
-      (``_opto_freerun_latent``). ``cz_lambda=0`` reproduces ``observer_rollout``
-      (the decode rows swamp the opto rows under the per-term 1/N weighting);
-      ``cz_lambda=1`` is the pure opto-response fit. Targets the opto→Z readout
-      direction that the decode-only fit leaves as an under-determined residual
-      on x1-dominated seeds.
-
-    Uses fit_intercept=False because ZN is already zero-mean (normalized by
-    model_fit.py). This ensures x2z(X) = X @ Cz.T with no bias term, matching
-    the controller's expectation.
-    """
-    if cz_fit_mode == "teacher_forced":
-        X_fit, Z_fit = Xhat, ZN
-    elif cz_fit_mode == "observer_rollout":
-        if usid_model is None or u_tensor is None or device is None:
-            raise ValueError(
-                "cz_fit_mode='observer_rollout' requires usid_model, u_tensor, "
-                "and device."
-            )
-        # Xhat is the teacher-forced state trajectory (the controller's running
-        # observer estimate); reused as the free-run rollout seeds.
-        X_pool, Z_idx = _observer_rollout_pool(
-            usid_model, Xhat, u_tensor, device, cz_observer_horizon
-        )
-        X_fit, Z_fit = X_pool, ZN[Z_idx]
-    elif cz_fit_mode == "two_term":
-        if usid_model is None or u_tensor is None or device is None:
-            raise ValueError(
-                "cz_fit_mode='two_term' requires usid_model, u_tensor, and device."
-            )
-        # Decode term: the observer-rollout pool the controller plans on (the
-        # observer_rollout fit's data; cz_lambda=0 reproduces it).
-        X_pool, Z_idx = _observer_rollout_pool(
-            usid_model, Xhat, u_tensor, device, cz_observer_horizon
-        )
-        Z_pool = ZN[Z_idx]
-        # Opto-response term: align Cz to the 2SLS opto-as-instrument estimate of
-        # the opto-evoked behavior, evaluated on the opto-attributable sys-ID
-        # latent. Control data is never used — both come from sys-ID light + ZN.
-        dx_sys = _opto_freerun_latent(usid_model, u_tensor, device)
-        dZ_opto = _iv_dz_opto(dx_sys, ZN)
-        Cz_combined = _fit_twoterm_cz(X_pool, Z_pool, dx_sys, dZ_opto, cz_lambda)
-        return Cz_combined[:, :n1], Cz_combined[:, n1:]
-    else:
-        raise ValueError(
-            f"Unknown cz_fit_mode={cz_fit_mode!r}; expected 'teacher_forced', "
-            f"'observer_rollout', or 'two_term'."
-        )
-
-    decoder = Ridge(alpha=alpha, fit_intercept=False)
-    decoder.fit(X_fit, Z_fit)
-
-    Cz_combined = decoder.coef_  # (nz, n1+n2)
-    Cz1 = Cz_combined[:, :n1]
-    Cz2 = Cz_combined[:, n1:]
-
-    return Cz1, Cz2
 
 

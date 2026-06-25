@@ -31,25 +31,24 @@ params:
   signals: lfp
   n_trials_sys_id: 5
   model_task_inputs: false
-  # USID model_fit-level wildcards (route into usid_overrides via
+  # sys-ID opto excitation (sys_id_expts wildcards). stim_u_max_mWmm2 = amplitude
+  # cap (mW/mm²) + lognormal spread; stim_active_frac = per-channel per-step Bernoulli
+  # on-prob (sparsity). Defaults = control-regime excitation; 75 / 1.0 = legacy dense
+  # saturating drive.
+  stim_u_max_mWmm2: 30
+  stim_active_frac: 0.5
+  # USID model_fit-level loss-weight wildcards (route into usid_overrides via
   # src/scripts/model_fit.py): forced = usid_hyperparams.loss.loss_weights.forced
-  # (forced-loss weight), pin_bprime = usid_hyperparams.pin_bprime (int 0/1, NOT
-  # bool — Snakemake wildcards are strings and bool("0") is True). Defaults match
-  # the static cold_usid.yaml values (forced 1.0, pin_bprime off) so a run that
-  # does not sweep them carries the committed behaviour.
+  # (forced-loss weight). Defaults match the static cold_usid.yaml values so a run
+  # that does not sweep them carries the committed behaviour.
   forced: 1.0
-  pin_bprime: 0
   usid_rollout: 0.1      # USID open-loop rollout loss weight (model_fit wildcard); 0.1 = committed default
-  opsin_sustain: default  # cold-opsin variant: default (rule) | moderate | high (pre-staged, pinned via opsin_checkpoint_path)
-  n_restarts: 1           # USID multistart count (model_fit wildcard); 1 = single fit (no multistart), committed default
-  k2_treat: free          # USID K2-identification arm (model_fit wildcard); free = K2 trained unconstrained (committed default). Presets: free | kreg_weak | kreg_strong | zero (model_fit._DEFAULT_K2_TREATMENTS)
-  cz_fit_mode: observer_rollout  # USID behavioral-decoder (Cz) fit (model_fit wildcard); observer_rollout = decode-only committed default. Alt: teacher_forced | two_term (decode + 2SLS opto-response blend).
-  cz_lambda: 0.0          # two_term opto-response weight (model_fit wildcard); 0.0 = pure decode == observer_rollout. Inert unless cz_fit_mode == two_term.
-  cz_treat: ridge         # USID behavioral-decoder arm (model_fit wildcard); ridge = post-hoc ridge (committed default). Alt: learned (Phase-3 learnable-Cz finetune; pair with k2_treat=zero). Presets: model_fit._DEFAULT_CZ_TREATMENTS.
-  b1_z: 10.0              # STAGE 2 B1' pretrain z (behavior) weight (model_fit wildcard); 10.0 = cold_usid default. 0 = B1' LFP-only.
-  b1_y: 1.0               # STAGE 2 B1' pretrain y (LFP) anchor weight (model_fit wildcard); 1.0 = cold_usid default. 0 = B1' behavior-only.
-  b2_z: 10.0              # STAGE 4 Cz2/B2' retrain z (behavior) weight (model_fit wildcard); 10.0 = cold_usid default (de-saturation lever).
-  b2_y: 1.0               # STAGE 4 Cz2/B2' retrain y (LFP) anchor weight (model_fit wildcard); 1.0 = cold_usid default.
+  n_restarts: 1           # USID base-fit multistart count (model_fit wildcard); 1 = single fit. >1 = keep best forced-path R2(Y) base, Phase-4 on winner.
+  cz2_warm: ridge         # Phase-4 Cz2 init (model_fit wildcard); ridge = warm-start (committed default) | random = random init.
+  b1_z: 10.0              # Phase 2 {B1',Cz1} pretrain z (behavior) weight (model_fit wildcard); 10.0 = cold_usid default. 0 = LFP-only.
+  b1_y: 1.0               # Phase 2 {B1',Cz1} pretrain y (LFP) anchor weight (model_fit wildcard); 1.0 = cold_usid default. 0 = behavior-only.
+  b2_z: 10.0              # Phase 4 {Cz2,B2'} finetune z (behavior) weight (model_fit wildcard); 10.0 = cold_usid default (de-saturation lever).
+  b2_y: 1.0               # Phase 4 {Cz2,B2'} finetune y (LFP) anchor weight (model_fit wildcard); 1.0 = cold_usid default.
   usid_teacher: 0.1       # USID teacher loss weight (model_fit wildcard; co-overrides loss_weights.teacher + schedule.teacher); 0.1 = cold_usid default. 0 = drop teacher (clean tf-only with forced=0, usid_rollout=0).
   usid_delta: 1.0         # USID delta-of-rollout loss weight (model_fit wildcard; plain leaf, NO schedule); 1.0 = cold_usid default. 0 = isolate the rollout-level axis (no delta-of-rollout conflation).
   latency: false
@@ -191,7 +190,8 @@ cleo_prep:
   opsin_calibration_dir: results/opsin_calibration
 
 calibrate_opsin_plant:
-  target_iopto: 0.05
+  target_iopto: 0.165
+  phim_scale: 5
 
 # Ultra-light overrides: minimal sequences/epochs since this config is for
 # DAG smoke tests, not for producing a usable opsin. See
