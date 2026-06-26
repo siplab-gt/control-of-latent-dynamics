@@ -1,9 +1,13 @@
+import hashlib
 import importlib
+import json
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+import yaml
 from sklearn.linear_model import LinearRegression
 
 from src.data_classes import BaseDataClass
@@ -64,6 +68,62 @@ def _deep_merge_overrides(base: dict, override: dict) -> dict:
         else:
             result[key] = value
     return result
+
+
+# Runtime data arrays merged into `config` by model_fit() — excluded from the config
+# snapshot (they are data, not config, and would bloat/break the YAML).
+_SNAPSHOT_DROP = {
+    "y_mean", "y_std", "u_mean", "u_std", "z_mean", "z_std", "x_mean", "x_std",
+    "Iopto_per_neuron", "channel_neuron_transmittance",
+}
+
+
+def _to_plain(obj):
+    """Recursively coerce AttrDict / namespace / numpy into yaml-safe plain types."""
+    if isinstance(obj, dict):
+        return {str(k): _to_plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_plain(v) for v in obj]
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist() if obj.size <= 32 else f"<ndarray shape={list(obj.shape)}>"
+    if hasattr(obj, "__dict__") and not isinstance(obj, type):
+        return {str(k): _to_plain(v) for k, v in vars(obj).items()}
+    return obj
+
+
+def _dump_config_snapshot(cond_params, base_params, config, lds, lds_path):
+    """Write config_snapshot.yaml into the cell dir: the EXACT merged config this cell
+    used — swept wildcards + base COLD config + resolved USID config — for drift-free
+    reproducibility and the harvest config grid (src/scripts/harvest_config_grid.py).
+
+    Drift-free by construction: it dumps the live merged-config objects the cell trained
+    with, not a hand-curated key list. It is a declared Snakemake output, so the file is
+    ALWAYS written (a stub on failure) — but a snapshot error never raises into the fit.
+    """
+    out = Path(lds_path).parent / "config_snapshot.yaml"
+    try:
+        cold = {k: v for k, v in config.items() if k not in _SNAPSHOT_DROP}
+        snap = {
+            "wildcards": _to_plain(cond_params),                  # swept axes (cell path)
+            "base_params": _to_plain(base_params),                # non-swept params block
+            "cold_config": _to_plain(cold),                       # plant, sys-ID, ctrl, overlays, usid_overrides
+            "usid_config": (getattr(lds, "metadata", {}) or {}).get("resolved_usid_config"),  # resolved usid_hyperparams (None for BRAID)
+        }
+        snap["config_hash"] = hashlib.sha1(
+            json.dumps(snap, sort_keys=True, default=str).encode()
+        ).hexdigest()[:12]
+        with out.open("w") as f:
+            yaml.safe_dump(snap, f, sort_keys=True, default_flow_style=False, allow_unicode=True)
+        log.info(f"Wrote config snapshot ({snap['config_hash']}) -> {out}")
+    except Exception as e:
+        log.warning(f"config snapshot failed; writing stub so the output exists (non-fatal): {e}")
+        try:
+            with out.open("w") as f:
+                yaml.safe_dump({"config_snapshot_error": str(e)}, f)
+        except Exception:
+            pass
 
 
 def model_fit(
@@ -186,6 +246,9 @@ def model_fit(
 
     log.info(f"Saving model to {outfiles.lds_model}")
     save_pkl_gz(lds, outfiles.lds_model)
+
+    # Drift-free config record: dump the exact merged config this cell used.
+    _dump_config_snapshot(cond_params, base_params, config, lds, outfiles.lds_model)
 
     # Write fit-quality analysis atomically with the LDS so the two can't
     # go out of sync. Keeps the CSV fresh whenever model_fit retrains.

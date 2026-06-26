@@ -53,6 +53,20 @@ from src.helpers import sanitize_normalized
 from src.scripts.sys_id_expts import ExptData
 
 
+def _cfg_to_plain(obj):
+    """Recursively convert the loaded USID cfg (nested SimpleNamespace) into plain
+    yaml-safe types, so model_fit.py can fold the resolved usid_hyperparams into the
+    per-cell config_snapshot.yaml (drift-free config recording)."""
+    from types import SimpleNamespace
+    if isinstance(obj, SimpleNamespace):
+        return {k: _cfg_to_plain(v) for k, v in vars(obj).items()}
+    if isinstance(obj, dict):
+        return {k: _cfg_to_plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_cfg_to_plain(v) for v in obj]
+    return obj
+
+
 def fit_lds_to_data(
     YN: np.ndarray,
     ZN: np.ndarray,
@@ -418,6 +432,11 @@ def fit_lds_to_data(
     )
 
     subspace_lds.metadata['k_opto'] = k_opto
+
+    # Full resolved USID config (cold_usid.yaml deep-merged with the wildcard
+    # usid_overrides) — the exact usid_hyperparams this cell trained with. model_fit.py
+    # folds this into the per-cell config_snapshot.yaml for drift-free config recording.
+    subspace_lds.metadata['resolved_usid_config'] = _cfg_to_plain(cfg)
 
     if use_opsin:
         subspace_lds.opsin_model = opsin_model.cpu()

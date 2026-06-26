@@ -135,6 +135,9 @@ def step_from_filename(filename: str) -> str:
         return "sys_id_expts"
     elif "model_fit" in filename:
         return "model_fit"
+    elif "config_snapshot" in filename:
+        # Per-cell config record, written alongside the model_fit outputs.
+        return "model_fit"
     elif "ctrl" in filename:
         return "ctrl_expts"
     else:
@@ -533,6 +536,24 @@ def _stim_rec_tabulate_inputs(wildcards):
     ]
 
 
+def _stim_rec_config_inputs(wildcards):
+    """Per-cell config_snapshot.yaml files for a stim-rec setting — one per model_fit
+    cell (deduped: many ctrl combos share one model_fit cell). Aggregated into the
+    harvest config grid alongside the metrics tabulation."""
+    return sorted({
+        wildcard_path(
+            file="config_snapshot.yaml",
+            setting=wildcards.setting,
+            k=k,
+            m=m,
+            **combo,
+            fill_in_defaults=True,
+        )
+        for combo in _setting_combos_for(wildcards.setting)
+        for k, m in get_usid_kms()
+    })
+
+
 # Stim-rec tabulator: one rule for usid_stim_rec / usid_stim_rec_no_opsin /
 # braid_stim_rec / braid_stim_rec_nonlinear. The setting wildcard is
 # constrained to those names so this rule doesn't shadow
@@ -540,9 +561,11 @@ def _stim_rec_tabulate_inputs(wildcards):
 # different (k, m) grids.
 rule stim_rec_tabulate:
     input:
-        _stim_rec_tabulate_inputs,
+        summaries=_stim_rec_tabulate_inputs,
+        snapshots=_stim_rec_config_inputs,
     output:
         "<results>/{setting}_{task}.csv",
+        config_grid="<results>/{setting}_{task}_config_grid.csv",
     wildcard_constraints:
         # stim-rec settings recognized by this tabulator (distinct from the
         # sufficient_stim / optimal_stim_rec grids). usid_loss_* added 2026-05-30
@@ -550,11 +573,36 @@ rule stim_rec_tabulate:
         setting="usid_stim_rec|usid_stim_rec_no_opsin|braid_stim_rec|braid_stim_rec_nonlinear|usid_loss_base|usid_loss_roll|usid_loss_acf|usid_loss_both",
     localrule: True
     run:
-        dfs = [pd.read_csv(infile) for infile in input]
-        df = pd.concat(dfs, ignore_index=True)
-        print(f"concatenated {wildcards.setting} DFs")
+        # Metrics harvest: concat per-cell summary.csv.
+        df = pd.concat([pd.read_csv(f) for f in input.summaries], ignore_index=True)
         df.to_csv(output[0], index=False)
-        print(f"wrote {wildcards.setting} results to {output[0]}")
+        print(f"wrote {wildcards.setting} results ({len(df)} rows) to {output[0]}")
+        # Config grid (realized grid.csv analog): flatten each cell's config_snapshot.yaml
+        # and union columns. Drift-free — flattens whatever keys the snapshot has, so a new
+        # config/sweep key appears as a new column automatically.
+        import os, yaml
+        def _flat(o, p=""):
+            r = {}
+            if isinstance(o, dict):
+                for k, v in o.items():
+                    r.update(_flat(v, f"{p}{k}."))
+            elif isinstance(o, (list, tuple)):
+                r[p.rstrip(".")] = repr(list(o))
+            else:
+                r[p.rstrip(".")] = o
+            return r
+        rows = []
+        for s in input.snapshots:
+            try:
+                snap = yaml.safe_load(open(s)) or {}
+            except Exception as e:
+                print(f"  [config-grid skip] {s}: {e}")
+                continue
+            row = _flat(snap)
+            row["_cell_dir"] = os.path.dirname(s)
+            rows.append(row)
+        pd.DataFrame(rows).to_csv(output.config_grid, index=False)
+        print(f"wrote {wildcards.setting} config grid ({len(rows)} cells) to {output.config_grid}")
 
 
 rule analyze_ctrl_data:
@@ -1082,6 +1130,7 @@ rule model_fit:
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
         pred_data=wildcard_path("model_fit_pred_data.pkl.gz"),
         analysis_csv=wildcard_path("model_fit_analysis.csv"),
+        config_snapshot=wildcard_path("config_snapshot.yaml"),
     threads: lambda wc: max(1, 8 * gpu_for_model_fit(wc))
     resources:
         slurm_partition=slurm_extra_for_model_fit,
