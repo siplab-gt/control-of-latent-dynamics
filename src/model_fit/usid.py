@@ -20,7 +20,6 @@ from pathlib import Path
 
 import numpy as np
 import yaml
-from sklearn.linear_model import Ridge
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +38,6 @@ import torch
 
 from scripts.usid_subspace_interface import SubspaceLDS, usid_to_subspace_lds
 from scripts.usid_training_core import run_training
-from models.losses import behavioral_recon_loss
 from scripts.usid_data_interface import (
     DataBundle,
     slice_trajectory,
@@ -87,13 +85,12 @@ def fit_lds_to_data(
 
     Steps:
     1. Load USID config from cold_usid.yaml, apply COLD overrides
-    2. Load and normalize natural electrode data using model_fit stats
-    3. Prepare DataBundle from normalized sys_id + natural data
-    4. Train the 4-phase flow via run_training(): Natural -> Phase 2 ({B1', Cz1})
-       -> Unnatural -> (Cz1 frozen)
-    5. Phase 4: finetune {Cz2, B2'} on the y-anchored z-aware loss
-    6. Extract SubspaceLDS, read the trained Cz1/Cz2 off the model
-    7. Return SubspaceLDS with predictions
+    2. Load and normalize natural electrode data (LFP + behavior) using model_fit stats
+    3. Prepare DataBundle with the augmented output ỹ = [LFP | behavior]
+    4. Train the 3-phase flow via run_training(): Natural ({A11,K1,Cy1-incl-behavior})
+       -> Phase 2 ({B1'}) -> Unnatural ({A12,A22,Cy2-incl-behavior,B2'})
+    5. Extract SubspaceLDS — C = LFP rows of Cy, Cz = behavior rows of Cy (a slice, not a matrix)
+    6. Return SubspaceLDS with predictions
 
     Args:
         YN: (T, m) Observations (normalized by model_fit.py)
@@ -155,15 +152,14 @@ def fit_lds_to_data(
     u_mean = config['u_mean']
     u_std = config['u_std']
 
-    # Phase 2 (learnable_cz) trains {B1', Cz1} jointly against the natural behavior — load it normalized
-    # in the controller's Z coordinates (z_mean/z_std are threaded from model_fit.py). Non-COLD path
-    # (learnable_cz absent) leaves natural_ZN None.
-    _staged_cz = bool(cfg.usid_hyperparams.learnable_cz)
-    z_mean = config.get('z_mean') if _staged_cz else None
-    z_std = config.get('z_std') if _staged_cz else None
-    if _staged_cz and (z_mean is None or z_std is None):
-        raise ValueError("learnable_cz=True requires z_mean/z_std in config (thread them from "
-                         "model_fit.py) so Phase 2 can train {B1', Cz1} against natural behavior in Z coords.")
+    # The merged readout Cy predicts the augmented [LFP | behavior]; its behavior rows (the old Cz1)
+    # are learned opto-free in the natural phase against the natural-electrode behavior, so load that
+    # behavior normalized in the controller's Z coordinates (z_mean/z_std threaded from model_fit.py).
+    z_mean = config.get('z_mean')
+    z_std = config.get('z_std')
+    if z_mean is None or z_std is None:
+        raise ValueError("USID model_fit requires z_mean/z_std in config (thread them from "
+                         "model_fit.py) so the natural behavior loads in Z coords for the merged Cy.")
     natural_YN, natural_ZN, nat_yn_clipped = _load_and_normalize_natural_data(
         natural_data_path, y_mean, y_std, z_mean=z_mean, z_std=z_std
     )
@@ -289,10 +285,11 @@ def fit_lds_to_data(
         # output ONLY through B2', so it scores the control-relevant input path the
         # Kalman observer cannot fake. The USID+opsin objective is multimodal (the seed
         # lottery); selecting the base on the forced path picks the best opto dynamics.
-        # The Phase-4 {Cz2, B2'} finetune then runs ONCE on the winner (below) — Y
-        # selects the dynamics, Phase-4 does the Z optimization on that winner.
+        # The winner's merged Cy already carries the jointly-trained behavior decoder, so the
+        # handoff below just slices it — there is no separate post-selection finetune.
         _ms_horizon = int(cfg.usid_hyperparams.cz_observer_horizon)
-        y_tensor_ms = torch.tensor(YN, dtype=torch.float32).unsqueeze(0).to(device)
+        # Full-output observer: the model is teacher-forced on the AUGMENTED [LFP|behavior] output.
+        y_tensor_ms = torch.tensor(np.concatenate([YN, ZN], axis=-1), dtype=torch.float32).unsqueeze(0).to(device)
         u_for_pred_ms = opto_input if use_opsin else UN[:, :k_opto]
         u_tensor_ms = torch.tensor(u_for_pred_ms, dtype=torch.float32).unsqueeze(0).to(device)
         log.info(f"[multistart] {n_restarts} restarts; selector=freerun_r2y "
@@ -333,94 +330,52 @@ def fit_lds_to_data(
     n1, n2 = result.n1, result.n2
     usid_model = result.usid_model
 
-    # Compute predictions on full sys_id data (tensors reused by the Phase-4 Cz finetune).
+    # Compute predictions on full sys_id data (tensors reused by the handoff diagnostics).
+    # Full-output observer: teacher-force on the AUGMENTED [LFP|behavior] output.
     log.info("Computing predictions on sys_id data...")
-    y_tensor = torch.tensor(YN, dtype=torch.float32).unsqueeze(0).to(device)
+    y_tensor = torch.tensor(np.concatenate([YN, ZN], axis=-1), dtype=torch.float32).unsqueeze(0).to(device)
     # Same input space as training: opto_input is raw mW/mm² when use_opsin,
     # z-scored light when not.
     u_for_pred = opto_input if use_opsin else UN[:, :k_opto]
     u_tensor = torch.tensor(u_for_pred, dtype=torch.float32).unsqueeze(0).to(device)
 
     # Teacher-forced (filtered) state — the controller's running observer estimate;
-    # reused as the Phase-4 Cz free-run seeds.
+    # reused as the free-run seeds for the R²(Z)/R²(Y) handoff diagnostics.
     Xhat = _compute_state_trajectory(usid_model, y_tensor, u_tensor, device)
 
     try:
         cz_observer_horizon = int(cfg.usid_hyperparams.cz_observer_horizon)
-        learnable_cz = bool(cfg.usid_hyperparams.learnable_cz)
     except AttributeError as e:
         raise AttributeError(
-            "Missing required USID config attribute "
-            "usid_hyperparams.cz_observer_horizon / learnable_cz."
+            "Missing required USID config attribute usid_hyperparams.cz_observer_horizon."
         ) from e
-    if not learnable_cz:
-        raise ValueError(
-            "fit_lds_to_data requires learnable_cz=True (the COLD path trains Cz in "
-            "Phase 2/4; there is no post-hoc ridge-deploy fallback)."
-        )
 
-    # === Phase 4: learnable Cz — finetune {Cz2, B2'} on the y-anchored z-aware loss ===
-    # Cz1 is FROZEN + authoritative from Phase 2. Warm-start Cz2 on the observer-rollout ridge
-    # residual Z − Cz1·x1, then finetune {Cz2, B2'} with x1 detached in the z-readout (the Y anchor
-    # keeps x1 live). Mutates usid_model (Cz2 + B2') HERE — before the SubspaceLDS extraction — so the
-    # extracted B and the deployed Cz are consistent.
-    z_recon_cfg = cfg.usid_hyperparams.loss.z_recon
-    cz2_warm_start = bool(z_recon_cfg.cz2_warm_start)
-    if cz2_warm_start:
-        # Warm-start Cz2 from the observer-rollout ridge residual Z − Cz1·x1 before finetune.
-        with torch.no_grad():
-            Cz1_fixed = usid_model.Cz1.detach().cpu().numpy()
-        X_pool, Z_idx = _observer_rollout_pool(usid_model, Xhat, u_tensor, device, cz_observer_horizon)
-        z_resid = ZN[Z_idx] - X_pool[:, :n1] @ Cz1_fixed.T
-        Cz2_warm = Ridge(alpha=1.0, fit_intercept=False).fit(X_pool[:, n1:], z_resid).coef_
-        with torch.no_grad():
-            usid_model.Cz2.data.copy_(torch.as_tensor(Cz2_warm, dtype=torch.float32, device=device))
-        log.info("Phase 4: Cz2 ridge warm-start, then finetune {Cz2, B2'}")
-    else:
-        # Random-init arm: skip the ridge — Cz2 stays at its randn*0.1 init (frozen through the
-        # base fit), so the finetune below starts Cz2 from random. Tests whether the warm-start
-        # is load-bearing or Adam can find Cz2 from scratch.
-        log.info("Phase 4: Cz2 RANDOM init (ridge warm-start skipped), then finetune {Cz2, B2'}")
-    # Y-cost guard: forced-path R²(Y) BEFORE the finetune.
-    r2y_pre = _freerun_r2y_heldout(usid_model, Xhat, YN, u_tensor, device, cz_observer_horizon)
-    log.info("Phase 4: learnable-Cz finetune {Cz2, B2'}")
-    cz_phase3_diag = _finetune_cz_phase3(
-        usid_model, Xhat, ZN, YN, u_tensor, device,
-        z_weight=float(z_recon_cfg.z_weight), y_weight=float(z_recon_cfg.y_weight),
-        horizon=int(z_recon_cfg.horizon),
-        steps=int(z_recon_cfg.steps), lr=float(z_recon_cfg.lr),
-        huber_delta=float(z_recon_cfg.huber_delta))
-    cz_phase3_diag['freerun_r2y_pre'] = r2y_pre
-    # Recompute the filtered trajectory with the finetuned B2' so extraction + diagnostics match.
-    Xhat = _compute_state_trajectory(usid_model, y_tensor, u_tensor, device)
-    cz_phase3_diag['freerun_r2y_post'] = _freerun_r2y_heldout(
-        usid_model, Xhat, YN, u_tensor, device, cz_observer_horizon)
-    log.info("[phase4_cz] forced-path R2(Y) %.4f -> %.4f (the Y cost)",
-             r2y_pre, cz_phase3_diag['freerun_r2y_post'])
-
+    # The behavioral decoder is now the behavior row-block of the merged readout Cy, trained jointly
+    # with the dynamics across the natural (Cy1 behavior rows, frozen) and unnatural (Cy2 behavior
+    # rows, with B2') phases — there is no separate Cz finetune. The model output is the augmented
+    # ỹ = [LFP|behavior]; slice each block for Yhat / Zhat / the diagnostics.
     with torch.no_grad():
-        Yhat = usid_model.forward(y_tensor, u_tensor).squeeze(0).cpu().numpy()
+        Yhat_aug = usid_model.forward(y_tensor, u_tensor).squeeze(0).cpu().numpy()
+    Yhat = Yhat_aug[:, :ny]   # LFP block — the electrode output the controller measures
 
-    # === 5. Extract SubspaceLDS (reads the Phase-4 finetuned input map) ===
+    # === 5. Extract SubspaceLDS (C = LFP rows of Cy; Cz = behavior rows of Cy) ===
     log.info("Converting USID to SubspaceLDS...")
     subspace_lds = usid_to_subspace_lds(usid_model)
 
-    # === 6. Post-processing: read the Phase-4 trained behavioral decoder off the model ===
-    # Cz1/Cz2 were trained in Phase 2/4 (Cz2 warm-started from the observer-rollout ridge); B2' was
-    # also finetuned (in the model + the extracted LDS). Read them straight off the model — there is
-    # no post-hoc ridge-deploy fallback.
-    with torch.no_grad():
-        Cz1 = usid_model.Cz1.detach().cpu().numpy()
-        Cz2 = usid_model.Cz2.detach().cpu().numpy()
-    log.info("Using learnable Cz (Phase 4) [z_weight=%.3g, dB2'=%.4g]",
-             cz_phase3_diag.get('z_weight', float('nan')), cz_phase3_diag.get('dB2_norm', float('nan')))
-    subspace_lds.Cz1 = Cz1
-    subspace_lds.Cz2 = Cz2
-    subspace_lds.metadata['cz_phase3'] = cz_phase3_diag
-    # Phase-2 {B1', Cz1} provenance — analyze_model_fit reads this.
+    # === 6. Behavioral decoder = the sliced behavior rows of Cy (set by usid_to_subspace_lds) ===
+    Cz1 = subspace_lds.Cz1
+    Cz2 = subspace_lds.Cz2
+    if Cz1 is None or Cz2 is None:
+        raise ValueError(
+            "fit_lds_to_data expects a behavior partition (nz>0): the COLD path supplies behavior Z, "
+            "so the merged readout must carry behavior rows, but got nz=0."
+        )
+    log.info("Behavioral decoder from merged Cy [nz=%d, ||Cz1||=%.4g, ||Cz2||=%.4g]",
+             Cz1.shape[0], float(np.linalg.norm(Cz1)), float(np.linalg.norm(Cz2)))
+    # Phase-2 {B1'} build provenance — analyze_model_fit reads this.
     subspace_lds.metadata['b1_phase'] = result.b1_phase_diag
-    # Zhat reported for the analysis CSV is the teacher-forced readout (the
-    # state the model is validated against — what R2_model_fit_Z_Zhat measures).
+    # Zhat reported for the analysis CSV is the teacher-forced behavior readout (what
+    # R2_model_fit_Z_Zhat measures): the behavior block of the augmented output == Xhat·[Cz1,Cz2]ᵀ.
     Zhat = Xhat[:, :n1] @ Cz1.T + Xhat[:, n1:] @ Cz2.T
 
     # Load-bearing controllability diagnostic: horizon-resolved free-run R²(Z).
@@ -430,6 +385,9 @@ def fit_lds_to_data(
     subspace_lds.metadata['freerun_r2z'] = _freerun_r2z_by_horizon(
         usid_model, Xhat, ZN, u_tensor, Cz1, Cz2, device, cz_observer_horizon,
     )
+    # Forced-path R²(Y) — the control-relevant open-loop fit the Kalman-masked val loss is blind to.
+    subspace_lds.metadata['freerun_r2y'] = _freerun_r2y_heldout(
+        usid_model, Xhat, YN, u_tensor, device, cz_observer_horizon)
 
     subspace_lds.metadata['k_opto'] = k_opto
 
@@ -498,7 +456,7 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
         "models": {
             "ny": ny,
             "n_clusters": k_opto,
-            "nz": nz,            # behavioral output dim (ZN.shape[1]); used only when learnable_cz
+            "nz": nz,            # behavior partition width (ZN.shape[1]) of the merged readout Cy
         },
         "seed": seed,
     }
@@ -540,9 +498,10 @@ def _load_and_normalize_natural_data(
     format. Cast path is float64 → clip → float32 so raw overflow doesn't
     pre-populate ±inf before the sanitizer can act.
 
-    When (z_mean, z_std) are provided (the learnable_cz path), also load and normalize the natural
-    behavior ``natural_expt.Z`` in the controller's Z coordinates — Phase 2 trains {B1', Cz1} against
-    it. Returns natural_ZN=None when z-stats are absent (the non-COLD path never needs it).
+    When (z_mean, z_std) are provided (behavior supplied), also load and normalize the natural
+    behavior ``natural_expt.Z`` in the controller's Z coordinates — it becomes the behavior block of
+    the augmented natural output, and the natural phase learns the Cy1 behavior rows against it.
+    Returns natural_ZN=None when z-stats are absent (the no-behavior path never needs it).
 
     Returns:
         Tuple of (normalized natural_YN, normalized natural_ZN or None, clip count for summary.csv).
@@ -562,7 +521,8 @@ def _load_and_normalize_natural_data(
         natural_ZN, _ = sanitize_normalized(natural_ZN, "Natural_ZN", log=log)
         natural_ZN = natural_ZN.astype(np.float32)
         log.info(f"Natural behavior: T={natural_ZN.shape[0]}, nz={natural_ZN.shape[1]} "
-                 f"(natural Z for the Phase 2 {{B1', Cz1}} fit)")
+                 f"(natural Z = behavior block of the augmented output; the Cy1 behavior rows are "
+                 f"learned against it in the natural phase)")
 
     log.info(
         f"Natural data: T={natural_YN.shape[0]}, ny={natural_YN.shape[1]}, "
@@ -629,7 +589,27 @@ def _prepare_data_bundle(
             "Missing required USID config attribute for data preparation."
         ) from e
 
-    # --- Time-split natural_YN ONCE into train/val halves, then slice each
+    # Build the AUGMENTED output ỹ = [LFP (ny) | behavior (nz)] used as the training target. The data
+    # layer stacks behavior AFTER the ny LFP channels; the USID model reads both with one Cy1/Cy2 pair
+    # and the observer consumes the LFP block only. nz=0 (no behavior) ⇒ augmented == LFP.
+    # Lock the partition boundary: the model slices behavior at column ny (= cfg.models.ny = sys-id
+    # YN.shape[1]), so BOTH recordings' LFP must be exactly ny-wide, else some LFP channels would be
+    # silently mis-assigned as behavior (the n_out total check below would not catch it).
+    if natural_YN.shape[1] != ny or opto_YN.shape[1] != ny:
+        raise ValueError(
+            f"LFP width mismatch: natural_YN={natural_YN.shape[1]}, opto_YN={opto_YN.shape[1]}, "
+            f"expected ny={ny}. The [LFP|behavior] partition must align with the model's Cy[:ny]."
+        )
+    natural_YZ = np.concatenate([natural_YN, natural_ZN], axis=-1) if natural_ZN is not None else natural_YN
+    opto_YZ = np.concatenate([opto_YN, ZN], axis=-1) if ZN is not None else opto_YN
+    n_out = natural_YZ.shape[-1]
+    if opto_YZ.shape[-1] != n_out:
+        raise ValueError(
+            f"Augmented opto output width {opto_YZ.shape[-1]} != natural width {n_out}: the "
+            "LFP|behavior partition must match between the opto and natural recordings."
+        )
+
+    # --- Time-split natural_YZ ONCE into train/val halves, then slice each
     #     half independently at both nat_seq_len (for Natural phase) and
     #     usid_seq_len (for USID input-free). Guarantees timestamps in
     #     Natural-phase-val never leak into USID-phase-train-input-free
@@ -652,7 +632,7 @@ def _prepare_data_bundle(
             f"window-level split (shared natural_YN across phases, mild "
             f"train/val-leakage across phases)."
         )
-        natural_seqs = slice_trajectory(natural_YN, nat_seq_len, nat_stride)
+        natural_seqs = slice_trajectory(natural_YZ, nat_seq_len, nat_stride)
         if len(natural_seqs) < 2:
             raise ValueError(
                 f"Not enough natural sequences after slicing: {len(natural_seqs)}"
@@ -660,15 +640,15 @@ def _prepare_data_bundle(
         nat_train, nat_val, _, _ = split_sequence_list(
             natural_seqs, nat_train_ratio, nat_val_ratio_derived, "Natural", seed=seed
         )
-        nat_train_raw = natural_YN  # reused for USID input-free; leakage accepted
+        nat_train_raw = natural_YZ  # reused for USID input-free; leakage accepted
         nat_val_raw = None
         log.info(
             f"Natural phase (fallback random split): {len(nat_train)} train, "
             f"{len(nat_val)} val windows"
         )
     else:
-        nat_train_raw = natural_YN[:nat_boundary]
-        nat_val_raw = natural_YN[nat_boundary:]
+        nat_train_raw = natural_YZ[:nat_boundary]
+        nat_val_raw = natural_YZ[nat_boundary:]
         nat_train = slice_trajectory(nat_train_raw, nat_seq_len, nat_stride)
         nat_val = slice_trajectory(nat_val_raw, nat_seq_len, nat_stride)
         if len(nat_train) < 1 or len(nat_val) < 1:
@@ -682,11 +662,11 @@ def _prepare_data_bundle(
             f"{len(nat_train)} train, {len(nat_val)} val windows"
         )
 
-    y_nat_train = stack_sequences_for_multisample(nat_train, ny, "Natural train")
-    y_nat_val = stack_sequences_for_multisample(nat_val, ny, "Natural val")
+    y_nat_train = stack_sequences_for_multisample(nat_train, n_out, "Natural train")
+    y_nat_val = stack_sequences_for_multisample(nat_val, n_out, "Natural val")
 
-    # --- Opto sequences for USID phase (input_driven) ---
-    opto_y_seqs = slice_trajectory(opto_YN, usid_seq_len, usid_stride)
+    # --- Opto sequences for USID phase (input_driven). y windows are the augmented [LFP|behavior]. ---
+    opto_y_seqs = slice_trajectory(opto_YZ, usid_seq_len, usid_stride)
     opto_u_seqs = slice_trajectory(opto_UN, usid_seq_len, usid_stride)
     opto_z_seqs = (slice_trajectory(ZN, usid_seq_len, usid_stride)
                    if ZN is not None else None)
@@ -722,8 +702,8 @@ def _prepare_data_bundle(
     #     nat_train_raw only (the time-split train half) so no USID
     #     input-free samples overlap timestamps in Natural-phase-val.
     if nat_val_raw is None:
-        # Time-split fallback above — accept mild overlap, slice whole natural_YN
-        nat_usid_y_seqs = slice_trajectory(natural_YN, usid_seq_len, usid_stride)
+        # Time-split fallback above — accept mild overlap, slice whole natural_YZ
+        nat_usid_y_seqs = slice_trajectory(natural_YZ, usid_seq_len, usid_stride)
     else:
         nat_usid_y_seqs = slice_trajectory(nat_train_raw, usid_seq_len, usid_stride)
     N_nat_avail = len(nat_usid_y_seqs)
@@ -838,9 +818,9 @@ def _prepare_data_bundle(
     else:
         val_light_raw_list = None
 
-    y_usid_train = stack_sequences_for_multisample(train_y_list, ny, "USID train Y")
+    y_usid_train = stack_sequences_for_multisample(train_y_list, n_out, "USID train Y")
     u_usid_train = stack_sequences_for_multisample(train_u_list, k_opto, "USID train U")
-    y_usid_val = stack_sequences_for_multisample(val_y_list, ny, "USID val Y")
+    y_usid_val = stack_sequences_for_multisample(val_y_list, n_out, "USID val Y")
     u_usid_val = stack_sequences_for_multisample(val_u_list, k_opto, "USID val U")
 
     n_train_if = sum(1 for s in train_source_types if s == 'input_free')
@@ -890,12 +870,9 @@ def _prepare_data_bundle(
         val_light_raw_seqs=val_light_raw_list,
         channel_neuron_transmittance=channel_neuron_transmittance,
         metadata=metadata,
-        # Full-trajectory arrays for the in-core Phase-2 {B1', Cz1} fit (learnable_cz only).
-        natural_full_y=natural_YN,
-        natural_full_z=natural_ZN,
-        opto_full_y=opto_YN,
+        # Full-trajectory AUGMENTED [LFP|behavior] opto arrays for the in-core Phase-2 {B1'} build.
+        opto_full_y=opto_YZ,
         opto_full_u=opto_UN,
-        opto_full_z=ZN,
     )
 
 
@@ -931,79 +908,6 @@ def _compute_state_trajectory(usid_model, y_train, u_train, device):
     x2_traj = torch.stack(x2_traj, dim=1).squeeze(0).cpu().numpy()
 
     return np.hstack([x1_traj, x2_traj])
-
-
-def _observer_rollout_pool(usid_model, Xf, u_tensor, device, horizon):
-    """Build the pooled OBSERVER free-run state the controller plans against.
-
-    The NLMPC/iLQR controllers self-feed ``y = C·x`` (with the Kalman gains K1/K2
-    still applied) when they roll the model forward to plan — see
-    ``src/ctrl/NLMPC.py::_rollout_state``. This is NOT the teacher-forced
-    trajectory ``Xf`` (from ``_compute_state_trajectory``), which feeds the REAL
-    recorded y each step. Fitting Cz on the teacher-forced state therefore
-    decodes Z from a state the controller never actually visits.
-
-    Here we reproduce the controller's planning rollout exactly, reusing the
-    trained model's own ``step`` (single source of the recurrence): from each
-    filtered start ``Xf[t0]`` we free-run ``horizon`` steps, self-feeding the
-    model's predicted y, and collect the state at every rollout depth
-    ``j = 1..horizon`` paired with the true Z at ``t0 + j``. Pooling over all j
-    (rather than fitting at one far horizon) yields one Cz that decodes Z
-    consistently along the whole rollout — the near horizons (which the
-    replanning MPC realizes most) stay intact while the tail is lifted.
-
-    No trial boundaries are available at model_fit time, so rollouts are seeded
-    from every start ``t0 = 0..T-1-horizon`` over the continuous trajectory; a
-    rollout near a (concatenated) trial boundary spans it, which is benign
-    because the photocurrent input is continuous.
-
-    Args:
-        Xf: (T, n1+n2) teacher-forced state trajectory (the controller's running
-            observer estimate), reused as the rollout seeds.
-
-    Returns:
-        Tuple of (X_pool (n_starts*horizon, n1+n2), Z_idx (n_starts*horizon,)),
-        where Z_idx maps each pooled state to its true-Z timestep.
-    """
-    usid_model.eval()
-    n1 = usid_model.n1
-    n2 = usid_model.n2
-    T = Xf.shape[0]
-    if T <= horizon + 1:
-        raise ValueError(
-            f"Sequence too short to build observer-rollout Cz pool: T={T}, "
-            f"cz_observer_horizon={horizon}. Need T > horizon + 1."
-        )
-
-    Xf_t = torch.tensor(Xf, dtype=torch.float32, device=device)
-
-    n_starts = T - horizon
-    with torch.no_grad():
-        with usid_model.natural_model.A_param.cache(), usid_model.A22_param.cache():
-            # Photocurrents for the WHOLE trajectory (matches the GRU memory the
-            # controller carries); index per-start below.
-            photocurrents = usid_model.compute_photocurrents(u_tensor)  # (1, T, k)
-            P = photocurrents.squeeze(0)  # (T, k)
-
-            # Batch all starts: x1/x2 (n_starts, n1/n2); P broadcast per rollout step.
-            x1 = Xf_t[:n_starts, :n1].clone()
-            x2 = Xf_t[:n_starts, n1:].clone()
-            start_idx = torch.arange(n_starts, device=device)
-
-            X_pool = []
-            Z_idx = []
-            for j in range(horizon):
-                # self-fed y = C1·x1 + C2·x2 (== model.step's y_out at this state)
-                yhat = x1 @ usid_model.natural_model.Cy1.T + x2 @ usid_model.Cy2.T
-                P_j = P[start_idx + j]  # photocurrent at absolute time t0+j
-                x1, x2, _ = usid_model.step(x1, x2, yhat, P_j)
-                # state at depth j+1 -> true Z at t0 + (j+1)
-                X_pool.append(torch.cat([x1, x2], dim=1))
-                Z_idx.append(start_idx + (j + 1))
-
-    X_pool = torch.cat(X_pool, dim=0).cpu().numpy()
-    Z_idx = torch.cat(Z_idx, dim=0).cpu().numpy()
-    return X_pool, Z_idx
 
 
 def _vw_r2(ytrue: torch.Tensor, ypred: torch.Tensor) -> float:
@@ -1078,21 +982,25 @@ def _freerun_r2z_by_horizon(usid_model, Xhat, ZN, u_tensor, Cz1, Cz2, device, ho
 
 
 def _forced_freerun_sse(usid_model, Xf_t, Y_t, P, starts, horizon, n1):
-    """Self-fed observer-off forced-path free-run: SSE of output vs YN over depths
+    """Self-fed observer-off forced-path free-run: SSE of the LFP output vs YN over depths
     j=0..horizon-1, with total output variance and sample count for a variance-weighted
     R2. From each filtered seed Xf[t0] the model self-feeds its own y, so opto reaches
     the output ONLY through B2' (via precomputed photocurrents P); the observer K2 acts
     on the self-fed innovation and is inert w.r.t. opto. Linear in B2'. Single source of
-    the free-run rollout used by the Phase-4 forced-path R2(Y) guard (_freerun_r2y_heldout).
+    the free-run rollout used by the forced-path R2(Y) selector (_freerun_r2y_heldout).
+
+    The model's readout is the augmented ỹ = [LFP|behavior]; this scores the LFP block only
+    (YN is LFP), while the self-fed step consumes the full ỹ (it uses the LFP block internally).
     """
+    ny = usid_model.ny  # LFP block width
     x1 = Xf_t[starts, :n1]
     x2 = Xf_t[starts, n1:]
     sse = x1.new_zeros(())
     ytrue_pool = []
     for j in range(horizon):
-        yhat = x1 @ usid_model.natural_model.Cy1.T + x2 @ usid_model.Cy2.T
-        ytrue = Y_t[starts + j]
-        sse = sse + ((yhat - ytrue) ** 2).sum()
+        yhat = x1 @ usid_model.natural_model.Cy1.T + x2 @ usid_model.Cy2.T  # augmented
+        ytrue = Y_t[starts + j]                                             # LFP (YN)
+        sse = sse + ((yhat[..., :ny] - ytrue) ** 2).sum()
         ytrue_pool.append(ytrue)
         x1, x2, _ = usid_model.step(x1, x2, yhat, P[starts + j])
     ytrue_pool = torch.cat(ytrue_pool, dim=0)
@@ -1105,9 +1013,9 @@ def _freerun_r2y_heldout(usid_model, Xhat, YN, u_tensor, device, horizon, *, tra
 
     Self-fed free-run (opto enters only through B2'; the self-fed observer is inert
     w.r.t. opto), evaluated on the held-out start split (the last 1−train_frac of the
-    starts). Phase 4 uses it as the forced-path Y-cost guard — the control-relevant
-    quantity the Kalman-masked validation loss is blind to — before and after the
-    {Cz2, B2'} finetune. Returns nan if too short / empty split.
+    starts). The multistart selector uses it to pick the best base fit, and the handoff
+    stamps it as the control-relevant forced-path R2(Y) the Kalman-masked validation loss
+    is blind to. Returns nan if too short / empty split.
     """
     n1 = usid_model.n1
     T = Xhat.shape[0]
@@ -1126,91 +1034,6 @@ def _freerun_r2y_heldout(usid_model, Xhat, YN, u_tensor, device, horizon, *, tra
         sse, ss_tot, _ = _forced_freerun_sse(
             usid_model, Xf_t, Y_t, P, val_starts, horizon, n1)
         return float(1.0 - sse / ss_tot) if ss_tot > 0 else float("nan")
-
-
-def _finetune_cz_phase3(usid_model, Xhat, ZN, YN, u_tensor, device, *, z_weight, y_weight, horizon,
-                        steps, lr, huber_delta, n_starts_cap=4000):
-    """Phase 4: finetune the learnable behavioral decoder + opto input map.
-
-    Trains EXACTLY ``{Cz2, B2'}`` (Cz1 frozen + authoritative from Phase 2; everything else — A22,
-    Cy2, A12, K2, the natural model, B1', opsin — frozen) on the observer-rollout pool, with the loss
-
-        z_weight · ‖Cz1·x1.detach() + Cz2·x2 − Z‖²   (behavioral readout; Cz1·x1.detach() is a fixed
-                                                        offset, so the gradient flows only to {Cz2, B2'-via-x2})
-              1 · ‖Cy1·x1 + Cy2·x2 − Y‖²              (the RETAINED forced-path Y anchor; x1 LIVE so
-                                                        it constrains B2' through the A12·x2→x1 path)
-
-    With x1 detached in the z-readout, the Z gradient reaches only {Cz2, B2'-via-x2}, keeping the
-    opto-behavior in the unnatural channel; the Y anchor keeps x1 live so it constrains B2' through
-    the A12·x2→x1 path. z_weight ≈ 10× the anchor is the frontier sweet spot (large opto→Z direction
-    gain, ΔR²(Y) ≈ −0.02). Cz2 must be warm-started from the ridge before calling. Mutates usid_model
-    in place; returns a diagnostic dict.
-
-    Seeds are the filtered states ``Xhat`` (the controller's running observer estimate), reused as the
-    self-fed observer-rollout seeds — the same recurrence the NLMPC controller plans against.
-    """
-    n1, n2 = usid_model.n1, usid_model.n2
-    usid_model.eval()
-    for p in usid_model.parameters():
-        p.requires_grad_(False)
-    # Trains EXACTLY {Cz2, B2'} (Cz1 frozen from Phase 2). x1 is detached in the z-readout below so the
-    # Z gradient stays off the x1 recurrence, keeping opto-behavior in the unnatural channel.
-    train_params = [usid_model.Cz2, usid_model.B2_prime]
-    for p in train_params:
-        p.requires_grad_(True)
-    B2_old = usid_model.B2_prime.detach().clone()
-
-    Xf = torch.as_tensor(Xhat, dtype=torch.float32, device=device)
-    ZN_t = torch.as_tensor(ZN, dtype=torch.float32, device=device)
-    YN_t = torch.as_tensor(YN, dtype=torch.float32, device=device)
-    zmask = ZN_t.var(0) > 1e-9
-    ymask = YN_t.var(0) > 1e-9
-    T = Xf.shape[0]
-    n_starts = T - horizon
-    if n_starts < 1:
-        raise ValueError(
-            f"Sequence too short for Phase-3 Cz finetune: T={T}, horizon={horizon}. Need T > horizon."
-        )
-    sidx = (np.linspace(0, n_starts - 1, n_starts_cap).astype(int)
-            if n_starts > n_starts_cap else np.arange(n_starts))
-    start_idx = torch.as_tensor(sidx, device=device)
-    arange_h = torch.arange(1, horizon + 1, device=device)
-    hd = huber_delta if (huber_delta and huber_delta > 0) else None
-    Cy1 = usid_model.natural_model.Cy1
-    opt = torch.optim.Adam(train_params, lr=lr)
-    z0 = zN = float("nan")
-    with usid_model.natural_model.A_param.cache(), usid_model.A22_param.cache():
-        P = usid_model.compute_photocurrents(u_tensor).squeeze(0)        # (T, n_clusters)
-        x1_seed = Xf[start_idx, :n1]
-        x2_seed = Xf[start_idx, n1:]
-        zidx = start_idx.unsqueeze(1) + arange_h.unsqueeze(0)            # (B, horizon) absolute times
-        z_true = ZN_t[zidx]
-        y_true = YN_t[zidx]
-        for it in range(steps):
-            opt.zero_grad()
-            x1r, x2r = usid_model.observer_freerun(x1_seed, x2_seed, P, start_idx, horizon)
-            z_pred = usid_model.decode_z(x1r.detach(), x2r)
-            y_pred = x1r @ Cy1.T + x2r @ usid_model.Cy2.T               # x1 live (full B2' anchor)
-            z_loss = behavioral_recon_loss(z_pred, z_true, channel_mask=zmask, huber_delta=hd)
-            y_loss = behavioral_recon_loss(y_pred, y_true, channel_mask=ymask, huber_delta=hd)
-            (z_weight * z_loss + y_weight * y_loss).backward()
-            opt.step()
-            if it == 0:
-                z0 = z_loss.detach().item()
-            zN = z_loss.detach().item()
-    for p in usid_model.parameters():
-        p.requires_grad_(False)
-    diag = {
-        "learnable_cz": True, "z_weight": float(z_weight), "y_weight": float(y_weight),
-        "cz_train_params": ["Cz2", "B2_prime"], "detach_x1": True,
-        "horizon": int(horizon), "steps": int(steps), "lr": float(lr),
-        "dB2_norm": float((usid_model.B2_prime - B2_old).norm()),
-        "B2_old_norm": float(B2_old.norm()), "B2_new_norm": float(usid_model.B2_prime.norm()),
-        "z_loss_train": [z0, zN],
-    }
-    log.info("[phase4_cz] ||dB2'||=%.4g (|B2'|: %.4g -> %.4g); z_loss %.4g -> %.4g @h%d, z_weight=%.3g",
-             diag["dB2_norm"], diag["B2_old_norm"], diag["B2_new_norm"], z0, zN, horizon, z_weight)
-    return diag
 
 
 

@@ -192,7 +192,8 @@ def model_fit(
     config['u_mean'] = u_mean
     config['u_std'] = u_std
     # z_mean/z_std let usid.py normalize the natural behavior (natural_expt.Z) into the
-    # controller's Z coordinates for the Phase-2 B1'/Cz1 pretrain (learnable_cz path).
+    # controller's Z coordinates — the behavior block of the augmented [LFP|behavior] output
+    # the merged readout Cy predicts.
     config['z_mean'] = z_mean
     config['z_std'] = z_std
 
@@ -303,14 +304,6 @@ if __name__ == "__main__" and "snakemake" in locals():
     # usid_overrides block (e.g. the usid_loss_* loss schedules) is preserved.
     wc_forced = getattr(snakemake.wildcards, "forced", None)
     wc_usid_rollout = getattr(snakemake.wildcards, "usid_rollout", None)
-    # Phase-2 B1'/Cz1 pretrain (b1_recon) + Phase-4 Cz2/B2' finetune (z_recon) z/y weights,
-    # plus the USID teacher loss (which — like rollout — also has a SCHEDULE that must be co-overridden).
-    wc_b1_z = getattr(snakemake.wildcards, "b1_z", None)
-    wc_b1_y = getattr(snakemake.wildcards, "b1_y", None)
-    wc_b2_z = getattr(snakemake.wildcards, "b2_z", None)
-    wc_b2_y = getattr(snakemake.wildcards, "b2_y", None)
-    # cz2_warm routes z_recon.cz2_warm_start (Phase-4 Cz2 ridge warm-start vs random init).
-    wc_cz2_warm = getattr(snakemake.wildcards, "cz2_warm", None)
     wc_usid_teacher = getattr(snakemake.wildcards, "usid_teacher", None)
     # usid_delta routes loss_weights.delta (the delta-of-rollout loss, parallel to
     # the rollout level loss). It has NO schedule entry, so it is a plain leaf write
@@ -320,9 +313,14 @@ if __name__ == "__main__" and "snakemake" in locals():
     # n_restarts routes usid_hyperparams.n_restarts (top-level, NOT a loss leaf): the
     # base-fit multistart count; >1 fits N base models and keeps the best forced-path R2(Y).
     wc_n_restarts = getattr(snakemake.wildcards, "n_restarts", None)
-    if any(w is not None for w in (wc_forced, wc_usid_rollout, wc_b1_z, wc_b1_y,
-                                   wc_b2_z, wc_b2_y, wc_usid_teacher, wc_usid_delta,
-                                   wc_n_restarts, wc_cz2_warm)):
+    # behavior_weight routes the behavior-block weight of the augmented [LFP|behavior] reconstruction
+    # losses — the full-output-observer merge's LFP:behavior balance knob. It is applied to ALL THREE
+    # recon read sites at once: natural Phase-1 (natural_hyperparams.loss), B1' Phase-2
+    # (usid_hyperparams.loss.b1_recon), unnatural Phase-3 (usid_hyperparams.loss). The deep-merge
+    # preserves sibling leaves (b1_recon.lfp_weight, horizon, ...).
+    wc_behavior_weight = getattr(snakemake.wildcards, "behavior_weight", None)
+    if any(w is not None for w in (wc_forced, wc_usid_rollout, wc_usid_teacher,
+                                   wc_usid_delta, wc_n_restarts, wc_behavior_weight)):
         wildcard_usid_overrides = {"usid_hyperparams": {}}
         # forced + usid_rollout + usid_teacher share the loss.{loss_weights,schedule} leaves.
         loss_weights = {}
@@ -349,25 +347,12 @@ if __name__ == "__main__" and "snakemake" in locals():
             schedule["teacher"] = {"mode": "linear", "start": t, "end": t, "epochs": 20}
         if schedule:
             loss_block["schedule"] = schedule
-        # Phase-2 B1'/Cz1 pretrain (b1_recon) + Phase-4 Cz2/B2' finetune (z_recon) z/y weight overrides —
-        # plain leaf writes (these blocks have no schedule). Swept independently here
-        # (default b1 ↔ b2 equal in cold_usid).
-        b1_recon = {}
-        if wc_b1_z is not None:
-            b1_recon["z_weight"] = float(wc_b1_z)
-        if wc_b1_y is not None:
-            b1_recon["y_weight"] = float(wc_b1_y)
-        if b1_recon:
-            loss_block["b1_recon"] = b1_recon
-        z_recon = {}
-        if wc_b2_z is not None:
-            z_recon["z_weight"] = float(wc_b2_z)
-        if wc_b2_y is not None:
-            z_recon["y_weight"] = float(wc_b2_y)
-        if wc_cz2_warm is not None:
-            z_recon["cz2_warm_start"] = (wc_cz2_warm == "ridge")
-        if z_recon:
-            loss_block["z_recon"] = z_recon
+        if wc_behavior_weight is not None:
+            bw = float(wc_behavior_weight)
+            loss_block["behavior_weight"] = bw                              # Phase 3 (unnatural recon)
+            loss_block.setdefault("b1_recon", {})["behavior_weight"] = bw   # Phase 2 (B1' pretrain recon)
+            # Phase 1 (natural recon) lives under natural_hyperparams, not usid_hyperparams:
+            wildcard_usid_overrides["natural_hyperparams"] = {"loss": {"behavior_weight": bw}}
         if loss_block:
             wildcard_usid_overrides["usid_hyperparams"]["loss"] = loss_block
         if wc_n_restarts is not None:
@@ -378,10 +363,9 @@ if __name__ == "__main__" and "snakemake" in locals():
         )
         log.info(
             f"[model_fit] wildcard usid_overrides: forced={wc_forced!r}, "
-            f"usid_rollout={wc_usid_rollout!r}, b1_z={wc_b1_z!r}, "
-            f"b1_y={wc_b1_y!r}, b2_z={wc_b2_z!r}, b2_y={wc_b2_y!r}, "
-            f"usid_teacher={wc_usid_teacher!r}, usid_delta={wc_usid_delta!r}, "
-            f"n_restarts={wc_n_restarts!r}, cz2_warm={wc_cz2_warm!r}"
+            f"usid_rollout={wc_usid_rollout!r}, usid_teacher={wc_usid_teacher!r}, "
+            f"usid_delta={wc_usid_delta!r}, n_restarts={wc_n_restarts!r}, "
+            f"behavior_weight={wc_behavior_weight!r}"
         )
 
     model_fit(

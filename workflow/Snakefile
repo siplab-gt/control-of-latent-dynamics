@@ -53,7 +53,6 @@ wildcard_constraints:
     ctrl_type=_wc_constraint("ctrl_type", extras=("NULL",)),
     ctrl_horizon_ms=r"\d+",
     nlmpc_grad_iters=r"\d+",
-    cz2_warm="ridge|random",
 
 
 rule all:
@@ -88,7 +87,7 @@ steps_params = {
         "signals",
     ],
     "sys_id_expts": ["stim_u_max_mWmm2", "stim_active_frac"],
-    "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "usid_rollout", "n_restarts", "b1_z", "b1_y", "b2_z", "b2_y", "usid_teacher", "usid_delta", "cz2_warm"],
+    "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "usid_rollout", "n_restarts", "usid_teacher", "usid_delta", "behavior_weight"],
     "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
     "analysis": [],
 }

@@ -547,7 +547,7 @@ class NLMPCController(Controller):
             # GRU state by one real timestep, feed photocurrent to the
             # subspace observer step (B' was trained on photocurrent).
             n1 = self.lds.n1
-            y_zscored = self.zscore(y, "y")
+            y_zscored = self._observer_y_zscored(y)
             with torch.no_grad():
                 light_tensor = torch.tensor(
                     u_light.reshape(1, -1), dtype=torch.float32
@@ -567,7 +567,7 @@ class NLMPCController(Controller):
             # z-scored light directly under `use_opsin=False`, so feed
             # u_zscored to the same `_observer_step` slot.
             n1 = self.lds.n1
-            y_zscored = self.zscore(y, "y")
+            y_zscored = self._observer_y_zscored(y)
             u_opto_zscored = self.zscore(
                 np.concatenate([u_light, np.zeros(self.k_task)]), "u"
             )[: self.k_opto]
@@ -618,7 +618,7 @@ class NLMPCController(Controller):
                 self._opsin_hidden = opsin_hidden
                 u_light = self.compute_control(xhat)
                 n1 = self.lds.n1
-                y_zscored = self.zscore(y, "y")
+                y_zscored = self._observer_y_zscored(y)
                 with torch.no_grad():
                     light_t = torch.tensor(
                         u_light.reshape(1, -1), dtype=torch.float32
@@ -634,7 +634,7 @@ class NLMPCController(Controller):
                 xhat = xpred.copy()
                 u_light = self.compute_control(xhat)
                 n1 = self.lds.n1
-                y_zscored = self.zscore(y, "y")
+                y_zscored = self._observer_y_zscored(y)
                 u_opto_zscored = self.zscore(
                     np.concatenate([u_light, np.zeros(self.k_task)]), "u"
                 )[: self.k_opto]

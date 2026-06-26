@@ -233,7 +233,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
                 uopto = self.compute_control(xhat)
                 u = np.concatenate((uopto, self.u_task_zscored(10 * ms)))
                 n1 = self.lds.n1
-                y_zscored = self.zscore(y, "y")
+                y_zscored = self._observer_y_zscored(y)
                 x1_next, x2_next = self._observer_step(
                     self.lds, xpred[:n1], xpred[n1:], y_zscored, uopto,
                 )
@@ -334,6 +334,21 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             x1_next += obs.A12 @ x2
         x2_next = obs.A22 @ x2 + obs.K2 @ innovation + obs.B2_prime @ u_opto_zscored
         return x1_next, x2_next
+
+    def _observer_y_zscored(self, y):
+        """Z-scored observer measurement for the subspace observer step.
+
+        For the USID full-output observer the model is trained on the augmented output [LFP|behavior]
+        and its K1/K2 act on all of it, so the controller appends the REALIZED behavior — the fSNN's
+        ``ng_z.z`` (the reaching that has already occurred this step, observable like the LFP) — to the
+        LFP measurement: [zscore(LFP,'y') | zscore(behavior,'z')]. Triggered when the model's output dim
+        (``lds.m``) exceeds the probe measurement width. LFP-only otherwise (e.g. BRAID, or an
+        LFP-only-observer model)."""
+        y_lfp_z = self.zscore(y, "y")
+        if self.lds.m > y_lfp_z.shape[0]:
+            z_behav = self.cleo_prep.fsnn.ng_z.z[:]
+            return np.concatenate([y_lfp_z, self.zscore(z_behav, "z")])
+        return y_lfp_z
 
     def solve_optimization(self) -> None:
         """Solve the optimization problem with fallback through ordered solvers.
@@ -464,7 +479,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             else:
                 lfp = np.zeros(0)
             y = np.concatenate([counts, lfp])
-            assert y.shape == (self.m,), f"{y.shape=} not equal to {(self.m,)=}"
+            # Full-output observer: the probe measures the LFP block (ny_lfp); the realized behavior is
+            # appended in _observer_y_zscored. ny_lfp == self.m for LFP-only models (BRAID, m_z None/0).
+            ny_lfp = self.m - (self.lds.m_z or 0)
+            assert y.shape == (ny_lfp,), f"{y.shape=} (probe LFP) not equal to LFP width {(ny_lfp,)=}"
 
         if self.state_estimation == "kalman":
             xhat, P = self.update_state(self.xpred, y, self.Ppred)
@@ -486,7 +504,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             self.xpred, self.Ppred = self.predict_state(xhat, u, P)
         elif self.state_estimation == "observer":
             n1 = self.lds.n1
-            y_zscored = self.zscore(y, "y")
+            y_zscored = self._observer_y_zscored(y)
             x1_next, x2_next = self._observer_step(
                 self.lds, self.xpred[:n1], self.xpred[n1:], y_zscored, uopto,
             )

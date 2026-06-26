@@ -59,21 +59,16 @@ def analyze_model_fit(
     for h in (0, 1, 5, 7, 10, 20):
         metrics[f"R2_freerun_Z_h{h}"] = float(fr.get(f"h{h}", np.nan))
     metrics["freerun_Z_predictable_horizon"] = float(fr.get("predictable_horizon", np.nan))
-    # Learnable-Cz Phase 4 finetune of {Cz2, B2'}. cz_learnable flags the COLD path; the deployed
-    # free-run R²(Z) is the R2_freerun_Z_h* above (computed with the trained Cz). cz_r2y_pre/post are
-    # the load-bearing forced-path Y cost of shaping B2'.
-    cz = meta.get("cz_phase3", {}) or {}
-    metrics["cz_learnable"] = bool(cz.get("learnable_cz", False))
-    metrics["cz_z_weight"] = float(cz.get("z_weight", np.nan))
-    metrics["cz_dB2_norm"] = float(cz.get("dB2_norm", np.nan))
-    metrics["cz_r2y_pre"] = float(cz.get("freerun_r2y_pre", np.nan))
-    metrics["cz_r2y_post"] = float(cz.get("freerun_r2y_post", np.nan))
-    metrics["cz_z_weight_y"] = float(cz.get("y_weight", np.nan))
+    # Forced-path R²(Y) — the control-relevant open-loop fit the Kalman-masked val loss is blind to.
+    # The behavior decoder is now the behavior row-block of the merged readout Cy (trained jointly with
+    # the dynamics), so its deployed free-run R²(Z) is the R2_freerun_Z_h* above; there is no separate
+    # Cz-finetune provenance to record.
+    metrics["freerun_r2y"] = float(meta.get("freerun_r2y", np.nan))
 
-    # Phase 2 {B1', Cz1} joint z+y pretrain provenance (learnable_cz COLD path; NaN otherwise).
+    # Phase 2 {B1'} build provenance (block-normalized recon of the augmented [LFP|behavior]).
     b1 = meta.get("b1_phase", {}) or {}
-    metrics["b1_z_weight"] = float(b1.get("b1_z_weight", np.nan))
-    metrics["b1_y_weight"] = float(b1.get("b1_y_weight", np.nan))
+    metrics["b1_lfp_weight"] = float(b1.get("b1_lfp_weight", np.nan))
+    metrics["b1_behavior_weight"] = float(b1.get("b1_behavior_weight", np.nan))
     metrics["b1_dB1_norm"] = float(b1.get("dB1_norm", np.nan))
     metrics["b1_norm_post"] = float(b1.get("B1_new_norm", np.nan))
 

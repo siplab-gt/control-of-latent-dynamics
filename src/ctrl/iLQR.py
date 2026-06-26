@@ -658,7 +658,7 @@ class ILQRController(Controller):
 
         if self.state_estimation == "observer" and self._has_opsin:
             n1 = self.lds.n1
-            y_zscored = self.zscore(y, "y")
+            y_zscored = self._observer_y_zscored(y)
             with torch.no_grad():
                 light_tensor = torch.tensor(
                     u_light.reshape(1, -1), dtype=torch.float32
@@ -674,7 +674,7 @@ class ILQRController(Controller):
             self.xpred = np.concatenate([x1_next, x2_next])
         elif self.state_estimation == "observer" and not self._has_opsin:
             n1 = self.lds.n1
-            y_zscored = self.zscore(y, "y")
+            y_zscored = self._observer_y_zscored(y)
             u_opto_zscored = self.zscore(
                 np.concatenate([u_light, np.zeros(self.k_task)]), "u"
             )[: self.k_opto]
@@ -710,7 +710,7 @@ class ILQRController(Controller):
                 self._opsin_hidden = opsin_hidden
                 u_light = self.compute_control(xhat)
                 n1 = self.lds.n1
-                y_zscored = self.zscore(y, "y")
+                y_zscored = self._observer_y_zscored(y)
                 with torch.no_grad():
                     light_t = torch.tensor(
                         u_light.reshape(1, -1), dtype=torch.float32
@@ -726,7 +726,7 @@ class ILQRController(Controller):
                 xhat = xpred.copy()
                 u_light = self.compute_control(xhat)
                 n1 = self.lds.n1
-                y_zscored = self.zscore(y, "y")
+                y_zscored = self._observer_y_zscored(y)
                 u_opto_zscored = self.zscore(
                     np.concatenate([u_light, np.zeros(self.k_task)]), "u"
                 )[: self.k_opto]

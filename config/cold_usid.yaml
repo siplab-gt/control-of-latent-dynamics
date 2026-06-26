@@ -111,6 +111,10 @@ natural_hyperparams:
         end: 80
         epochs: 30
   loss:
+    behavior_weight: 1.0   # Natural-phase (Phase 1) weight on the behavior block of the augmented
+                           # [LFP|behavior] output (the LFP block is weight 1.0); all output losses are
+                           # block-normalized. 1.0 = equal LFP/behavior. (Synthetic path has no behavior
+                           # and omits this — read via getattr default 1.0.)
     loss_weights:
       delta: 1.0           # Teacher-forced 1-step MSE.
       rollout: 0.1         # Multi-step rollout MSE.
@@ -279,36 +283,19 @@ usid_hyperparams:
                              # x2 driven only by B2'·p (+ autonomous A22). Config-only
                              # (no wildcard): zero (this=true) | regularize (false + k_reg)
                              # | free (false, no k_reg). Default true.
-    z_recon:                 # Phase 4 — finetune of {Cz2,B2'} (Cz1 frozen from Phase 2). Inert unless
-                             # usid_hyperparams.learnable_cz=True (which also requires k2_zero=True).
-                             # Trains on z_weight·decode_Z + y_weight·forced_Y (the retained Y anchor),
-                             # x1 detached in decode_Z. See src/model_fit/usid.py::_finetune_cz_phase3.
-                             # ATTRIBUTION/SCIENCE version (deferred, out of scope): would hold B2'
-                             # minimal (penalize ‖B2'‖/‖Cz2·x2‖) + keep a clean residual split, and
-                             # REQUIRES the D2 colored-noise natural model (not built). See
-                             # scratchpad/natural_unnatural_d2_and_cz_handling.md.
-      z_weight: 10.0         # z/anchor weight ratio; frontier sweet spot ~10 (large opto->Z direction
-                             # gain, ΔR2(Y)≈-0.02). Higher -> more Z, more Y cost.
-      y_weight: 1.0          # forced-path Y anchor weight (was hard-coded 1.0; now in config).
-      cz2_warm_start: true   # Phase-4 Cz2 ridge warm-start (model_fit `cz2_warm` wildcard); false = random init.
-      horizon: 10            # observer-rollout depth (matches the 100ms / 10-sample control horizon).
-                             # NOTE: the model is TRAINED to fit Z at depths 1..10, but the diagnostic
-                             # R2_freerun_Z_h* / cz_r2y_* are also reported at h20 (cz_observer_horizon)
-                             # — beyond the training horizon. Compare learned-vs-ridge at h10 (the honest
-                             # apples-to-apples horizon); h20 understates the learned arm.
-      steps: 400             # Adam finetune steps over the (subsampled) rollout pool
-      lr: 5.0e-3
-      huber_delta: 0.0       # 0 -> MSE; >0 -> Huber on the kept (variance-carrying) channels
-    b1_recon:                # Phase 2 — {B1',Cz1} pretrain (in run_training, BEFORE the unnatural
-                             # matrices). Trains B1' and Cz1 jointly (x2≡0; pure natural-path readouts)
-                             # on z_weight·decode_Z(Cz1·x1) + y_weight·forced_Y(Cy1·x1) so the natural
-                             # opto input map is shaped by behavior (z) and LFP (y); Cz1 is frozen after
-                             # this phase. Independent z/y weights let us tune B1' to be more z- or
-                             # y-faithful; set EQUAL to z_recon for now. Inert unless learnable_cz=True.
-                             # ATTRIBUTION version would BOUND B1' (norm / typical-regime cap); see the
-                             # scratchpad reference above.
-      z_weight: 10.0
-      y_weight: 1.0
+    behavior_weight: 1.0     # Unnatural-phase (Phase 3) weight on the behavior block of the augmented
+                             # [LFP|behavior] output (the LFP block is weight 1.0). All output losses are
+                             # block-normalized so the modalities balance regardless of channel count;
+                             # the forced (observer-off) term scores behavior too — the {Cy2-behavior,B2'}
+                             # de-saturation lever, in-phase. 1.0 = equal LFP/behavior.
+    b1_recon:                # Phase 2 — {B1'} build (in run_training, BEFORE the unnatural matrices).
+                             # Trains ONLY B1' (Cy1, incl. its frozen behavior rows, is fixed from the
+                             # natural phase) on a block-normalized recon of the augmented [LFP|behavior]
+                             # output with x2≡0, so the natural opto input map is shaped by both LFP and
+                             # behavior. ATTRIBUTION version would BOUND B1' (norm / typical-regime cap);
+                             # see scratchpad/natural_unnatural_d2_and_cz_handling.md.
+      lfp_weight: 1.0        # LFP block weight in the Phase-2 recon
+      behavior_weight: 1.0   # behavior block weight in the Phase-2 recon
       horizon: 10
       steps: 400
       lr: 5.0e-3
@@ -371,23 +358,17 @@ usid_hyperparams:
   train_split: 0.7
   val_split: 0.15
   subset_ratio: 0.5
-  # Cz2 ridge warm-start horizon. The Phase 4 finetune of {Cz2,B2'} warm-starts Cz2
-  # from a ridge fit on the observer free-run state POOLED over rollout horizons
-  # j=1..cz_observer_horizon — the states the controller actually visits when
-  # planning. 20 = the 200 ms control horizon at subsample_factor=10 (10 ms) on the
-  # controller grid (ctrl_horizon_ms=200). Pooling j=1..H (vs a single far horizon)
-  # keeps the near-horizon readout — which the replanning MPC realizes most — intact.
+  # Horizon for the handoff free-run controllability diagnostics (R²(Z) / R²(Y) by
+  # depth) — the observer free-run depth the controller plans against. 20 = the 200 ms
+  # control horizon at subsample_factor=10 (10 ms) on the controller grid
+  # (ctrl_horizon_ms=200). Not a training knob — the behavior decoder is now the behavior
+  # row-block of the merged readout Cy, trained jointly with the dynamics (no Cz finetune).
   cz_observer_horizon: 20
-  # Single-flow learnable behavioral decoder. Structural gate: True in COLD (behavioral
-  # Z present); False/absent in the standalone synthetic path (no Z). When True, Cz1 is
-  # trained jointly with B1' in Phase 2, then frozen; Cz2/B2' are finetuned in Phase 4
-  # on the y-anchored z-aware loss (z_recon) with a ridge warm-start for Cz2. Requires
-  # k2_zero=True, use_opsin=True (asserted in usid.py). COLD-only.
-  learnable_cz: true
   # Base-fit multistart count (COLD; the model_fit `n_restarts` wildcard). >1 fits N
   # independent base models (distinct torch init seed, same sys-ID data) and keeps the
-  # one with the best held-out forced-path R²(Y); the Phase-4 {Cz2,B2'} finetune then
-  # runs ONCE on the winner. Mitigates the multimodal USID+opsin seed lottery. 1 = single fit.
+  # one with the best held-out forced-path R²(Y); the handoff then slices that winner's
+  # merged Cy (no separate finetune). Mitigates the multimodal USID+opsin seed lottery.
+  # 1 = single fit.
   n_restarts: 1
 
 # (oracle_usid omitted — architecturally incompatible with COLD; same as oracle_natural.)

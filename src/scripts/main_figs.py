@@ -297,11 +297,14 @@ def main(
         for ax in hm_axs[:, 1:].flatten():
             ax.set(ylabel="")
 
-        hm_fig.colorbar(
-            hm_axs[0, 0].collections[0],
-            ax=hm_axs,
-            label=mean_or_std + " " + colorbar_label,
-        )
+        # Skip the colorbar when every heatmap panel was empty (e.g. a single-corner sweep where
+        # only `seed` varies → no 2-D structure → all subsets skipped → no collection to map).
+        if len(hm_axs[0, 0].collections) > 0:
+            hm_fig.colorbar(
+                hm_axs[0, 0].collections[0],
+                ax=hm_axs,
+                label=mean_or_std + " " + colorbar_label,
+            )
 
     # main fig: choose between lineplots and heatmaps for the grid
     if main_fig_plot_type == "lineplots":
@@ -325,7 +328,14 @@ def main(
         (fig_hm_std, outfiles.heatmaps_std),
     ]:
         for f in files:
-            fig.savefig(f)
+            # WebP caps each side at 16383 px; large sweep figures overflow at the default dpi.
+            # Cap the dpi for .webp so the longest side stays under the limit; PDF is unaffected.
+            _kw = {}
+            if str(f).endswith(".webp"):
+                _max_in = max(fig.get_size_inches())
+                if _max_in > 0:
+                    _kw["dpi"] = max(1, min(int(fig.dpi), int(16000 / _max_in)))
+            fig.savefig(f, **_kw)
             print(f"Saving {f}")
 
 

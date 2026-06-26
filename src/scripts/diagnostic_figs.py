@@ -223,7 +223,15 @@ def main(cfg, results_csvs, outfiles):
             )
 
     for outfile in outfiles:
-        fig.savefig(outfile)
+        # WebP caps each side at 16383 px; large multi-panel sweep figures (many seeds/metrics)
+        # overflow at the default dpi. Cap the dpi for .webp so the longest side stays under the
+        # limit; PDF (vector) is unaffected.
+        _kw = {}
+        if str(outfile).endswith(".webp"):
+            _max_in = max(fig.get_size_inches())
+            if _max_in > 0:
+                _kw["dpi"] = max(1, min(int(fig.dpi), int(16000 / _max_in)))
+        fig.savefig(outfile, **_kw)
         print(f"Saved {outfile}")
 
 
