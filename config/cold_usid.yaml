@@ -371,4 +371,11 @@ usid_hyperparams:
   # 1 = single fit.
   n_restarts: 1
 
+  # Observer fold (model_fit wildcard). false (default) = LFP-only observer: K1/K2's behavior columns
+  # are pinned to 0 so K acts on the LFP block only (the merged-Cy output is unchanged; the controller
+  # still measures behavior but K ignores it). true = fold the realized behavior into the observer —
+  # K1/K2 + innovation act on the full [LFP|behavior] output. Preference is false; true kept as a
+  # temporary axis to A/B fold vs no-fold in one run.
+  fold_behavior: false
+
 # (oracle_usid omitted — architecturally incompatible with COLD; same as oracle_natural.)

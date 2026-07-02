@@ -60,6 +60,7 @@ params:
   usid_teacher: 0.1       # USID teacher loss weight (model_fit wildcard; co-overrides loss_weights.teacher + schedule.teacher); 0.1 = cold_usid default. 0 = drop teacher (clean tf-only with forced=0, usid_rollout=0).
   usid_delta: 1.0         # USID delta-of-rollout loss weight (model_fit wildcard; plain leaf, NO schedule); 1.0 = cold_usid default. 0 = isolate the rollout-level axis (no delta-of-rollout conflation).
   behavior_weight: 1.0    # Behavior-block weight in the augmented [LFP|behavior] reconstruction losses (model_fit wildcard; routes into the natural Phase-1, B1' Phase-2, and unnatural Phase-3 recons). 1.0 = equal LFP/behavior blocks. >1 upweights behavior reconstruction.
+  fold_behavior: 0        # observer fold (model_fit wildcard): 0 = LFP-only observer (default; K's behavior columns pinned 0, behavior a pure readout); 1 = behavior folded into the K1/K2 observer (full-output).
   latency: true
   ctrl_type: LQMPC
   ctrl_horizon_ms: 300
