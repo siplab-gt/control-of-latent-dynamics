@@ -479,10 +479,19 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             else:
                 lfp = np.zeros(0)
             y = np.concatenate([counts, lfp])
-            # Full-output observer: the probe measures the LFP block (ny_lfp); the realized behavior is
-            # appended in _observer_y_zscored. ny_lfp == self.m for LFP-only models (BRAID, m_z None/0).
-            ny_lfp = self.m - (self.lds.m_z or 0)
-            assert y.shape == (ny_lfp,), f"{y.shape=} (probe LFP) not equal to LFP width {(ny_lfp,)=}"
+            # Validate the probe against the model output. The probe measures the LFP
+            # block; _observer_y_zscored appends the realized behavior iff lds.m exceeds
+            # the probe width (the USID full-output observer, C = [LFP | behavior]).
+            # LFP-only models (BRAID: behavior lives in a SEPARATE Cz decoder, not in C)
+            # have m_z>0 yet append nothing, so m_z must NOT be blindly subtracted — that
+            # under-counted the LFP width (m-m_z) and crashed BRAID's NULL/OL baseline.
+            # The behavior count implied by the probe must be exactly 0 (LFP-only) or m_z
+            # (full-output), matching the lds.m > probe-width test in _observer_y_zscored.
+            n_appended = self.m - y.shape[0]
+            assert n_appended in (0, self.lds.m_z or 0), (
+                f"{y.shape=} (probe LFP) vs model output dim {self.m=} and behavior dim "
+                f"{self.lds.m_z=}: implied appended rows {n_appended} is neither 0 nor m_z"
+            )
 
         if self.state_estimation == "kalman":
             xhat, P = self.update_state(self.xpred, y, self.Ppred)
