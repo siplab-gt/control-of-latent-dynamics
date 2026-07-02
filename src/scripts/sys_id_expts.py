@@ -16,6 +16,7 @@ from src.helpers import (
     setup_logging,
 )
 from src.opsin_monitoring import attach_opsin_monitors, extract_per_neuron
+from src.stim import build_stim_sampler
 from src.scripts.cleo_prep import CleoPrep
 
 log = logging.getLogger(__name__)
@@ -169,6 +170,24 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
     else:
         n_trials = int(base_params.n_trials_sys_id_max)
 
+    # Opto excitation, selected by the `stim_method` wildcard (src.stim):
+    #   oed -- Fisher-information-optimal pulsed/graded light at the operating point
+    #     (differential_evolution optimizer); white -- legacy white-lognormal×Bernoulli,
+    #     duty tuned to the budget; chirp -- log-frequency sweep at the operating point.
+    # All share the actuator cap (stim_u_max_mWmm2) and operating point
+    # (stim_budget_mWmm2 = mean light), so methods compare at a matched operating point.
+    # natural_only runs zero light, so no sampler is needed.
+    command_dt_ms = float((cleo_prep.fsnn.dt * base_params.subsample_factor) / b2.ms)
+    if natural_only:
+        stim_sampler = None
+    else:
+        stim_rng = np.random.default_rng(
+            seed_everything(int(cond_params["seed"]), "sys_id_stim")
+        )
+        stim_sampler = build_stim_sampler(
+            cond_params.stim_method, cond_params, base_params, k, command_dt_ms, stim_rng
+        )
+
     spike_counts = []
 
     class SysIDProcessor(cleo.LatencyIOProcessor):
@@ -183,25 +202,10 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
                 # Zero irradiance → zero photocurrent → pure natural dynamics
                 value = np.zeros(k) * b2.mwatt / b2.mm2
             else:
-                # Per-channel lognormal opto drive, parameterized by two
-                # sys_id_expts wildcards (there is no named "regime" — the regime
-                # is a point in this 2-D knob space):
-                #   stim_u_max_mWmm2 — amplitude clip AND lognormal spread
-                #     (u_logstd = log(cap)/3). Sub-saturating when below the opsin
-                #     half-saturation (i_half≈49 mW/mm²) → clean linear B'/Cz2 fit.
-                #   stim_active_frac — per-channel per-step Bernoulli ON-probability
-                #     (sparsity); <1 decorrelates channels so the sys-ID covariance
-                #     resolves individual opto→Z directions.
-                # Median is typical_Irr0. Defaults (30, 0.5) give the control-regime
-                # excitation the validated USID+opsin runs use; (75, 1.0) reproduces
-                # the legacy dense saturating drive.
-                stim_u_max = float(cond_params.stim_u_max_mWmm2)
-                p_active = float(cond_params.stim_active_frac)
-                u_logmean = np.log(base_params.typical_Irr0_mWmm2)
-                u_logstd = np.log(stim_u_max) / 3
-                amp = rng.lognormal(u_logmean, u_logstd, k).clip(0, stim_u_max)
-                amp = amp * (rng.random(k) < p_active)
-                value = amp * b2.mwatt / b2.mm2
+                # OED-derived per-channel light (mW/mm²) for this command step.
+                # The renewal-process sampler holds graded-amplitude bursts separated
+                # by recovery gaps; see src.opsin_oed.StimDesign.
+                value = stim_sampler.step() * b2.mwatt / b2.mm2
             return {"light array": value}, t_samp
 
     cleo_prep.sim.set_io_processor(

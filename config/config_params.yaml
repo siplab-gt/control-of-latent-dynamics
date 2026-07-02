@@ -41,12 +41,15 @@ params:
   signals: lfp
   n_trials_sys_id: 100
   model_task_inputs: false
-  # sys-ID opto excitation (sys_id_expts wildcards). stim_u_max_mWmm2 = amplitude
-  # cap (mW/mm²) + lognormal spread; stim_active_frac = per-channel per-step Bernoulli
-  # on-prob (sparsity). Defaults = control-regime excitation; 75 / 1.0 = legacy dense
-  # saturating drive.
-  stim_u_max_mWmm2: 30
-  stim_active_frac: 0.5
+  # sys-ID opto excitation (sys_id_expts wildcards). stim_method selects the generator
+  # (src.stim): oed = Fisher-information optimal (differential_evolution) pulsed-graded;
+  # white = legacy white-lognormal×Bernoulli, duty tuned to the budget; chirp =
+  # log-frequency sweep at the operating point.
+  #   stim_u_max_mWmm2  = actuator amplitude cap (mW/mm²); light in [0, u_max].
+  #   stim_budget_mWmm2 = mean-light budget = operating point (lower → more de-saturated).
+  stim_method: oed
+  stim_u_max_mWmm2: 75
+  stim_budget_mWmm2: 6
   # USID model_fit-level loss-weight wildcards (route into usid_overrides via
   # src/scripts/model_fit.py): forced = usid_hyperparams.loss.loss_weights.forced
   # (forced-loss weight). Defaults match the static cold_usid.yaml values so a run

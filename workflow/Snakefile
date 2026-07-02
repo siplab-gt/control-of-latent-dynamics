@@ -86,7 +86,7 @@ steps_params = {
         "beam_width_um",
         "signals",
     ],
-    "sys_id_expts": ["stim_u_max_mWmm2", "stim_active_frac"],
+    "sys_id_expts": ["stim_u_max_mWmm2", "stim_budget_mWmm2", "stim_method"],
     "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "usid_rollout", "n_restarts", "usid_teacher", "usid_delta", "behavior_weight"],
     "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
     "analysis": [],
@@ -861,11 +861,12 @@ def get_natural_data_input(wildcards):
         return []
     # natural_electrode is opto-free (zero irradiance) → stim-independent. Pin the
     # sys-ID stim wildcards to their defaults so it is built once and shared across
-    # a stim sweep instead of re-simulated per (stim_u_max_mWmm2, stim_active_frac).
+    # a stim sweep instead of re-simulated per (stim_u_max_mWmm2, stim_budget_mWmm2).
     return wildcard_path(
         "natural_electrode_data.pkl.gz",
         stim_u_max_mWmm2=config["params"]["stim_u_max_mWmm2"],
-        stim_active_frac=config["params"]["stim_active_frac"],
+        stim_budget_mWmm2=config["params"]["stim_budget_mWmm2"],
+        stim_method=config["params"]["stim_method"],
     )
 
 
@@ -1181,6 +1182,12 @@ n_trials_sys_id_max = max(_sweep_or_default("n_trials_sys_id"))
 rule sys_id_expts:
     input:
         wildcard_path("cleo_prep.pkl.gz"),
+        # The opto-stim method (src.stim oed) reads the calibrated opsin
+        # saturation curve to build the Fisher-information surrogate. Declare it so
+        # Snakemake serializes opsin_saturation_curve -> sys_id (without this the
+        # surrogate read races the rule's rewrite of the JSON -> FileNotFoundError).
+        # natural_electrode_expts inherits this input harmlessly (opto-free, never reads it).
+        saturation_curve="results/opsin_calibration/chr2_4s_fsnn_saturation_curve.json",
         configfiles=configfile_inputs_excluding_sweeps,
     params:
         step_cfg("cleo_prep", "expts", "sys_id_expts"),
