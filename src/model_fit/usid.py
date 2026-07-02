@@ -278,6 +278,7 @@ def fit_lds_to_data(
             trained_opsin_model=opsin_model,
             no_opsin=not use_opsin,
         )
+        result_optodr2z = result   # no selection at n_restarts=1; both handoffs == the single fit
     else:
         # Multistart over the BASE fit: fit n_restarts independent base models
         # (distinct torch init seed, same sys-ID data) and keep the one with the best
@@ -292,7 +293,7 @@ def fit_lds_to_data(
         y_tensor_ms = torch.tensor(np.concatenate([YN, ZN], axis=-1), dtype=torch.float32).unsqueeze(0).to(device)
         u_for_pred_ms = opto_input if use_opsin else UN[:, :k_opto]
         u_tensor_ms = torch.tensor(u_for_pred_ms, dtype=torch.float32).unsqueeze(0).to(device)
-        log.info(f"[multistart] {n_restarts} restarts; selector=freerun_r2y "
+        log.info(f"[multistart] {n_restarts} restarts; selectors=freerun_r2y AND opto_dr2z "
                  f"(horizon={_ms_horizon})")
         candidates = []
         for i in range(n_restarts):
@@ -306,13 +307,26 @@ def fit_lds_to_data(
             )
             Xh_i = _compute_state_trajectory(r_i.usid_model, y_tensor_ms, u_tensor_ms, device)
             r2y = _freerun_r2y_heldout(r_i.usid_model, Xh_i, YN, u_tensor_ms, device, _ms_horizon)
-            score = r2y if (r2y == r2y) else float("-inf")   # nan -> -inf
-            log.info(f"[multistart] restart {i}: freerun_r2y={r2y:.6g}")
-            candidates.append((score, i, r_i, r2y))
-        _, i_sel, result, metric_sel = max(candidates, key=lambda c: c[0])
-        log.info(f"[multistart] selected restart {i_sel}/{n_restarts} "
-                 f"(freerun_r2y={metric_sel:.6g}); "
-                 f"all={[(c[1], round(c[3], 6)) for c in candidates]}")
+            with torch.no_grad():
+                ny_i = r_i.usid_model.ny
+                Cz1_i = r_i.usid_model.natural_model.Cy1[ny_i:].detach()
+                Cz2_i = r_i.usid_model.Cy2[ny_i:].detach()
+            dr2z = _freerun_opto_dr2z_heldout(
+                r_i.usid_model, Xh_i, ZN, u_tensor_ms, Cz1_i, Cz2_i, device, _ms_horizon)
+            log.info(f"[multistart] restart {i}: freerun_r2y={r2y:.6g} opto_dr2z={dr2z:.6g}")
+            candidates.append((i, r_i, r2y, dr2z))
+        # Two selectors over the SAME bases (one training): r2y is the existing default (primary
+        # handoff); opto_dr2z is the control-relevant opto-isolating metric (second handoff). The
+        # control-level usid_select wildcard then loads whichever -- a paired, re-train-noise-free
+        # selector comparison. Per-restart opto_dr2z is logged for the close-out read (does any
+        # restart of a hard seed carry a correctly-signed, positive-opto fit?).
+        def _sc(v):
+            return v if v == v else float("-inf")   # nan -> -inf
+        i_r2y, result, _, _ = max(candidates, key=lambda c: _sc(c[2]))
+        i_opto, result_optodr2z, _, _ = max(candidates, key=lambda c: _sc(c[3]))
+        log.info(f"[multistart] r2y-pick=restart {i_r2y}, opto_dr2z-pick=restart {i_opto}; "
+                 f"per-restart (r2y, opto_dr2z)="
+                 f"{[(c[0], round(_sc(c[2]), 5), round(_sc(c[3]), 5)) for c in candidates]}")
     log.info(f"Training complete: n1={result.n1}, n2={result.n2}")
 
     # === 4b. Diagnostics (optional; never feed the LDS handoff or model_fit CSV) ===
@@ -405,6 +419,33 @@ def fit_lds_to_data(
     # lds.sanitize_clip_counts → analyze_model_fit → summary.csv. Y/Z/U/X
     # counts are added in model_fit.py after we return.
     subspace_lds.sanitize_clip_counts = {"Natural_YN": int(nat_yn_clipped)}
+    subspace_lds.metadata['selector'] = 'r2y'
+
+    # Second handoff for the control-level usid_select='opto_dr2z' arm: the restart the
+    # opto-isolating selector picked, from the SAME training as the primary (exact pairing).
+    # For n_restarts<=1 (or coincident picks) it equals the primary -> sentinel 'SAME', and
+    # model_fit.py saves the primary to the second path too. model_fit.py pops this, stamps the
+    # same normalization stats + its own linreg (from Xhat_opto), and writes model_fit_lds_optodr2z.
+    if result_optodr2z is result:
+        subspace_lds.metadata['_optodr2z_handoff'] = 'SAME'
+    else:
+        # The primary handoff above moved the SHARED frozen opsin to CPU (opsin_model.cpu(),
+        # in place); restore it to the device for this second free-run, since the rest of
+        # result_optodr2z.usid_model is still on device. Moved back to CPU below for the saved lds.
+        if use_opsin:
+            opsin_model.to(device)
+        Xhat_opto = _compute_state_trajectory(
+            result_optodr2z.usid_model, y_tensor, u_tensor, device)
+        lds_opto = usid_to_subspace_lds(result_optodr2z.usid_model)
+        lds_opto.metadata['k_opto'] = k_opto
+        lds_opto.metadata['resolved_usid_config'] = _cfg_to_plain(cfg)
+        lds_opto.metadata['selector'] = 'opto_dr2z'
+        if use_opsin:
+            lds_opto.opsin_model = opsin_model.cpu()
+            lds_opto.metadata['use_opsin'] = True
+            lds_opto.metadata['max_light_mWmm2'] = float(config['expts']['u_max_mWmm2'])
+        lds_opto.sanitize_clip_counts = {"Natural_YN": int(nat_yn_clipped)}
+        subspace_lds.metadata['_optodr2z_handoff'] = (lds_opto, Xhat_opto)
 
     # Note: model_fit.py stamps normalization stats (y_mean, y_std, etc.) and
     # linreg_lds2fsnn onto the returned object after we return. The controller
@@ -981,13 +1022,71 @@ def _freerun_r2z_by_horizon(usid_model, Xhat, ZN, u_tensor, Cz1, Cz2, device, ho
     return out
 
 
+def _freerun_opto_dr2z_heldout(usid_model, Xhat, ZN, u_tensor, Cz1, Cz2, device, horizon,
+                               *, train_frac=0.8):
+    """Held-out OPTO CONTRIBUTION to behavior: R2(Z | opto) - R2(Z | opto=0), free-run.
+
+    The control-relevant model-selection metric. From the held-out start split, free-run the
+    predictor (self-fed, observer-off) TWICE from the SAME filtered seeds Xhat[t0] over the
+    control horizon -- once with the real photocurrents P, once with P=0 (which removes the
+    ENTIRE opto path, B1' into x1 AND B2' into x2) -- and difference the two free-run R2(Z).
+    Both share the same true Z and the same ~94-96% natural-driven Z variance, so the difference
+    cancels the natural component and leaves a sign-sensitive estimate of the 3-6% opto component:
+    a wrong-signed-opto fit scores NEGATIVE (opto HURTS behavior prediction). This is exactly the
+    quantity the natural-dominated total R2(Y)/R2(Z) selector is blind to (it merely reshuffled).
+    """
+    n1 = usid_model.n1
+    T = Xhat.shape[0]
+    horizon = int(min(horizon, T - 2))
+    if horizon < 1:
+        return float("nan")
+    Cz1_t = torch.as_tensor(Cz1, dtype=torch.float32, device=device)
+    Cz2_t = torch.as_tensor(Cz2, dtype=torch.float32, device=device)
+    Xf_t = torch.as_tensor(Xhat, dtype=torch.float32, device=device)
+    Z_t = torch.as_tensor(ZN, dtype=torch.float32, device=device)
+    n_starts = T - horizon
+    n_train = max(1, int(round(train_frac * n_starts)))
+    val = torch.arange(n_train, n_starts, device=device)
+    if val.numel() == 0:
+        return float("nan")
+    usid_model.eval()
+    with torch.no_grad(), usid_model.natural_model.A_param.cache(), usid_model.A22_param.cache():
+        P = usid_model.compute_photocurrents(u_tensor).squeeze(0)  # (T, k)
+
+        def _r2z(P_use):
+            x1 = Xf_t[val, :n1].clone()
+            x2 = Xf_t[val, n1:].clone()
+            sse = None                       # per-Z-dim SSE (summed over starts and depths)
+            ztrue_pool = []
+            for j in range(horizon):
+                zhat = x1 @ Cz1_t.T + x2 @ Cz2_t.T
+                ztrue = Z_t[val + j]
+                d = ((zhat - ztrue) ** 2).sum(dim=0)
+                sse = d if sse is None else sse + d
+                ztrue_pool.append(ztrue)
+                yhat = x1 @ usid_model.natural_model.Cy1.T + x2 @ usid_model.Cy2.T
+                x1, x2, _ = usid_model.step(x1, x2, yhat, P_use[val + j])
+            zt = torch.cat(ztrue_pool, dim=0)
+            sst = ((zt - zt.mean(dim=0)) ** 2).sum(dim=0)   # per-Z-dim total variance
+            mask = sst > 0                   # drop constant Z dims (e.g. the reaching 3rd dim), as _vw_r2 does
+            if not bool(mask.any()):
+                return float("nan")
+            return float(1.0 - sse[mask].sum() / sst[mask].sum())
+
+        r2_opto = _r2z(P)
+        r2_zero = _r2z(torch.zeros_like(P))
+    if r2_opto != r2_opto or r2_zero != r2_zero:
+        return float("nan")
+    return r2_opto - r2_zero
+
+
 def _forced_freerun_sse(usid_model, Xf_t, Y_t, P, starts, horizon, n1):
     """Self-fed observer-off forced-path free-run: SSE of the LFP output vs YN over depths
     j=0..horizon-1, with total output variance and sample count for a variance-weighted
-    R2. From each filtered seed Xf[t0] the model self-feeds its own y, so opto reaches
-    the output ONLY through B2' (via precomputed photocurrents P); the observer K2 acts
-    on the self-fed innovation and is inert w.r.t. opto. Linear in B2'. Single source of
-    the free-run rollout used by the forced-path R2(Y) selector (_freerun_r2y_heldout).
+    R2. From each filtered seed Xf[t0] the model self-feeds its own y, so opto reaches the
+    output through the input couplings B1' (into x1) and B2' (into x2) via the precomputed
+    photocurrents P; the observer K is inert w.r.t. opto on the self-fed innovation. Linear
+    in (B1', B2'). Single source of the free-run rollout used by _freerun_r2y_heldout.
 
     The model's readout is the augmented ỹ = [LFP|behavior]; this scores the LFP block only
     (YN is LFP), while the self-fed step consumes the full ỹ (it uses the LFP block internally).

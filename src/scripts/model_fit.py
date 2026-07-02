@@ -208,6 +208,12 @@ def model_fit(
         method_module_file.replace(".py", "").replace("/", ".")
     ).fit_lds_to_data(YN, ZN, UN, XN, n_x, cond_params, base_params, outfiles, config)
 
+    # Second handoff for the control-level usid_select='opto_dr2z' arm (USID multistart). The
+    # fit emits the opto-selected restart alongside the primary (r2y) from one training; pop it
+    # before saving the primary so its metadata stays clean. 'SAME' (n_restarts<=1 / non-USID)
+    # -> the second path gets the primary fit. Stats + linreg are stamped below identically.
+    _optodr2z_handoff = (getattr(lds, "metadata", {}) or {}).pop("_optodr2z_handoff", "SAME")
+
     # saving preprocessing info in model objects to use during inference in runPredict function
     # Note: This overwrites any stats set by the fit function (e.g., usid.py, braid.py).
     # The fit functions receive pre-normalized data, so we store the original stats here
@@ -250,6 +256,20 @@ def model_fit(
 
     # Drift-free config record: dump the exact merged config this cell used.
     _dump_config_snapshot(cond_params, base_params, config, lds, outfiles.lds_model)
+
+    # Second handoff (control-level usid_select='opto_dr2z'): same normalization stats, its own
+    # linreg from its own Xhat. 'SAME' -> the second path is the primary fit (n_restarts<=1).
+    if _optodr2z_handoff == "SAME":
+        save_pkl_gz(lds, outfiles.lds_model_optodr2z)
+    else:
+        lds2, Xhat2 = _optodr2z_handoff
+        (lds2.y_mean, lds2.y_std, lds2.z_mean, lds2.z_std,
+         lds2.u_mean, lds2.u_std, lds2.x_mean, lds2.x_std) = (
+            y_mean, y_std, z_mean, z_std, u_mean, u_std, x_mean, x_std)
+        fit_counts2 = getattr(lds2, "sanitize_clip_counts", {}) or {}
+        lds2.sanitize_clip_counts = {**sanitize_clip_counts, **fit_counts2}
+        lds2.linreg_lds2fsnn = LinearRegression().fit(Xhat2, X)
+        save_pkl_gz(lds2, outfiles.lds_model_optodr2z)
 
     # Write fit-quality analysis atomically with the LDS so the two can't
     # go out of sync. Keeps the CSV fresh whenever model_fit retrains.

@@ -88,7 +88,7 @@ steps_params = {
     ],
     "sys_id_expts": ["stim_u_max_mWmm2", "stim_budget_mWmm2", "stim_method"],
     "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "usid_rollout", "n_restarts", "usid_teacher", "usid_delta", "behavior_weight"],
-    "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
+    "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters", "usid_select"],
     "analysis": [],
 }
 
@@ -724,6 +724,9 @@ rule ctrl_expts:
         "src/ctrl/{ctrl_type}.py",
         cleo_prep=wildcard_path("cleo_prep.pkl.gz"),
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
+        # Both selector handoffs are declared inputs (model_fit produces both from one training);
+        # ctrl_expts.py loads the one named by the usid_select wildcard.
+        lds_model_optodr2z=wildcard_path("model_fit_lds_optodr2z.pkl.gz"),
         # ctrl_expts unpickles cleo_prep, whose __reduce__ re-runs CleoPrep.build,
         # which EAGERLY reads chr2_4s_fsnn_calibration.json. Declare it (same
         # pattern as rule cleo_prep via _cleo_prep_calibration_input) so the DAG
@@ -1128,6 +1131,10 @@ rule model_fit:
         braid_basename=wildcard_path("model_fit_braid"),
     output:
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
+        # Second handoff: the opto_dr2z-selected multistart restart (== the primary for
+        # n_restarts<=1). model_fit does NOT fan on the ctrl-level usid_select wildcard, so this
+        # is produced from the SAME training as lds_model -> the two selector arms are exactly paired.
+        lds_model_optodr2z=wildcard_path("model_fit_lds_optodr2z.pkl.gz"),
         pred_data=wildcard_path("model_fit_pred_data.pkl.gz"),
         analysis_csv=wildcard_path("model_fit_analysis.csv"),
         config_snapshot=wildcard_path("config_snapshot.yaml"),

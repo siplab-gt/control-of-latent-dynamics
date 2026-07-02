@@ -53,6 +53,7 @@ params:
   ctrl_type: LQMPC
   ctrl_horizon_ms: 300
   nlmpc_grad_iters: 2
+  usid_select: r2y         # ctrl-level: which multistart handoff to control on (r2y | opto_dr2z).
   k: 22
   m: 42
 
