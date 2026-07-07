@@ -292,6 +292,17 @@ if __name__ == "__main__" and "snakemake" in locals():
     if natural_data:
         config_dict['natural_data_path'] = str(natural_data)
 
+    # Cold opsin: the opsin_train_cold sentinel names the exact best_model.pth for
+    # this cell's opsin_stim_method (results/opsin_train_cold/opsin_stim_method_<m>/).
+    # Thread its method-specific checkpoint dir to usid.py so it loads the SWEPT
+    # opsin — reading the declared sentinel, not scanning the newest timestamp across
+    # all methods (which would cross-load a different opsin_stim_method's checkpoint).
+    cold_opsin = getattr(snakemake.input, 'cold_opsin', None)
+    if cold_opsin:
+        sentinel = cold_opsin[0] if isinstance(cold_opsin, (list, tuple)) else cold_opsin
+        best_model_path = Path(sentinel).read_text().strip()
+        config_dict['opsin_checkpoint_path'] = str(Path(best_model_path).parent.parent)
+
     # Per-setting overlay: keys placed in config[f"model_fit_{setting}"]
     # override their top-level counterparts. Lets `setting` sweep choose
     # use_opsin / model_fit_method / etc. without globally toggling them.

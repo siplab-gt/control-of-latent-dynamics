@@ -48,6 +48,7 @@ def _wc_constraint(key, extras=()):
 
 
 wildcard_constraints:
+    target_iopto=_wc_constraint("target_iopto"),
     task=_wc_constraint("task"),
     setting=_wc_constraint("setting", extras=("NA",)),
     ctrl_type=_wc_constraint("ctrl_type", extras=("NULL",)),
@@ -80,6 +81,7 @@ steps_params = {
         "network_area_scale",
     ],
     "cleo_prep": [
+        "target_iopto",
         "setting",
         "k",
         "m",
@@ -87,6 +89,11 @@ steps_params = {
         "signals",
     ],
     "sys_id_expts": ["stim_u_max_mWmm2", "stim_budget_mWmm2", "stim_method"],
+    # Opsin-NN training light distribution (src.opsin_stim). Sits between sys_id and
+    # model_fit: the cold opsin is trained per opsin_stim_method (shared across seeds/
+    # settings/target_iopto) and consumed by model_fit; a swept axis so different
+    # training sets can be compared like any other sweep (see get_cold_opsin_input).
+    "opsin_train_cold": ["opsin_stim_method"],
     "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "usid_rollout", "n_restarts", "usid_teacher", "usid_delta", "behavior_weight", "fold_behavior"],
     "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters", "usid_select"],
     "analysis": [],
@@ -631,7 +638,7 @@ rule analyze_ctrl_data:
         # score the controller's realized commanded-light distribution
         # against the opsin nonlinearity (ctrl_opsin_* operating-regime
         # metrics) and to report plant linearity (lin[5,75]) as provenance.
-        saturation_curve="results/opsin_calibration/chr2_4s_fsnn_saturation_curve.json",
+        saturation_curve="results/opsin_calibration/target_iopto_{target_iopto}/chr2_4s_fsnn_saturation_curve.json",
     output:
         wildcard_path("summary.csv"),
     log:
@@ -735,7 +742,7 @@ rule ctrl_expts:
         # recalibration, and without this dep a cached cleo_prep.pkl.gz lets ctrl
         # race ahead of the regeneration and crash with FileNotFoundError.
         calibration=lambda wc: (
-            [config["cleo_prep"]["opsin_calibration_dir"] + "/chr2_4s_fsnn_calibration.json"]
+            [f"results/opsin_calibration/target_iopto_{wc.target_iopto}/chr2_4s_fsnn_calibration.json"]
             if config.get("cleo_prep", {}).get("opsin_plant_class") == "chr2_4s_fsnn"
             else []
         ),
@@ -891,7 +898,8 @@ def get_cold_opsin_input(wildcards):
         return []
     if not _use_opsin_for_setting(wildcards.setting):
         return []
-    return "results/opsin_train_cold/best_model.path"
+    return (f"results/opsin_train_cold/opsin_stim_method_"
+            f"{wildcards.opsin_stim_method}/best_model.path")
 
 
 # assume GPU-heavy resources when not sufficient stim (BRAID or USID)
@@ -1020,7 +1028,7 @@ rule calibrate_opsin_plant:
         opsins="src/opsins.py",
         configfiles=configfile_inputs_excluding_sweeps,
     params:
-        target_iopto=lambda wc: config["calibrate_opsin_plant"]["target_iopto"],
+        target_iopto=lambda wc: wc.target_iopto,
         # phim_scale (>1 = less light-sensitive plant) and peak_saturation_bound
         # are optional; default to 1.0 / 0.3 (the script defaults) when absent.
         phim_scale=lambda wc: config["calibrate_opsin_plant"].get("phim_scale", 1.0),
@@ -1030,9 +1038,9 @@ rule calibrate_opsin_plant:
             "fiber_distance_um", 500.0),
         e_ratio=lambda wc: config["calibrate_opsin_plant"].get("e_ratio", 3.5),
     output:
-        "results/opsin_calibration/chr2_4s_fsnn_calibration.json",
+        "results/opsin_calibration/target_iopto_{target_iopto}/chr2_4s_fsnn_calibration.json",
     log:
-        "logs/calibrate_opsin_plant.log",
+        "logs/opsin_calibration/target_iopto_{target_iopto}/calibrate_opsin_plant.log",
     conda:
         "envs/main.yaml"
     resources:
@@ -1057,15 +1065,15 @@ rule opsin_saturation_curve:
     range, writes the curve. Reuses the calibrate_opsin_plant bench (one
     source of truth)."""
     input:
-        calibration="results/opsin_calibration/chr2_4s_fsnn_calibration.json",
+        calibration="results/opsin_calibration/target_iopto_{target_iopto}/chr2_4s_fsnn_calibration.json",
         script="src/scripts/opsin_saturation_curve.py",
         calibrate_src="src/scripts/calibrate_opsin_plant.py",
         opsins="src/opsins.py",
         configfiles=configfile_inputs_excluding_sweeps,
     output:
-        "results/opsin_calibration/chr2_4s_fsnn_saturation_curve.json",
+        "results/opsin_calibration/target_iopto_{target_iopto}/chr2_4s_fsnn_saturation_curve.json",
     log:
-        "logs/opsin_saturation_curve.log",
+        "logs/opsin_calibration/target_iopto_{target_iopto}/opsin_saturation_curve.log",
     conda:
         "envs/main.yaml"
     resources:
@@ -1090,14 +1098,19 @@ rule opsin_train_cold:
     the absolute path of the resulting ``best_model.pth`` so downstream
     consumers can resolve it without recomputing."""
     input:
-        calibration="results/opsin_calibration/chr2_4s_fsnn_calibration.json",
+        # Opsin NN is a SHARED kinetic surrogate (voltage-unaware; light->gating
+        # shape is g0-invariant). It trains against the DEFAULT target_iopto plant;
+        # per-target_iopto authority (g0 scale) is absorbed by the per-cell B',
+        # re-learned from each cell's per-target_iopto sys-ID data. So one opsin
+        # serves all target_iopto values — no per-ti retrain.
+        calibration=f"results/opsin_calibration/target_iopto_{config['params']['target_iopto']}/chr2_4s_fsnn_calibration.json",
         script="src/scripts/opsin_train.py",
         opsins="src/opsins.py",
         configfiles=configfile_inputs_excluding_sweeps,
     output:
-        sentinel="results/opsin_train_cold/best_model.path",
+        sentinel="results/opsin_train_cold/opsin_stim_method_{opsin_stim_method}/best_model.path",
     log:
-        "logs/opsin_train_cold.log",
+        "logs/opsin_train_cold_{opsin_stim_method}.log",
     conda:
         "envs/main.yaml"
     threads: 4
@@ -1194,7 +1207,7 @@ rule sys_id_expts:
         # Snakemake serializes opsin_saturation_curve -> sys_id (without this the
         # surrogate read races the rule's rewrite of the JSON -> FileNotFoundError).
         # natural_electrode_expts inherits this input harmlessly (opto-free, never reads it).
-        saturation_curve="results/opsin_calibration/chr2_4s_fsnn_saturation_curve.json",
+        saturation_curve="results/opsin_calibration/target_iopto_{target_iopto}/chr2_4s_fsnn_saturation_curve.json",
         configfiles=configfile_inputs_excluding_sweeps,
     params:
         step_cfg("cleo_prep", "expts", "sys_id_expts"),
@@ -1346,10 +1359,10 @@ def _cleo_prep_calibration_input(wildcards):
     plant = config.get("cleo_prep", {}).get("opsin_plant_class", "proportional_current")
     if plant != "chr2_4s_fsnn":
         return []
-    calib_dir = config.get("cleo_prep", {}).get(
-        "opsin_calibration_dir", "results/opsin_calibration",
-    )
-    return [f"{calib_dir}/chr2_4s_fsnn_calibration.json"]
+    return [
+        f"results/opsin_calibration/target_iopto_{wildcards.target_iopto}"
+        "/chr2_4s_fsnn_calibration.json"
+    ]
 
 
 rule cleo_prep:

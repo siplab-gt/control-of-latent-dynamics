@@ -179,17 +179,18 @@ def fit_lds_to_data(
         # to remove the train-vs-deploy distribution mismatch the synthetic
         # NN was creating.
         #
-        # Override path: callers can still pin ``opsin_checkpoint_path`` in
-        # config to a specific dir. That overrides discovery but is still
-        # gated by ``expected_provenance='external'`` — synthetic-tagged
-        # checkpoints are refused at this seam.
+        # model_fit.py threads ``opsin_checkpoint_path`` from the opsin_train_cold
+        # sentinel — the method-specific ``.../cold/<opsin_stim_method>/`` dir, whose
+        # newest timestamped subdir holds this cell's opsin. Required (fail-fast) so a
+        # swept opsin_stim_method never silently cross-loads another method's checkpoint
+        # (or a synthetic-tagged one; the expected_provenance gate below still applies).
         opsin_path = config.get('opsin_checkpoint_path')
-        if opsin_path:
-            opsin_results_dir = Path(opsin_path)
-        else:
-            opsin_results_dir = (
-                Path(USID_REPO_PATH) / "experiments" / "opsin_results_external" / "cold"
-            )
+        if not opsin_path:
+            raise ValueError(
+                "use_opsin=True but config['opsin_checkpoint_path'] is unset; "
+                "model_fit.py should thread it from the opsin_train_cold sentinel "
+                "(results/opsin_train_cold/opsin_stim_method_<m>/best_model.path).")
+        opsin_results_dir = Path(opsin_path)
         opsin_model = load_trained_opsin(
             opsin_results_dir,
             num_light_channels=1,

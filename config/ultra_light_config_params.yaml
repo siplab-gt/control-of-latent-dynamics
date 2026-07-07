@@ -29,6 +29,8 @@ params:
   setting: usid_stim_rec
   beam_width_um: 100
   signals: lfp
+  # Plant opto authority (cleo_prep-level cond-param); swept as a plant axis.
+  target_iopto: 0.165
   n_trials_sys_id: 5
   model_task_inputs: false
   # sys-ID opto excitation (sys_id_expts wildcards): OED-derived (src.opsin_oed) —
@@ -39,6 +41,9 @@ params:
   stim_method: oed   # oed|white|chirp (src.stim)
   stim_u_max_mWmm2: 75
   stim_budget_mWmm2: 6
+  # opsin-NN training light distribution (src.opsin_stim; opsin_train_cold rule).
+  # current_mix (60% blocks + 40% white, validated default) | ou (clipped OU colored noise).
+  opsin_stim_method: current_mix
   # USID model_fit-level loss-weight wildcards (route into usid_overrides via
   # src/scripts/model_fit.py): forced = usid_hyperparams.loss.loss_weights.forced
   # (forced-loss weight). Defaults match the static cold_usid.yaml values so a run

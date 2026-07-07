@@ -39,6 +39,10 @@ params:
   setting: usid_stim_rec
   beam_width_um: 100
   signals: lfp
+  # Plant opto authority (cleo_prep-level cond-param): calibrate_opsin_plant target
+  # photocurrent. 0.165 = mean(|u_in|)-matched natural operating point at the 500µm
+  # reference. Swept as a plant axis; g0 is re-solved per value by calibrate_opsin_plant.
+  target_iopto: 0.165
   n_trials_sys_id: 100
   model_task_inputs: false
   # sys-ID opto excitation (sys_id_expts wildcards). stim_method selects the generator
@@ -50,6 +54,11 @@ params:
   stim_method: oed
   stim_u_max_mWmm2: 75
   stim_budget_mWmm2: 6
+  # opsin-NN training light distribution (src.opsin_stim; opsin_train_cold rule).
+  # current_mix = 60% sustained blocks + 40% white lognormal (validated default) |
+  # ou = single clipped Ornstein-Uhlenbeck colored-noise process. Equivalent for control
+  # Q (sweep 10833292); ou is simpler, current_mix has better deep-saturation coverage.
+  opsin_stim_method: current_mix
   # USID model_fit-level loss-weight wildcards (route into usid_overrides via
   # src/scripts/model_fit.py): forced = usid_hyperparams.loss.loss_weights.forced
   # (forced-loss weight). Defaults match the static cold_usid.yaml values so a run
@@ -179,6 +188,11 @@ opsin_train_cold:
   off_steps_min: 10
   off_steps_max: 40
   block_on_probability: 0.5
+  # ou method knobs (clipped Ornstein-Uhlenbeck colored noise; src.opsin_stim).
+  # Only read when opsin_stim_method=ou; current_mix ignores them.
+  ou_mu_mWmm2: 18.0
+  ou_tau_ms: 120.0
+  ou_std_mWmm2: 25.0
 
 model_fit:
   linear_Cz: true

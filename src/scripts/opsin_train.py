@@ -32,6 +32,7 @@ from brian2 import ms
 from joblib import Parallel, delayed
 
 from src.opsins import UnitlessChr2FourState
+from src.opsin_stim import build_opsin_light
 
 # USID imports — USID_REPO_ROOT is set on PYTHONPATH by smk-submit-slurm.sbatch.
 from scripts.opsin_train_external import train_opsin_external
@@ -55,36 +56,6 @@ def _v_clamp_dummy_neuron_eqs(v_clamp: float) -> str:
     )
 
 
-def _block_trace(rng, time_steps, u_max, amp_max, sustain_min, sustain_max,
-                 off_min, off_max, on_prob):
-    """Piecewise-constant on/off block light trace.
-
-    ON blocks hold a CONSTANT amplitude ~ Uniform(0, amp_max) for
-    sustain_min..sustain_max steps — sustained light at levels spanning up to
-    amp_max. With a high amp_max this reaches the saturating regime and holds it,
-    exciting the four-state ChR2 desensitization/saturation that the pure-white
-    lognormal trace never sustains (its longest run >20 mW/mm² is ~5 steps, vs the
-    controller's 7-10+, and a single per-block lognormal draw rarely lands high).
-    Uniform-over-amplitude gives even coverage of the steady-state saturation
-    curve. OFF blocks hold zero for off_min..off_max steps — sustained zero, which
-    pins the learned Iopto(0)=0 (fixing the observed −0.074 zero-light offset).
-
-    amp_max (and the sustain length) set the saturation coverage: the canonical
-    config uses amp_max=75 with long holds (sustain<=160) so the NN covers the deep-
-    saturation regime the controller drives into."""
-    trace = np.zeros(time_steps, dtype=np.float64)
-    pos = 0
-    while pos < time_steps:
-        if rng.random() < on_prob:
-            L = int(rng.integers(sustain_min, sustain_max + 1))
-            amp = float(min(rng.uniform(0.0, amp_max), u_max))
-            trace[pos:pos + L] = amp
-        else:
-            L = int(rng.integers(off_min, off_max + 1))
-        pos += L
-    return trace[:time_steps]
-
-
 def _generate_one_sequence(
     seq_idx: int,
     *,
@@ -92,31 +63,23 @@ def _generate_one_sequence(
     E: float,
     phim,
     v_clamp: float,
-    mu: float,
-    sigma: float,
     u_max_mWmm2: float,
     time_steps: int,
     model_period_ms: float,
     fiber_distance_um: float,
     seed: int,
-    is_block: bool = False,
-    amp_max: float = 75.0,
-    sustain_min: int = 20,
-    sustain_max: int = 60,
-    off_min: int = 5,
-    off_max: int = 30,
-    on_prob: float = 0.5,
+    opsin_stim_method: str,
+    n_sequences: int,
+    light_params: dict,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Generate a single light trace + photocurrent pair under a fresh Brian2
-    scope. ``is_block`` selects a piecewise-constant on/off block trace (sustained
-    drive, constant amplitude ~U(0, amp_max)) vs the pure-white lognormal trace.
-    Keeps loky workers isolated."""
+    """Generate a single commanded-light trace + photocurrent pair under a fresh
+    Brian2 scope. The light distribution is selected by ``opsin_stim_method`` via
+    ``src.opsin_stim.build_opsin_light``; the Brian2 photocurrent sim below is
+    distribution-agnostic. Keeps loky workers isolated."""
     rng = np.random.default_rng(seed + seq_idx)
-    if is_block:
-        trace = _block_trace(rng, time_steps, u_max_mWmm2, amp_max,
-                             sustain_min, sustain_max, off_min, off_max, on_prob)
-    else:
-        trace = rng.lognormal(mu, sigma, size=time_steps).clip(0, u_max_mWmm2)
+    trace = build_opsin_light(
+        opsin_stim_method, rng, time_steps, u_max_mWmm2, light_params,
+        seq_idx=seq_idx, n_sequences=n_sequences)
 
     b2.start_scope()
     opsin = UnitlessChr2FourState(g0=g0, E=E, phim=phim)
@@ -145,42 +108,30 @@ def generate_cold_opsin_pool(
     E: float,
     phim,
     v_clamp: float,
-    typical_Irr0_mWmm2: float,
     u_max_mWmm2: float,
     n_sequences: int,
     time_steps: int,
     model_period_ms: float,
     fiber_distance_um: float,
     seed: int,
-    const_block_fraction: float = 0.0,
-    amp_max: float = 75.0,
-    sustain_min: int = 20,
-    sustain_max: int = 60,
-    off_min: int = 5,
-    off_max: int = 30,
-    on_prob: float = 0.5,
+    opsin_stim_method: str,
+    light_params: dict,
     verbose: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Drive N independent single-neuron sims; stack to (N, T, 1) arrays.
-
-    The first ``round(const_block_fraction * n_sequences)`` sequences use
-    piecewise-constant on/off block light (sustained drive); the rest use the
-    pure-white lognormal trace. const_block_fraction=0 reproduces the legacy
-    all-white behaviour."""
-    mu = float(np.log(typical_Irr0_mWmm2))
-    sigma = float(np.log(u_max_mWmm2) / 3.0)
-    n_const = int(round(const_block_fraction * n_sequences))
-
+    """Drive N independent single-neuron sims; stack to (N, T, 1) arrays. The
+    commanded-light distribution for each sequence is selected by
+    ``opsin_stim_method`` (see ``src.opsin_stim.build_opsin_light``); the paired
+    photocurrent is the single-neuron Brian2 ChR2 response, distribution-agnostic."""
     if verbose:
         log.info(
             f"Generating {n_sequences} COLD opsin sequences (single-neuron, no fSNN).")
         log.info(
-            f"  Calibration: g0={g0:.4g}, E={E:.4f}, v_clamp={v_clamp:.4f}")
+            f"  Calibration:  g0={g0:.4g}, E={E:.4f}, v_clamp={v_clamp:.4f}, "
+            f"fiber={fiber_distance_um:.0f}um")
         log.info(
-            f"  Light dist:  lognormal(mu={mu:.4f}, sigma={sigma:.4f}) "
-            f"clipped to [0, {u_max_mWmm2}] mW/mm²")
+            f"  Light method: {opsin_stim_method}  (clipped to [0, {u_max_mWmm2}] mW/mm²)")
         log.info(
-            f"  Duration:    {time_steps} steps × {model_period_ms} ms = "
+            f"  Duration:     {time_steps} steps × {model_period_ms} ms = "
             f"{time_steps * model_period_ms:.0f} ms per sequence")
 
     slurm_cpus = os.getenv("SLURM_CPUS_PER_TASK")
@@ -188,26 +139,18 @@ def generate_cold_opsin_pool(
     if verbose:
         log.info(f"  Parallel workers: {n_jobs}")
 
-    if verbose and n_const > 0:
-        log.info(
-            f"  Block traces: {n_const}/{n_sequences} sequences are piecewise-"
-            f"constant on/off (on-block amp ~U(0,{amp_max}), sustain "
-            f"{sustain_min}-{sustain_max} steps, off-block {off_min}-{off_max}, "
-            f"p_on={on_prob}); rest pure-white.")
-
     results = Parallel(n_jobs=n_jobs)(
         delayed(_generate_one_sequence)(
             i,
             g0=g0, E=E, phim=phim, v_clamp=v_clamp,
-            mu=mu, sigma=sigma, u_max_mWmm2=u_max_mWmm2,
+            u_max_mWmm2=u_max_mWmm2,
             time_steps=time_steps,
             model_period_ms=model_period_ms,
             fiber_distance_um=fiber_distance_um,
             seed=seed,
-            is_block=(i < n_const),
-            amp_max=amp_max,
-            sustain_min=sustain_min, sustain_max=sustain_max,
-            off_min=off_min, off_max=off_max, on_prob=on_prob,
+            opsin_stim_method=opsin_stim_method,
+            n_sequences=n_sequences,
+            light_params=light_params,
         )
         for i in range(n_sequences)
     )
@@ -256,29 +199,39 @@ def main(snakemake) -> None:
     model_period_ms = float(
         config["prep_fsnn"]["dt_ms"] * config["cleo_prep"]["subsample_factor"])
 
-    # Sustained on/off block light (optional; default 0 reproduces all-white).
-    # sustain_steps_max sets the constant-on hold length (canonical config: 160).
-    const_block_fraction = float(train_cfg.get("const_block_fraction", 0.0))
-    sustain_amp_max = float(train_cfg.get("sustain_amp_max", u_max_mWmm2))
-    sustain_min = int(train_cfg.get("sustain_steps_min", 20))
-    sustain_max = int(train_cfg.get("sustain_steps_max", 60))
-    off_min = int(train_cfg.get("off_steps_min", 5))
-    off_max = int(train_cfg.get("off_steps_max", 30))
-    on_prob = float(train_cfg.get("block_on_probability", 0.5))
+    # The light distribution is selected by the opsin_stim_method wildcard
+    # (src.opsin_stim); per-method knobs live in the opsin_train_cold config block.
+    # Defaults here match the canonical config so a missing key never silently
+    # regresses (e.g. const_block_fraction defaults to 0.6, NOT all-white).
+    opsin_stim_method = snakemake.wildcards.opsin_stim_method
+    light_params = {
+        # current_mix: block leaf
+        "const_block_fraction": float(train_cfg.get("const_block_fraction", 0.6)),
+        "sustain_amp_max": float(train_cfg.get("sustain_amp_max", u_max_mWmm2)),
+        "sustain_steps_min": int(train_cfg.get("sustain_steps_min", 40)),
+        "sustain_steps_max": int(train_cfg.get("sustain_steps_max", 160)),
+        "off_steps_min": int(train_cfg.get("off_steps_min", 10)),
+        "off_steps_max": int(train_cfg.get("off_steps_max", 40)),
+        "block_on_probability": float(train_cfg.get("block_on_probability", 0.5)),
+        # current_mix: white (40%) leaf
+        "typical_Irr0_mWmm2": typical_Irr0_mWmm2,
+        # ou: clipped Ornstein-Uhlenbeck colored noise
+        "ou_mu_mWmm2": float(train_cfg.get("ou_mu_mWmm2", 18.0)),
+        "ou_tau_ms": float(train_cfg.get("ou_tau_ms", 120.0)),
+        "ou_std_mWmm2": float(train_cfg.get("ou_std_mWmm2", 25.0)),
+        "command_dt_ms": model_period_ms,
+    }
 
     light, photocurrent = generate_cold_opsin_pool(
         g0=g0, E=E, phim=phim, v_clamp=v_clamp,
-        typical_Irr0_mWmm2=typical_Irr0_mWmm2,
         u_max_mWmm2=u_max_mWmm2,
         n_sequences=n_sequences,
         time_steps=time_steps,
         model_period_ms=model_period_ms,
         fiber_distance_um=fiber_distance_um,
         seed=seed,
-        const_block_fraction=const_block_fraction,
-        amp_max=sustain_amp_max,
-        sustain_min=sustain_min, sustain_max=sustain_max,
-        off_min=off_min, off_max=off_max, on_prob=on_prob,
+        opsin_stim_method=opsin_stim_method,
+        light_params=light_params,
     )
 
     usid_repo = os.environ.get("USID_REPO_ROOT")
@@ -292,8 +245,11 @@ def main(snakemake) -> None:
     # the given parent and lex-sorts by name to pick the newest). Matches the
     # convention USID synthetic opsin training uses under
     # ``experiments/opsin_results/<timestamp>/``.
+    # Per-method subdir so an opsin_stim_method sweep's checkpoints do not collide
+    # (the sentinel below names the exact best_model.pth model_fit loads).
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_dir = Path(usid_repo) / "experiments" / "opsin_results_external" / "cold" / timestamp
+    save_dir = (Path(usid_repo) / "experiments" / "opsin_results_external"
+                / "cold" / opsin_stim_method / timestamp)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     best_path = train_opsin_external(
