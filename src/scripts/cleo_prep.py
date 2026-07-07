@@ -158,7 +158,14 @@ class CleoPrep(BaseDataClass):
             calib_dir = Path(getattr(
                 base_params, "opsin_calibration_dir", "results/opsin_calibration"
             ))
-            calib_path = calib_dir / "chr2_4s_fsnn_calibration.json"
+            # Per-target_iopto plant: the calibration is produced per authority value
+            # (rule calibrate_opsin_plant writes results/opsin_calibration/
+            # target_iopto_{ti}/...). cond_params carries the swept target_iopto so the
+            # (possibly dill-rebuilt) plant reads its own calibration, not a global one.
+            calib_path = (
+                calib_dir / f"target_iopto_{cond_params.target_iopto}"
+                / "chr2_4s_fsnn_calibration.json"
+            )
             with calib_path.open() as f:
                 calib = json.load(f)
 

@@ -3,7 +3,7 @@
 The fSNN opsin (``src.opsins.UnitlessChr2FourState``, a Bansal-2020 four-state ChR2)
 is the only nonlinearity on the light->photocurrent path and the thing whose
 mis-identification drives the controller into over-saturation. Optimal-experiment
-design for the sys-ID stim (``src.opsin_oed``) needs to evaluate that opsin's
+design for the sys-ID stim (``src.stim.oed``) needs to evaluate that opsin's
 response to thousands of candidate light waveforms, which is far too expensive
 through Brian2. This module integrates the *same* four-state ODEs in vectorized
 numpy, deterministically, in milliseconds.
@@ -57,8 +57,10 @@ _BENCH_TAIL_MS = 10.0
 # realpath (not abspath): Snakemake runs rules with `workflow/src` symlinked to
 # ../src, so abspath(__file__) keeps the symlinked workflow/src path and resolves
 # the repo root to workflow/. realpath follows the symlink to the real COLD root.
+# The real module is <root>/src/stim/opsin_surrogate.py, so three dirnames reach
+# <root>, where results/opsin_calibration/ lives (two lands on <root>/src).
 _DEFAULT_CALIBRATION_JSON = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
     "results", "opsin_calibration", "chr2_4s_fsnn_saturation_curve.json",
 )
 

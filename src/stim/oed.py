@@ -33,7 +33,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import differential_evolution
 
-from src.opsin_surrogate import OpsinSurrogate, load_calibrated_surrogate
+from src.stim.opsin_surrogate import OpsinSurrogate, load_calibrated_surrogate
 
 # Control-relevant parameter subset to identify: conductance scale, Hill
 # half-saturation (where authority bends over), and the medium desensitization rate

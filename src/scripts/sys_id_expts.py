@@ -204,7 +204,7 @@ def run_sys_id_expts(cond_params, base_params, cleo_prep_file, outfile):
             else:
                 # OED-derived per-channel light (mW/mm²) for this command step.
                 # The renewal-process sampler holds graded-amplitude bursts separated
-                # by recovery gaps; see src.opsin_oed.StimDesign.
+                # by recovery gaps; see src.stim.oed.StimDesign.
                 value = stim_sampler.step() * b2.mwatt / b2.mm2
             return {"light array": value}, t_samp
 
