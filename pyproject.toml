@@ -12,7 +12,7 @@ dependencies = [
     'numba',
     'pandas',
     'matplotlib',
-    'cleosim @ git+https://github.com/siplab-gt/cleo.git@c2689aaaed814529bdea25eb8cdd98b3b79bf28b',
+    'cleosim @ git+https://github.com/siplab-gt/cleo.git@1662ede4beefde2e538e2c6b3984bbe975b43e8a',  # v0.19.0 (multi-source light-aggregation fix)
     'dill',
     'seaborn',
     'scikit-learn',
