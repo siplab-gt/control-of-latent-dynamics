@@ -30,7 +30,8 @@ params:
   beam_width_um: 100
   signals: lfp
   # Plant opto authority (cleo_prep-level cond-param); swept as a plant axis.
-  target_iopto: 0.165
+  # 0.8 (g0 2.79) = corrected-cleo mid-plateau operating-point default (see config_params.yaml).
+  target_iopto: 0.8
   n_trials_sys_id: 5
   model_task_inputs: false
   # sys-ID opto excitation (sys_id_expts wildcards): OED-derived (src.opsin_oed) —
@@ -195,7 +196,7 @@ cleo_prep:
   opsin_calibration_dir: results/opsin_calibration
 
 calibrate_opsin_plant:
-  target_iopto: 0.165
+  target_iopto: 0.8
   phim_scale: 5
 
 # Ultra-light overrides: minimal sequences/epochs since this config is for

@@ -33,9 +33,12 @@ params:
   beam_width_um: 100
   signals: lfp
   # Plant opto authority (cleo_prep-level cond-param): calibrate_opsin_plant target
-  # photocurrent. 0.165 = mean(|u_in|)-matched natural operating point at the 500µm
-  # reference. Swept as a plant axis; g0 is re-solved per value by calibrate_opsin_plant.
-  target_iopto: 0.165
+  # photocurrent; g0 = target_iopto × 3.488, re-solved per value. 0.8 (g0 2.79) is the
+  # mid-plateau operating point on the corrected cleo 0.19.0 plant: Q_track plateaus at
+  # ~+0.40 (USID+oed +0.397 here) across g0 2.5–3.2, gain_retention 0.72. Chosen over the
+  # numerically-highest 0.92 for margin from the calibration saturation gate (peak |Iopto|
+  # @75mW ≈ 8.6 vs bound 10; 0.92 sits at 9.85). Swept as a plant axis.
+  target_iopto: 0.8
   n_trials_sys_id: 50
   model_task_inputs: false
   # sys-ID opto excitation (sys_id_expts wildcards): OED-derived (src.opsin_oed) —
@@ -301,14 +304,12 @@ cleo_prep:
   opsin_calibration_dir: results/opsin_calibration
 
 calibrate_opsin_plant:
-  # RE-ANCHORED (2026-06-01 authority sweep). The legacy 0.05@100µm operating
-  # point ran opto at ~1/11.5 of the natural task-input scale mean(|u_in|)≈0.575
-  # — and the working proportional_current plant tunes opto TO mean(|u_in|) at a
-  # 500µm reference (cleo_prep.py). So we re-anchor: fiber reference distance to
-  # 500µm (raises solved g0 ~3.4×) and target_iopto toward mean(|u_in|).
-  # Baked-in φm5 operating point (t0.165): target_iopto ≈ mean(|u_in|), phim_scale=5.
-  # The authority wrapper (tmp/cold_ablation/run_authority_sweep.sbatch) can still sed-override per combo.
-  target_iopto: 0.165
+  # Operating point on the corrected cleo 0.19.0 plant. Reference fiber distance 500µm
+  # (raises solved g0 ~3.4× vs the legacy 0.05@100µm point); g0 = target_iopto × 3.488.
+  # target_iopto=0.8 (g0 2.79) is the mid-plateau operating point: Q_track plateaus at ~+0.40
+  # across g0 2.5–3.2; 0.8 gives USID+oed +0.397 with margin from the saturation gate
+  # (peak |Iopto| @75mW ≈ 8.6 < bound 10; g0>3.2 fails the gate). phim_scale=5 unchanged.
+  target_iopto: 0.8
   phim_scale: 5
   # Reference fiber→neuron distance for the g0 solve (lines up with the
   # proportional_current plant's 0.5 mm reference).

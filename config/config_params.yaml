@@ -40,9 +40,12 @@ params:
   beam_width_um: 100
   signals: lfp
   # Plant opto authority (cleo_prep-level cond-param): calibrate_opsin_plant target
-  # photocurrent. 0.165 = mean(|u_in|)-matched natural operating point at the 500µm
-  # reference. Swept as a plant axis; g0 is re-solved per value by calibrate_opsin_plant.
-  target_iopto: 0.165
+  # photocurrent; g0 = target_iopto × 3.488, re-solved per value. 0.8 (g0 2.79) is the
+  # mid-plateau operating point on the corrected cleo 0.19.0 plant: Q_track plateaus at
+  # ~+0.40 (USID+oed +0.397 here) across g0 2.5–3.2, gain_retention 0.72. Chosen over the
+  # numerically-highest 0.92 for margin from the calibration saturation gate (peak |Iopto|
+  # @75mW ≈ 8.6 vs bound 10; 0.92 sits at 9.85). Swept as a plant axis.
+  target_iopto: 0.8
   n_trials_sys_id: 100
   model_task_inputs: false
   # sys-ID opto excitation (sys_id_expts wildcards). stim_method selects the generator
@@ -155,7 +158,7 @@ cleo_prep:
   opsin_calibration_dir: results/opsin_calibration
 
 calibrate_opsin_plant:
-  target_iopto: 0.165
+  target_iopto: 0.8
   phim_scale: 5
 
 # Hyperparams for the opsin_train_cold rule. See testconfig_params.yaml for
