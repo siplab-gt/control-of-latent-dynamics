@@ -231,26 +231,16 @@ usid_hyperparams:
   loss:
     loss_weights:
       delta: 1             # Teacher-forced 1-step MSE on USID output.
-      rollout: 0.1         # Multi-step rollout MSE.
-      teacher: 0.1         # Full-sequence teacher loss. Schedule below ramps
-                           # 1.0 → 0.0 over first 20 epochs; after that, this
-                           # static 0.1 applies (epochs 21-100). Added
-                           # 2026-05-04 to keep teacher signal alive past the
-                           # schedule window.
+      rollout: 0.1         # Multi-step OBSERVER-OFF rollout MSE. The horizon runs open-loop
+                           # (K1=K2=0), driven only by the input path B'·photocurrent, so this term
+                           # identifies B'/A22/A12/Cy2 against the opto->output map — the open-loop
+                           # response the controller plans against. (This is the term previously split
+                           # out as a separate 'forced' loss; in the usid refac the rollout IS the
+                           # observer-off rollout.)
+      teacher: 0.1         # Full-sequence teacher 1-step loss (observer ON). Schedule below ramps
+                           # 1.0 → 0.0 over first 20 epochs; after that, this static 0.1 applies.
       sroll: 0.0
       spectral: 0.0
-      forced: 1.0          # K-suppressed open-loop forced loss: scores the
-                           # observer-OFF (K1=K2=0) forced rollout — input path
-                           # B'·photocurrent only — against the true output, to
-                           # IDENTIFY B'/A22/A12/Cy2 against the opto->output map.
-                           # The dominant teacher-forced delta and observer-on
-                           # rollout terms leave that map masked (strong K·y feedback
-                           # satisfies them regardless of B'), so without this the
-                           # USID forced/open-loop response the controller plans
-                           # against is unidentified. This is a LOSS TERM, not a
-                           # penalty on K's magnitude. PRIMARY KNOB to sweep; 0 = off
-                           # (recovers the prior behaviour). Reuses the usid rollout
-                           # W/K horizon.
       ifp: 0.5             # Input-free penalty — active in COLD as of the
                            # natural_electrode_data integration in
                            # _prepare_data_bundle. IFP fires on samples marked
@@ -286,7 +276,7 @@ usid_hyperparams:
     behavior_weight: 1.0     # Unnatural-phase (Phase 3) weight on the behavior block of the augmented
                              # [LFP|behavior] output (the LFP block is weight 1.0). All output losses are
                              # block-normalized so the modalities balance regardless of channel count;
-                             # the forced (observer-off) term scores behavior too — the {Cy2-behavior,B2'}
+                             # the observer-off rollout scores behavior too — the {Cy2-behavior,B2'}
                              # de-saturation lever, in-phase. 1.0 = equal LFP/behavior.
     b1_recon:                # Phase 2 — {B1'} build (in run_training, BEFORE the unnatural matrices).
                              # Trains ONLY B1' (Cy1, incl. its frozen behavior rows, is fixed from the
@@ -336,10 +326,8 @@ usid_hyperparams:
       delta: 1.0
       rollout: 0.2
       teacher: 0.0
-      forced: 0.0          # Diagnostic only: forced_raw (forced-rollout MSE) is
-                           # tracked at val even at weight 0, so the validation
-                           # forced fit is visible without changing the val-loss
-                           # composition the scheduler / early-stop key on.
+      ifp: 0.0             # Required active USID loss name (validation parse fails without it).
+                           # 0 = tracked at val but not weighted into the val-loss / early-stop key.
       nstep:
         '2': 0.0
         '3': 0.0
@@ -366,7 +354,7 @@ usid_hyperparams:
   cz_observer_horizon: 20
   # Base-fit multistart count (COLD; the model_fit `n_restarts` wildcard). >1 fits N
   # independent base models (distinct torch init seed, same sys-ID data) and keeps the
-  # one with the best held-out forced-path R²(Y); the handoff then slices that winner's
+  # one with the best held-out rollout-path R²(Y); the handoff then slices that winner's
   # merged Cy (no separate finetune). Mitigates the multimodal USID+opsin seed lottery.
   # 1 = single fit.
   n_restarts: 1
