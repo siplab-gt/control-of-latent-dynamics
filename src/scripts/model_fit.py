@@ -327,12 +327,11 @@ if __name__ == "__main__" and "snakemake" in locals():
     # (usid_hyperparams.loss.b1_recon), unnatural Phase-3 (usid_hyperparams.loss). The deep-merge
     # preserves sibling leaves (b1_recon.lfp_weight, horizon, ...).
     wc_behavior_weight = getattr(snakemake.wildcards, "behavior_weight", None)
-    # fold_behavior routes the observer-fold flag (usid_hyperparams.fold_behavior, top-level): 1 = fold
-    # the realized behavior into the K1/K2 observer (current full-output observer); 0 = LFP-only observer
-    # (K's behavior columns pinned to 0 — behavior is a pure readout).
-    wc_fold_behavior = getattr(snakemake.wildcards, "fold_behavior", None)
+    # NOTE: the fold_behavior wildcard is NOT routed here. It is threaded as a real cond-param —
+    # fit_lds_to_data reads it off cond_params and _load_usid_config injects it as models.fold_behavior —
+    # so it reaches cfg.models.fold_behavior directly, without this usid_overrides injection seam.
     if any(w is not None for w in (wc_forced, wc_usid_rollout, wc_usid_teacher,
-                                   wc_usid_delta, wc_behavior_weight, wc_fold_behavior)):
+                                   wc_usid_delta, wc_behavior_weight)):
         wildcard_usid_overrides = {"usid_hyperparams": {}}
         # forced + usid_rollout + usid_teacher share the loss.{loss_weights,schedule} leaves.
         loss_weights = {}
@@ -367,8 +366,6 @@ if __name__ == "__main__" and "snakemake" in locals():
             wildcard_usid_overrides["natural_hyperparams"] = {"loss": {"behavior_weight": bw}}
         if loss_block:
             wildcard_usid_overrides["usid_hyperparams"]["loss"] = loss_block
-        if wc_fold_behavior is not None:
-            wildcard_usid_overrides["usid_hyperparams"]["fold_behavior"] = bool(int(wc_fold_behavior))
         existing = config_dict.get("usid_overrides", {}) or {}
         config_dict["usid_overrides"] = _deep_merge_overrides(
             existing, wildcard_usid_overrides
@@ -377,7 +374,7 @@ if __name__ == "__main__" and "snakemake" in locals():
             f"[model_fit] wildcard usid_overrides: forced={wc_forced!r}, "
             f"usid_rollout={wc_usid_rollout!r}, usid_teacher={wc_usid_teacher!r}, "
             f"usid_delta={wc_usid_delta!r}, "
-            f"behavior_weight={wc_behavior_weight!r}, fold_behavior={wc_fold_behavior!r}"
+            f"behavior_weight={wc_behavior_weight!r}"
         )
 
     model_fit(

@@ -46,6 +46,8 @@ models:
   n2: 8                    # Unnatural subspace dim.
   zero_k2: true            # Hard K2==0 for the USID phase (x2 input-driven only, matching the validated
                            # best config); read by train_unnatural as cfg.models.zero_k2.
+  fold_behavior: true      # observer fold default (full-output); the fold_behavior model_fit wildcard
+                           # overrides this per-cell (0 -> LFP-only observer, behavior a pure readout).
   ny: 1                    # Placeholder — overridden at runtime from sys_id data shape.
   n_clusters: 1            # Placeholder — overridden at runtime from cond_params.k.
   a_param_type: schur      # RealSchurParam (max_radius=0.99); alternative: ShearPolarRealSchurParam.

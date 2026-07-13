@@ -115,9 +115,13 @@ def fit_lds_to_data(
 
     use_opsin = bool(config['use_opsin'])
 
+    # Observer fold wildcard (0 -> LFP-only observer, 1 -> full-output). preprocess_params casts the
+    # wildcard string to int, so int() handles both an int and a str value.
+    fold_behavior = bool(int(cond_params.get("fold_behavior", 1)))
+
     # === USID config: cold_usid.yaml + runtime dims + COLD usid_overrides. no_opsin is a per-setting
     # runtime kwarg (the BRAID-vs-USID sweep axis), so inject it here — train_unnatural reads it strictly.
-    cfg = _load_usid_config(ny_lfp, k_opto, seed, config.get("usid_overrides"), nz=nz)
+    cfg = _load_usid_config(ny_lfp, k_opto, seed, config.get("usid_overrides"), nz=nz, fold_behavior=fold_behavior)
     cfg.no_opsin = not use_opsin
 
     # === Natural electrode data, normalized in the controller's Y/Z coordinates (model_fit stats) ===
@@ -187,7 +191,8 @@ def fit_lds_to_data(
 # Config loading
 # ---------------------------------------------------------------------------
 
-def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = None, nz: int = None):
+def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = None, nz: int = None,
+                      fold_behavior: bool = True):
     """Load COLD-side USID config and apply runtime + COLD-config overrides.
 
     Base config is ``config/cold_usid.yaml`` (inside the COLD repo), maintained
@@ -196,10 +201,13 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
 
       1. cold_usid.yaml (base).
       2. Runtime-dependent fields injected here (data.source, models.ny,
-         models.n_clusters, models.nz, seed).
+         models.n_clusters, models.nz, models.fold_behavior, seed).
       3. COLD config's ``usid_overrides:`` block (if present) — lets individual
          COLD configs (e.g., ultra_light_config.yaml) tweak any USID hyperparam
          without editing cold_usid.yaml itself.
+
+    fold_behavior comes from the model_fit fold_behavior wildcard (a real cond-param):
+    True keeps the full-output observer, False pins the observer to the LFP block.
     """
     cold_usid_yaml = (
         Path(__file__).resolve().parent.parent.parent / "config" / "cold_usid.yaml"
@@ -222,6 +230,7 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
             "ny": ny,            # LFP block width; the stages build the model at ny+nz output
             "n_clusters": k_opto,
             "nz": nz,            # behavior partition width (ZN.shape[1]) of the merged readout Cy
+            "fold_behavior": fold_behavior,   # observer fold (fold_behavior wildcard); False -> LFP-only observer
         },
         "seed": seed,
     }
