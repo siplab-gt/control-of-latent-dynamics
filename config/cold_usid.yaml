@@ -44,14 +44,21 @@ seed: 42                   # Placeholder — overridden by _load_usid_config at 
 models:
   n1: 8                    # Natural subspace dim. Should roughly match fSNN's intrinsic dim.
   n2: 8                    # Unnatural subspace dim.
+  zero_k2: true            # Hard K2==0 for the USID phase (x2 input-driven only, matching the validated
+                           # best config); read by train_unnatural as cfg.models.zero_k2.
   ny: 1                    # Placeholder — overridden at runtime from sys_id data shape.
   n_clusters: 1            # Placeholder — overridden at runtime from cond_params.k.
   a_param_type: schur      # RealSchurParam (max_radius=0.99); alternative: ShearPolarRealSchurParam.
+  form: estimator_kf       # stored-matrix convention (open-loop blocks + filter gain K_f); merged-tree default.
+  a11_init: default        # natural A11 seed. NOT "prior" — that samples the synthetic generative prior COLD lacks.
+  a22_init: perturbed_identity  # unnatural A22 seed (scaled-identity + perturbation). NOT "prior" (synthetic-only).
 
 training:
   loss: mse
   optimizer: adam
   batch_size: 64
+  val_every_n_epochs: 1        # validate every epoch (merged-tree required key)
+  checkpoint_every_epochs: 10  # periodic epoch_{N}.pth snapshots; best.pth always saved
   wandb_logging: false
   save_checkpoints: true
 
@@ -104,6 +111,7 @@ natural_hyperparams:
   rollout:
     K: 32
     W: 32
+    stride: 5             # rollout-window stride (merged tree requires stride xor stride_factor)
     schedule:
       K:
         mode: linear
@@ -228,6 +236,7 @@ usid_hyperparams:
   rollout:
     K: 32
     W: 16
+    stride: 5             # rollout-window stride (merged tree requires stride xor stride_factor)
   loss:
     loss_weights:
       delta: 1             # Teacher-forced 1-step MSE on USID output.
@@ -268,11 +277,6 @@ usid_hyperparams:
       lambda_end: 0.01
       schedule_epochs: 30
       schedule_mode: exponential
-    k2_zero: true            # Hard K2==0 for the whole USID phase (observer-off
-                             # unnatural subspace). |lambda|->inf limit of k_reg;
-                             # x2 driven only by B2'·p (+ autonomous A22). Config-only
-                             # (no wildcard): zero (this=true) | regularize (false + k_reg)
-                             # | free (false, no k_reg). Default true.
     behavior_weight: 1.0     # Unnatural-phase (Phase 3) weight on the behavior block of the augmented
                              # [LFP|behavior] output (the LFP block is weight 1.0). All output losses are
                              # block-normalized so the modalities balance regardless of channel count;
