@@ -208,12 +208,6 @@ def model_fit(
         method_module_file.replace(".py", "").replace("/", ".")
     ).fit_lds_to_data(YN, ZN, UN, XN, n_x, cond_params, base_params, outfiles, config)
 
-    # Second handoff for the control-level usid_select='opto_dr2z' arm (USID multistart). The
-    # fit emits the opto-selected restart alongside the primary (r2y) from one training; pop it
-    # before saving the primary so its metadata stays clean. 'SAME' (n_restarts<=1 / non-USID)
-    # -> the second path gets the primary fit. Stats + linreg are stamped below identically.
-    _optodr2z_handoff = (getattr(lds, "metadata", {}) or {}).pop("_optodr2z_handoff", "SAME")
-
     # saving preprocessing info in model objects to use during inference in runPredict function
     # Note: This overwrites any stats set by the fit function (e.g., usid.py, braid.py).
     # The fit functions receive pre-normalized data, so we store the original stats here
@@ -256,20 +250,6 @@ def model_fit(
 
     # Drift-free config record: dump the exact merged config this cell used.
     _dump_config_snapshot(cond_params, base_params, config, lds, outfiles.lds_model)
-
-    # Second handoff (control-level usid_select='opto_dr2z'): same normalization stats, its own
-    # linreg from its own Xhat. 'SAME' -> the second path is the primary fit (n_restarts<=1).
-    if _optodr2z_handoff == "SAME":
-        save_pkl_gz(lds, outfiles.lds_model_optodr2z)
-    else:
-        lds2, Xhat2 = _optodr2z_handoff
-        (lds2.y_mean, lds2.y_std, lds2.z_mean, lds2.z_std,
-         lds2.u_mean, lds2.u_std, lds2.x_mean, lds2.x_std) = (
-            y_mean, y_std, z_mean, z_std, u_mean, u_std, x_mean, x_std)
-        fit_counts2 = getattr(lds2, "sanitize_clip_counts", {}) or {}
-        lds2.sanitize_clip_counts = {**sanitize_clip_counts, **fit_counts2}
-        lds2.linreg_lds2fsnn = LinearRegression().fit(Xhat2, X)
-        save_pkl_gz(lds2, outfiles.lds_model_optodr2z)
 
     # Write fit-quality analysis atomically with the LDS so the two can't
     # go out of sync. Keeps the CSV fresh whenever model_fit retrains.
@@ -341,9 +321,6 @@ if __name__ == "__main__" and "snakemake" in locals():
     # like forced — no schedule co-override needed. Held at 0 to isolate the rollout
     # axis when usid_rollout is swept.
     wc_usid_delta = getattr(snakemake.wildcards, "usid_delta", None)
-    # n_restarts routes usid_hyperparams.n_restarts (top-level, NOT a loss leaf): the
-    # base-fit multistart count; >1 fits N base models and keeps the best forced-path R2(Y).
-    wc_n_restarts = getattr(snakemake.wildcards, "n_restarts", None)
     # behavior_weight routes the behavior-block weight of the augmented [LFP|behavior] reconstruction
     # losses — the full-output-observer merge's LFP:behavior balance knob. It is applied to ALL THREE
     # recon read sites at once: natural Phase-1 (natural_hyperparams.loss), B1' Phase-2
@@ -355,7 +332,7 @@ if __name__ == "__main__" and "snakemake" in locals():
     # (K's behavior columns pinned to 0 — behavior is a pure readout).
     wc_fold_behavior = getattr(snakemake.wildcards, "fold_behavior", None)
     if any(w is not None for w in (wc_forced, wc_usid_rollout, wc_usid_teacher,
-                                   wc_usid_delta, wc_n_restarts, wc_behavior_weight, wc_fold_behavior)):
+                                   wc_usid_delta, wc_behavior_weight, wc_fold_behavior)):
         wildcard_usid_overrides = {"usid_hyperparams": {}}
         # forced + usid_rollout + usid_teacher share the loss.{loss_weights,schedule} leaves.
         loss_weights = {}
@@ -390,8 +367,6 @@ if __name__ == "__main__" and "snakemake" in locals():
             wildcard_usid_overrides["natural_hyperparams"] = {"loss": {"behavior_weight": bw}}
         if loss_block:
             wildcard_usid_overrides["usid_hyperparams"]["loss"] = loss_block
-        if wc_n_restarts is not None:
-            wildcard_usid_overrides["usid_hyperparams"]["n_restarts"] = int(wc_n_restarts)
         if wc_fold_behavior is not None:
             wildcard_usid_overrides["usid_hyperparams"]["fold_behavior"] = bool(int(wc_fold_behavior))
         existing = config_dict.get("usid_overrides", {}) or {}
@@ -401,7 +376,7 @@ if __name__ == "__main__" and "snakemake" in locals():
         log.info(
             f"[model_fit] wildcard usid_overrides: forced={wc_forced!r}, "
             f"usid_rollout={wc_usid_rollout!r}, usid_teacher={wc_usid_teacher!r}, "
-            f"usid_delta={wc_usid_delta!r}, n_restarts={wc_n_restarts!r}, "
+            f"usid_delta={wc_usid_delta!r}, "
             f"behavior_weight={wc_behavior_weight!r}, fold_behavior={wc_fold_behavior!r}"
         )
 

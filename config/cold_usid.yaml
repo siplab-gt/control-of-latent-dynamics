@@ -8,7 +8,7 @@
 # Override stack:
 #   1. This file is loaded as the base.
 #   2. Code overrides in _load_usid_config() inject runtime-dependent fields:
-#      - data.source: "cold_inline"   (forces cold path inside usid_data_interface)
+#      - data.source: "cold_inline"   (records the COLD inline data source)
 #      - models.ny                    (from sys_id data shape)
 #      - models.n_clusters            (from cond_params.k)
 #      - seed                         (from cond_params.seed)
@@ -93,7 +93,7 @@ trainer:
     backend: inductor
 
 data:
-  source: cold_inline      # Forces the cold path inside usid_data_interface.
+  source: cold_inline      # Records the COLD inline data source.
                            # (Code also overrides this defensively in _load_usid_config.)
 
 diagnostics:
@@ -131,17 +131,9 @@ natural_hyperparams:
                            # (which currently ramps 0.0 → 0.0). Added 2026-05-04
                            # to fix R²(Y) over-scaling — `forward(Y, U)` was
                            # never directly penalized, so Yhat magnitude drifts.
-      acf: 0.0             # Autocorrelation-matching loss (OFF).
       innov_white: 0.5     # Innovation-whiteness penalty. Realistic for COLD LFP
                            # — penalizes autocorrelation of y - C·x̂ at lags 1..10
                            # (burn_in=20). Improves observer-gain K1 quality.
-      sroll: 0.0           # Sliding rollout (OFF).
-      rvar: 0.0            # (OFF)
-      spectral: 0.0        # (OFF)
-      nstep:
-        '2': 0.0
-        '3': 0.0
-        '5': 0.0
     huber_delta: 0.1
     rollout_weighting:
       type: exponential
@@ -156,17 +148,6 @@ natural_hyperparams:
     innovation_whiteness:
       num_lags: 10
       burn_in: 20          # Discards first 20 timesteps per window before ACF.
-    sliding_rollout:
-      burn_in: 30
-      stride: 3
-      K_short: 8
-    acf_loss:
-      num_lags: 30
-      pretrain:
-        enabled: false
-        epochs: 100
-        lr: 0.01
-      freeze_A11: false
     schedule:
       # Per-epoch ramps on selected weights. Schedules override the static
       # loss_weights values during their active window.
@@ -180,34 +161,13 @@ natural_hyperparams:
         start: 0.1
         end: 0.1
         epochs: 20
-      nstep_2:
-        mode: linear
-        start: 0.0
-        end: 0.0
-        epochs: 30
-      nstep_3:
-        mode: linear
-        start: 0.0
-        end: 0.0
-        epochs: 40
-      acf:
-        mode: constant
-        end: 0.0
-        epochs: 30
   validation:
     loss_weights:
       delta: 1.0
       rollout: 0.2         # Slightly higher rollout weight at val for a
                            # generalization-sensitive metric.
       teacher: 0.0
-      acf: 0.0
       innov_white: 0.0
-      sroll: 0.0
-      rvar: 0.0
-      nstep:
-        '2': 0.0
-        '3': 0.0
-        '5': 0.0
     rollout:
       K: 80
       W: 16
@@ -248,11 +208,9 @@ usid_hyperparams:
                            # observer-off rollout.)
       teacher: 0.1         # Full-sequence teacher 1-step loss (observer ON). Schedule below ramps
                            # 1.0 → 0.0 over first 20 epochs; after that, this static 0.1 applies.
-      sroll: 0.0
-      spectral: 0.0
       ifp: 0.5             # Input-free penalty — active in COLD as of the
                            # natural_electrode_data integration in
-                           # _prepare_data_bundle. IFP fires on samples marked
+                           # load_cold_databundle. IFP fires on samples marked
                            # is_input_free=True; COLD constructs those by
                            # slicing natural_YN at USID window dims and setting
                            # u to the no-input equivalent (zeros under
@@ -260,12 +218,8 @@ usid_hyperparams:
                            # Sample ratio controlled by input_free_data_split
                            # below; input-free displaces input-driven 1:1 so
                            # total pool stays at N_opto windows. Matches
-                           # scripts/usid_data_interface.py:371-417 synthetic
+                           # usid/data/sources/synthetic.py synthetic
                            # logic. Disable by setting input_free_data_split=0.0.
-      nstep:
-        '2': 0.0
-        '3': 0.0
-        '5': 0.0
     huber_delta: 0.1
     rollout_weighting:
       type: exponential
@@ -282,22 +236,6 @@ usid_hyperparams:
                              # block-normalized so the modalities balance regardless of channel count;
                              # the observer-off rollout scores behavior too — the {Cy2-behavior,B2'}
                              # de-saturation lever, in-phase. 1.0 = equal LFP/behavior.
-    b1_recon:                # Phase 2 — {B1'} build (in run_training, BEFORE the unnatural matrices).
-                             # Trains ONLY B1' (Cy1, incl. its frozen behavior rows, is fixed from the
-                             # natural phase) on a block-normalized recon of the augmented [LFP|behavior]
-                             # output with x2≡0, so the natural opto input map is shaped by both LFP and
-                             # behavior. ATTRIBUTION version would BOUND B1' (norm / typical-regime cap);
-                             # see scratchpad/natural_unnatural_d2_and_cz_handling.md.
-      lfp_weight: 1.0        # LFP block weight in the Phase-2 recon
-      behavior_weight: 1.0   # behavior block weight in the Phase-2 recon
-      horizon: 10
-      steps: 400
-      lr: 5.0e-3
-      huber_delta: 0.0
-    sliding_rollout:
-      burn_in: 30
-      stride: 3
-      K_short: 8
     ifp:
       burn_in: 20
     schedule:
@@ -315,16 +253,6 @@ usid_hyperparams:
         start: 1.0
         end: 0.1
         epochs: 20
-      nstep_2:
-        mode: linear
-        start: 0.0
-        end: 0.0
-        epochs: 30
-      nstep_3:
-        mode: linear
-        start: 0.0
-        end: 0.0
-        epochs: 40
   validation:
     loss_weights:
       delta: 1.0
@@ -332,10 +260,6 @@ usid_hyperparams:
       teacher: 0.0
       ifp: 0.0             # Required active USID loss name (validation parse fails without it).
                            # 0 = tracked at val but not weighted into the val-loss / early-stop key.
-      nstep:
-        '2': 0.0
-        '3': 0.0
-        '5': 0.0
     rollout:
       K: 80
       W: 16
@@ -350,24 +274,5 @@ usid_hyperparams:
   train_split: 0.7
   val_split: 0.15
   subset_ratio: 0.5
-  # Horizon for the handoff free-run controllability diagnostics (R²(Z) / R²(Y) by
-  # depth) — the observer free-run depth the controller plans against. 20 = the 200 ms
-  # control horizon at subsample_factor=10 (10 ms) on the controller grid
-  # (ctrl_horizon_ms=200). Not a training knob — the behavior decoder is now the behavior
-  # row-block of the merged readout Cy, trained jointly with the dynamics (no Cz finetune).
-  cz_observer_horizon: 20
-  # Base-fit multistart count (COLD; the model_fit `n_restarts` wildcard). >1 fits N
-  # independent base models (distinct torch init seed, same sys-ID data) and keeps the
-  # one with the best held-out rollout-path R²(Y); the handoff then slices that winner's
-  # merged Cy (no separate finetune). Mitigates the multimodal USID+opsin seed lottery.
-  # 1 = single fit.
-  n_restarts: 1
-
-  # Observer fold (model_fit wildcard). false (default) = LFP-only observer: K1/K2's behavior columns
-  # are pinned to 0 so K acts on the LFP block only (the merged-Cy output is unchanged; the controller
-  # still measures behavior but K ignores it). true = fold the realized behavior into the observer —
-  # K1/K2 + innovation act on the full [LFP|behavior] output. Preference is false; true kept as a
-  # temporary axis to A/B fold vs no-fold in one run.
-  fold_behavior: false
 
 # (oracle_usid omitted — architecturally incompatible with COLD; same as oracle_natural.)

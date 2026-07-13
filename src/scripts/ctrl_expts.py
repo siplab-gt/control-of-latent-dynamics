@@ -37,6 +37,8 @@ class CtrlData(ExptData):
     C: Float[np.ndarray, "m n"] = None
     y_std: Float[np.ndarray, "m"] = None
     y_mean: Float[np.ndarray, "m"] = None
+    d: Float[np.ndarray, "m"] = None
+    """affine output bias (ỹ = C·x + d); None for BRAID (no d)."""
 
     compute_latency_mean_ms: float = None
     compute_latency_std_ms: float = None
@@ -83,11 +85,13 @@ class CtrlData(ExptData):
 
     @property
     def Yhat(self) -> Float[np.ndarray, "T m"]:
-        return self.Xhat_lds @ self.C.T * self.y_std + self.y_mean
+        d = self.d if self.d is not None else 0
+        return (self.Xhat_lds @ self.C.T + d) * self.y_std + self.y_mean
 
     @property
     def Yref(self) -> Float[np.ndarray, "T m"]:
-        return self.Xref_lds @ self.C.T * self.y_std + self.y_mean
+        d = self.d if self.d is not None else 0
+        return (self.Xref_lds @ self.C.T + d) * self.y_std + self.y_mean
 
     @property
     def X_fsnn(self) -> Float[np.ndarray, "T n"]:
@@ -330,6 +334,7 @@ def ctrl_expts(
     Zhat = ctrl_proc.Zhat * lds.z_std + lds.z_mean
     ctrl_data.set(
         C=lds.C,
+        d=getattr(lds, "d", None),
         Xref_lds=ctrl_proc.Xref,
         Xhat_lds=ctrl_proc.Xhat,
         linreg_lds2fsnn=lds.linreg_lds2fsnn,
@@ -351,18 +356,11 @@ if __name__ == "__main__" and "snakemake" in locals():
     fh = setup_logging(snakemake.config, snakemake.log[0])
     setup_debugger(snakemake.config["debug"])
 
-    # usid_select (ctrl-level wildcard) picks which multistart-selected handoff to control on:
-    # 'r2y' = the default (forced-path R2(Y)) selection, 'opto_dr2z' = the opto-isolating
-    # selection. Both come from ONE model_fit training (exact pairing); the model_fit cell does
-    # not fan on usid_select, so the two arms share identical bases.
-    _usid_select = getattr(snakemake.wildcards, "usid_select", "r2y")
-    _lds_in = (snakemake.input.lds_model_optodr2z if _usid_select == "opto_dr2z"
-               else snakemake.input.lds_model)
     ctrl_expts(
         preprocess_params(snakemake.wildcards),
         preprocess_params(snakemake.params),
         snakemake.input.cleo_prep,
-        _lds_in,
+        snakemake.input.lds_model,
         snakemake.output.data,  # outfile
         preprocess_params(snakemake.config),  # for non-essential params
     )

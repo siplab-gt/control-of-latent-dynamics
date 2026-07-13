@@ -195,7 +195,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
     @property
     def Yhat(self) -> Float[np.ndarray, "T m"]:
         """in original (unnormalized) space"""
-        return self.unzscore(self.Xhat @ self.C.T, "y")
+        return self.unzscore(self.Xhat @ self.C.T + getattr(self.lds, "d", 0), "y")
 
     @property
     def t_now(self) -> Quantity:
@@ -276,7 +276,7 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         """returns (xhat, P)"""
         assert np.linalg.norm(Ppred) < 1e100, "Ppred exploded"
         y = self.zscore(y, "y")
-        yerr = y - self.C @ xpred  # innovation
+        yerr = y - self.C @ xpred - getattr(self.lds, "d", 0)  # innovation
 
         # use pinv instead of inv in case of singular matrix (where C has an all-0 zero)
         # K = Ppred @ self.C.T @ np.linalg.pinv(self.C @ Ppred @ self.C.T + self.R)
@@ -328,8 +328,10 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
             x1_next: (n1,) natural state at time t+1
             x2_next: (n2,) unnatural state at time t+1
         """
-        innovation = y_zscored - obs.C1 @ x1
-        x1_next = obs.A11 @ x1 + obs.K1 @ y_zscored + obs.B1_prime @ u_opto_zscored
+        # obs.d is the affine output bias (ỹ = C·x + d); subtract it so the innovation
+        # and the K1 drive act on the C·x residual the observer gains were fitted against.
+        innovation = (y_zscored - obs.d) - obs.C1 @ x1
+        x1_next = obs.A11 @ x1 + obs.K1 @ (y_zscored - obs.d) + obs.B1_prime @ u_opto_zscored
         if obs.A12 is not None:
             x1_next += obs.A12 @ x2
         x2_next = obs.A22 @ x2 + obs.K2 @ innovation + obs.B2_prime @ u_opto_zscored

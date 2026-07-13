@@ -1,6 +1,7 @@
 from copy import deepcopy
 from functools import cache
 from math import ceil
+import glob
 import os
 import numpy as np
 import pandas as pd
@@ -94,8 +95,8 @@ steps_params = {
     # settings/target_iopto) and consumed by model_fit; a swept axis so different
     # training sets can be compared like any other sweep (see get_cold_opsin_input).
     "opsin_train_cold": ["opsin_stim_method"],
-    "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "usid_rollout", "n_restarts", "usid_teacher", "usid_delta", "behavior_weight", "fold_behavior"],
-    "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters", "usid_select"],
+    "model_fit": ["n_trials_sys_id", "model_task_inputs", "forced", "usid_rollout", "usid_teacher", "usid_delta", "behavior_weight", "fold_behavior"],
+    "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
     "analysis": [],
 }
 
@@ -731,9 +732,6 @@ rule ctrl_expts:
         "src/ctrl/{ctrl_type}.py",
         cleo_prep=wildcard_path("cleo_prep.pkl.gz"),
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
-        # Both selector handoffs are declared inputs (model_fit produces both from one training);
-        # ctrl_expts.py loads the one named by the usid_select wildcard.
-        lds_model_optodr2z=wildcard_path("model_fit_lds_optodr2z.pkl.gz"),
         # ctrl_expts unpickles cleo_prep, whose __reduce__ re-runs CleoPrep.build,
         # which EAGERLY reads chr2_4s_fsnn_calibration.json. Declare it (same
         # pattern as rule cleo_prep via _cleo_prep_calibration_input) so the DAG
@@ -842,24 +840,15 @@ def get_usid_dependencies(wildcards):
         raise ValueError(
             "USID_REPO_ROOT not set. Export it to the siplab-gt/usid repo root."
         )
+    # Glob the whole usid/ package (the transitive import set of cold_full_run:
+    # stages -> train -> model -> data -> interface -> eval -> util) plus the script
+    # entrypoints, rather than an explicit file list (which drifted stale across the refac).
     return [
         "config/cold_usid.yaml",
-        f"{usid_repo}/scripts/usid_subspace_interface.py",
-        f"{usid_repo}/models/USIDModel.py",
-        f"{usid_repo}/models/NaturalModel.py",
-        f"{usid_repo}/models/NNOpsinModel.py",
-        f"{usid_repo}/models/losses.py",
-        f"{usid_repo}/models/base_model.py",
-        f"{usid_repo}/models/Parameterization.py",
-        f"{usid_repo}/scripts/utils/config_io.py",
-        f"{usid_repo}/scripts/utils/checkpoints.py",
-        f"{usid_repo}/scripts/usid_data_interface.py",
-        f"{usid_repo}/scripts/usid_training_core.py",
-        # diagnostics.py / visualizations.py are intentionally NOT tracked: they only
-        # produce plots/metrics (run_*_diagnostics in usid.py, now gated off by default)
-        # and never affect the returned LDS / model_fit_pred / analysis CSV, so a
-        # plot-only edit should not invalidate model_fit and its multi-hour ctrl subtree.
-        # They remain ordinary module-level imports at runtime.
+        *sorted(glob.glob(f"{usid_repo}/usid/**/*.py", recursive=True)),
+        f"{usid_repo}/scripts/cold_training.py",
+        f"{usid_repo}/scripts/usid_training.py",
+        f"{usid_repo}/scripts/config_io.py",
     ]
 
 
@@ -1144,10 +1133,6 @@ rule model_fit:
         braid_basename=wildcard_path("model_fit_braid"),
     output:
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
-        # Second handoff: the opto_dr2z-selected multistart restart (== the primary for
-        # n_restarts<=1). model_fit does NOT fan on the ctrl-level usid_select wildcard, so this
-        # is produced from the SAME training as lds_model -> the two selector arms are exactly paired.
-        lds_model_optodr2z=wildcard_path("model_fit_lds_optodr2z.pkl.gz"),
         pred_data=wildcard_path("model_fit_pred_data.pkl.gz"),
         analysis_csv=wildcard_path("model_fit_analysis.csv"),
         config_snapshot=wildcard_path("config_snapshot.yaml"),
