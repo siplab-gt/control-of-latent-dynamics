@@ -128,11 +128,9 @@ natural_hyperparams:
     loss_weights:
       delta: 1.0           # Teacher-forced 1-step MSE.
       rollout: 0.1         # Multi-step rollout MSE.
-      teacher: 0.1         # Full-sequence teacher 1-step loss. Static value
-                           # applies after the schedule's 20-epoch window
-                           # (which currently ramps 0.0 → 0.0). Added 2026-05-04
-                           # to fix R²(Y) over-scaling — `forward(Y, U)` was
-                           # never directly penalized, so Yhat magnitude drifts.
+      teacher: 0.1         # Full-sequence teacher 1-step loss. Directly penalizes
+                           # `forward(Y, U)` so Yhat magnitude does not drift (fixes
+                           # R²(Y) over-scaling).
       innov_white: 0.5     # Innovation-whiteness penalty. Realistic for COLD LFP
                            # — penalizes autocorrelation of y - C·x̂ at lags 1..10
                            # (burn_in=20). Improves observer-gain K1 quality.
@@ -150,19 +148,6 @@ natural_hyperparams:
     innovation_whiteness:
       num_lags: 10
       burn_in: 20          # Discards first 20 timesteps per window before ACF.
-    schedule:
-      # Per-epoch ramps on selected weights. Schedules override the static
-      # loss_weights values during their active window.
-      teacher:
-        mode: linear
-        start: 0.0
-        end: 0.0
-        epochs: 20
-      rollout:
-        mode: linear
-        start: 0.1
-        end: 0.1
-        epochs: 20
   validation:
     loss_weights:
       delta: 1.0
@@ -208,8 +193,7 @@ usid_hyperparams:
                            # response the controller plans against. (This is the term previously split
                            # out as a separate 'forced' loss; in the usid refac the rollout IS the
                            # observer-off rollout.)
-      teacher: 0.1         # Full-sequence teacher 1-step loss (observer ON). Schedule below ramps
-                           # 1.0 → 0.0 over first 20 epochs; after that, this static 0.1 applies.
+      teacher: 0.1         # Full-sequence teacher 1-step loss (observer ON).
       ifp: 0.5             # Input-free penalty — active in COLD as of the
                            # natural_electrode_data integration in
                            # load_cold_databundle. IFP fires on samples marked
@@ -240,21 +224,6 @@ usid_hyperparams:
                              # de-saturation lever, in-phase. 1.0 = equal LFP/behavior.
     ifp:
       burn_in: 20
-    schedule:
-      # Schedules OVERRIDE the static loss_weights during the first N epochs.
-      # Note: teacher starts at 1.0 then ramps to 0.0 — USID trains with
-      # teacher-forcing ON for the first 20 epochs before switching to
-      # rollout-dominated, even though static teacher weight is 0.
-      teacher:
-        mode: linear
-        start: 1.0
-        end: 0.0
-        epochs: 20
-      rollout:
-        mode: linear
-        start: 1.0
-        end: 0.1
-        epochs: 20
   validation:
     loss_weights:
       delta: 1.0

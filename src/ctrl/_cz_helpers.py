@@ -29,6 +29,18 @@ import torch
 import torch.nn as nn
 
 
+def _behavior_bias(lds, m_z: int) -> torch.Tensor:
+    """The affine output bias on the behavior block: d[ny_lfp:] (the last m_z rows of the LDS bias d).
+
+    USID's SubspaceLDS carries d = -mu/sigma, so the normalized behavior readout is Cz·x + d_z; the
+    controller cost must track against Cz·x + d_z, not the bias-free Cz·x. BRAID has no d -> zeros.
+    """
+    d = getattr(lds, 'd', None)
+    if d is None:
+        return torch.zeros(m_z, dtype=torch.float32)
+    return torch.tensor(np.asarray(d)[-m_z:], dtype=torch.float32)
+
+
 def build_cz_state(lds) -> Dict[str, object]:
     """Detect linear-vs-nonlinear Cz from an LDS and return a controller-
     friendly state dict.
@@ -55,9 +67,11 @@ def build_cz_state(lds) -> Dict[str, object]:
 
     cz_matrix = getattr(lds, 'Cz', None)
     if cz_matrix is not None:
+        Cz = torch.tensor(cz_matrix, dtype=torch.float32)
         return {
             'is_nonlinear': False,
-            'Cz': torch.tensor(cz_matrix, dtype=torch.float32),
+            'Cz': Cz,
+            'd_z': _behavior_bias(lds, Cz.shape[0]),
         }
 
     cz1 = getattr(lds, 'Cz1', None)
@@ -65,10 +79,11 @@ def build_cz_state(lds) -> Dict[str, object]:
         Cz2 = getattr(lds, 'Cz2', None)
         if Cz2 is None:
             raise AttributeError("lds.Cz1 present but lds.Cz2 missing")
-        Cz = np.hstack([cz1, Cz2])
+        Cz = torch.tensor(np.hstack([cz1, Cz2]), dtype=torch.float32)
         return {
             'is_nonlinear': False,
-            'Cz': torch.tensor(Cz, dtype=torch.float32),
+            'Cz': Cz,
+            'd_z': _behavior_bias(lds, Cz.shape[0]),
         }
 
     return {'is_nonlinear': False}  # ref_type='X' fallback
@@ -88,7 +103,7 @@ def apply_cz(cz_state: Dict[str, object],
     Cz = cz_state.get('Cz')
     if Cz is None:
         return x
-    return x @ Cz.T
+    return x @ Cz.T + cz_state.get('d_z', 0.0)   # + d_z so the readout matches SubspaceLDS.x2z (Cz·x + d_z)
 
 
 def cz_jacobian(cz_state: Dict[str, object],

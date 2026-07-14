@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import yaml
@@ -45,7 +46,6 @@ def _cfg_to_plain(obj):
     """Recursively convert the loaded USID cfg (nested SimpleNamespace) into plain
     yaml-safe types, so model_fit.py can fold the resolved usid_hyperparams into the
     per-cell config_snapshot.yaml (drift-free config recording)."""
-    from types import SimpleNamespace
     if isinstance(obj, SimpleNamespace):
         return {k: _cfg_to_plain(v) for k, v in vars(obj).items()}
     if isinstance(obj, dict):
@@ -117,7 +117,7 @@ def fit_lds_to_data(
 
     # Observer fold wildcard (0 -> LFP-only observer, 1 -> full-output). preprocess_params casts the
     # wildcard string to int, so int() handles both an int and a str value.
-    fold_behavior = bool(int(cond_params.get("fold_behavior", 1)))
+    fold_behavior = bool(int(cond_params["fold_behavior"]))
 
     # === USID config: cold_usid.yaml + runtime dims + COLD usid_overrides. no_opsin is a per-setting
     # runtime kwarg (the BRAID-vs-USID sweep axis), so inject it here — train_unnatural reads it strictly.
@@ -142,7 +142,7 @@ def fit_lds_to_data(
     if z_mean is None or z_std is None:
         raise ValueError("USID model_fit requires z_mean/z_std in config (thread them from "
                          "model_fit.py) so the natural behavior loads in Z coords for the merged Cy.")
-    natural_YN, natural_ZN, nat_yn_clipped = _load_and_normalize_natural_data(
+    natural_YN, natural_ZN, nat_yn_clipped, nat_zn_clipped = _load_and_normalize_natural_data(
         natural_data_path, y_mean, y_std, z_mean=z_mean, z_std=z_std
     )
 
@@ -180,8 +180,11 @@ def fit_lds_to_data(
 
     # Full resolved USID config -> model_fit folds it into the per-cell config_snapshot.yaml.
     lds.metadata['resolved_usid_config'] = _cfg_to_plain(cfg)
-    # Natural-YN sanitize clip count -> model_fit merges it with the Y/Z/U/X counts for summary.csv.
-    lds.sanitize_clip_counts = {"Natural_YN": int(nat_yn_clipped)}
+    # Natural-YN/ZN sanitize clip counts -> model_fit merges them with the Y/Z/U/X counts for summary.csv.
+    lds.sanitize_clip_counts = {
+        "Natural_YN": int(nat_yn_clipped),
+        "Natural_ZN": int(nat_zn_clipped),
+    }
 
     log.info("USID model fitting complete (inline training via cold_full_run)")
     return lds, Zhat, Yhat, Xhat
@@ -261,7 +264,7 @@ def _load_and_normalize_natural_data(
     y_std: np.ndarray,
     z_mean: np.ndarray = None,
     z_std: np.ndarray = None,
-) -> tuple[np.ndarray, np.ndarray, int]:
+) -> tuple[np.ndarray, np.ndarray, int, int]:
     """Load natural electrode data, normalize with model_fit stats, and
     sanitize post-normalization overflow.
 
@@ -278,7 +281,8 @@ def _load_and_normalize_natural_data(
     Returns natural_ZN=None when z-stats are absent (the no-behavior path never needs it).
 
     Returns:
-        Tuple of (normalized natural_YN, normalized natural_ZN or None, clip count for summary.csv).
+        Tuple of (normalized natural_YN, normalized natural_ZN or None, YN clip count, ZN clip count).
+        Both clip counts feed summary.csv; the ZN count is 0 on the no-behavior path.
     """
     log.info(f"Loading natural electrode data from: {natural_data_path}")
     natural_expt = ExptData.load(natural_data_path)
@@ -289,10 +293,11 @@ def _load_and_normalize_natural_data(
     natural_YN = natural_YN.astype(np.float32)
 
     natural_ZN = None
+    nat_zn_clipped = 0
     if z_mean is not None and z_std is not None:
         natural_Z = natural_expt.Z.astype(np.float64)
         natural_ZN = (natural_Z - z_mean) / z_std
-        natural_ZN, _ = sanitize_normalized(natural_ZN, "Natural_ZN", log=log)
+        natural_ZN, nat_zn_clipped = sanitize_normalized(natural_ZN, "Natural_ZN", log=log)
         natural_ZN = natural_ZN.astype(np.float32)
         log.info(f"Natural behavior: T={natural_ZN.shape[0]}, nz={natural_ZN.shape[1]} "
                  f"(natural Z = behavior block of the augmented output; the Cy1 behavior rows are "
@@ -302,4 +307,4 @@ def _load_and_normalize_natural_data(
         f"Natural data: T={natural_YN.shape[0]}, ny={natural_YN.shape[1]}, "
         f"normalized with model_fit stats"
     )
-    return natural_YN, natural_ZN, n_clipped
+    return natural_YN, natural_ZN, n_clipped, nat_zn_clipped

@@ -84,14 +84,16 @@ class CtrlData(ExptData):
         return self._predict_fsnn_tolerating_nan(self.linreg_lds2fsnn, self.Xhat_lds)
 
     @property
-    def Yhat(self) -> Float[np.ndarray, "T m"]:
-        d = self.d if self.d is not None else 0
-        return (self.Xhat_lds @ self.C.T + d) * self.y_std + self.y_mean
+    def Yhat(self) -> Float[np.ndarray, "T n_lfp"]:
+        ny_lfp = self.y_std.shape[0]   # y_std/y_mean are LFP-only; slice the augmented readout to the LFP rows
+        d = self.d[:ny_lfp] if self.d is not None else 0
+        return (self.Xhat_lds @ self.C[:ny_lfp].T + d) * self.y_std + self.y_mean
 
     @property
-    def Yref(self) -> Float[np.ndarray, "T m"]:
-        d = self.d if self.d is not None else 0
-        return (self.Xref_lds @ self.C.T + d) * self.y_std + self.y_mean
+    def Yref(self) -> Float[np.ndarray, "T n_lfp"]:
+        ny_lfp = self.y_std.shape[0]
+        d = self.d[:ny_lfp] if self.d is not None else 0
+        return (self.Xref_lds @ self.C[:ny_lfp].T + d) * self.y_std + self.y_mean
 
     @property
     def X_fsnn(self) -> Float[np.ndarray, "T n"]:

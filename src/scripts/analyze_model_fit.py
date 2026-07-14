@@ -39,38 +39,14 @@ def analyze_model_fit(
     metrics["largest_eigval"] = np.max(np.abs(np.linalg.eigvals(lds.A)))
 
     # Sanitize clip counts from the normalization pipeline. A non-zero
-    # `n_sanitize_clipped_{Y,Z,U,X,Natural_YN}` column flags a pathological
-    # row: ±1e6 clipping kicked in during `sanitize_normalized` after
-    # float32 cast would have overflowed, which typically means v3 plant
+    # `n_sanitize_clipped_{Y,Z,U,X,Natural_YN,Natural_ZN}` column flags a
+    # pathological row: ±1e6 clipping kicked in during `sanitize_normalized`
+    # after float32 cast would have overflowed, which typically means v3 plant
     # divergence. The clipped channel's contribution is meaningless even
     # though the array is finite — summary aggregation should filter.
     clip_counts = getattr(lds, "sanitize_clip_counts", {}) or {}
-    for key in ("Y", "Z", "U", "X", "Natural_YN"):
+    for key in ("Y", "Z", "U", "X", "Natural_YN", "Natural_ZN"):
         metrics[f"n_sanitize_clipped_{key}"] = int(clip_counts.get(key, 0))
-
-    # Horizon-resolved free-run R²(Z) — the load-bearing controllability metric, stashed on
-    # lds.metadata by model_fit/usid.py. Absent for non-USID fits (BRAID/known_factors) —
-    # NaN-filled then. R2_freerun_Z_h0 ≈ R2_model_fit_Z_Zhat is the correctness gate;
-    # R2_freerun_Z_h7/h10/h20 (70/100/200 ms; 70 ms ≈ the chr2 opsin time constant) are what
-    # actually predict control. The metric computes every depth h0..cz_observer_horizon, so
-    # adding/removing an `h` here is purely a column selection over the saved curve.
-    meta = getattr(lds, "metadata", {}) or {}
-    fr = meta.get("freerun_r2z", {}) or {}
-    for h in (0, 1, 5, 7, 10, 20):
-        metrics[f"R2_freerun_Z_h{h}"] = float(fr.get(f"h{h}", np.nan))
-    metrics["freerun_Z_predictable_horizon"] = float(fr.get("predictable_horizon", np.nan))
-    # Forced-path R²(Y) — the control-relevant open-loop fit the Kalman-masked val loss is blind to.
-    # The behavior decoder is now the behavior row-block of the merged readout Cy (trained jointly with
-    # the dynamics), so its deployed free-run R²(Z) is the R2_freerun_Z_h* above; there is no separate
-    # Cz-finetune provenance to record.
-    metrics["freerun_r2y"] = float(meta.get("freerun_r2y", np.nan))
-
-    # Phase 2 {B1'} build provenance (block-normalized recon of the augmented [LFP|behavior]).
-    b1 = meta.get("b1_phase", {}) or {}
-    metrics["b1_lfp_weight"] = float(b1.get("b1_lfp_weight", np.nan))
-    metrics["b1_behavior_weight"] = float(b1.get("b1_behavior_weight", np.nan))
-    metrics["b1_dB1_norm"] = float(b1.get("dB1_norm", np.nan))
-    metrics["b1_norm_post"] = float(b1.get("B1_new_norm", np.nan))
 
     print(metrics)
     print(f"Saving R2 values to {outfile}")

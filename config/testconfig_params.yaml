@@ -54,15 +54,14 @@ params:
   # clipped Ornstein-Uhlenbeck colored noise). Equivalent for control Q (sweep 10833292).
   opsin_stim_method: current_mix
   # USID model_fit-level loss-weight wildcards (route into usid_overrides via
-  # src/scripts/model_fit.py): forced = usid_hyperparams.loss.loss_weights.forced
-  # (forced-loss weight). Defaults match the static cold_usid.yaml values so a run
-  # that does not sweep them carries the committed behaviour.
-  forced: 1.0
+  # src/scripts/model_fit.py): each maps to a usid_hyperparams.loss.loss_weights leaf.
+  # Defaults match the static cold_usid.yaml values so a run that does not sweep them
+  # carries the committed behaviour.
   usid_rollout: 0.1      # USID open-loop rollout loss weight (model_fit wildcard); 0.1 = committed default
-  usid_teacher: 0.1       # USID teacher loss weight (model_fit wildcard; co-overrides loss_weights.teacher + schedule.teacher); 0.1 = cold_usid default. 0 = drop teacher (clean tf-only with forced=0, usid_rollout=0).
-  usid_delta: 1.0         # USID delta-of-rollout loss weight (model_fit wildcard; plain leaf, NO schedule); 1.0 = cold_usid default. 0 = isolate the rollout-level axis (no delta-of-rollout conflation).
-  behavior_weight: 1.0    # Behavior-block weight in the augmented [LFP|behavior] reconstruction losses (model_fit wildcard; routes into the natural Phase-1, B1' Phase-2, and unnatural Phase-3 recons). 1.0 = equal LFP/behavior blocks. >1 upweights behavior reconstruction.
-  fold_behavior: 0        # observer fold (model_fit wildcard): 0 = LFP-only observer (default; K's behavior columns pinned 0, behavior a pure readout); 1 = behavior folded into the K1/K2 observer (full-output).
+  usid_teacher: 0.1       # USID teacher loss weight (model_fit wildcard); 0.1 = cold_usid default. 0 = drop teacher (clean tf-only with usid_rollout=0).
+  usid_delta: 1.0         # USID delta-of-rollout loss weight (model_fit wildcard); 1.0 = cold_usid default. 0 = isolate the rollout-level axis (no delta-of-rollout conflation).
+  behavior_weight: 1.0    # Behavior-block weight in the augmented [LFP|behavior] reconstruction losses (model_fit wildcard; routes into the natural Phase-1 and unnatural Phase-3 recons). 1.0 = equal LFP/behavior blocks. >1 upweights behavior reconstruction.
+  fold_behavior: 1        # observer fold (model_fit wildcard): 1 = full-output (default; behavior folded into K1/K2 observer); 0 = LFP-only (K behavior cols pinned 0, behavior a pure readout).
   latency: false
   ctrl_type: LQMPC
   ctrl_horizon_ms: 200

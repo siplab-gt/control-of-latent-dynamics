@@ -419,7 +419,8 @@ class ILQRController(Controller):
                 Lxx = (2.0 * self.Qcost / self.n_r) * (J_cz.T @ J_cz)
             elif has_cz(self._cz_state):
                 Cz_mat = self._cz_state['Cz']
-                lx_next = (2.0 * self.Qcost / self.n_r) * (Cz_mat.T @ (Cz_mat @ x_next - r_t))
+                # residual Cz·x + d_z - ref (d_z is the constant behavior bias; Jacobian/Lxx unaffected)
+                lx_next = (2.0 * self.Qcost / self.n_r) * (Cz_mat.T @ (Cz_mat @ x_next + self._cz_state.get('d_z', 0.0) - r_t))
                 Lxx = Lxx_const
             else:
                 lx_next = (2.0 * self.Qcost / self.n_r) * (x_next - r_t)

@@ -54,7 +54,7 @@ def _deep_merge_overrides(base: dict, override: dict) -> dict:
     """Deep merge `override` into `base` (override wins on conflicts).
 
     Recurses into nested dicts so a leaf override (e.g.
-    usid_hyperparams.loss.loss_weights.forced) replaces only that leaf and
+    usid_hyperparams.loss.loss_weights.rollout) replaces only that leaf and
     keeps sibling keys. Mirrors src/model_fit/usid.py::_deep_merge — kept as a
     small local copy so model_fit.py has no cross-module import for a 6-line
     helper (and no import-fallback). Used to fold the loss-weight wildcard
@@ -312,31 +312,24 @@ if __name__ == "__main__" and "snakemake" in locals():
     #
     # Snakemake wildcards are strings; parse explicitly — every loss-weight
     # leaf is a float ("0.0", "2.0"). Deep-merge so a per-setting
-    # usid_overrides block (e.g. the usid_loss_* loss schedules) is preserved.
-    wc_forced = getattr(snakemake.wildcards, "forced", None)
+    # usid_overrides block (static loss_weights (rollout/teacher/delta)) is preserved.
     wc_usid_rollout = getattr(snakemake.wildcards, "usid_rollout", None)
     wc_usid_teacher = getattr(snakemake.wildcards, "usid_teacher", None)
-    # usid_delta routes loss_weights.delta (the delta-of-rollout loss, parallel to
-    # the rollout level loss). It has NO schedule entry, so it is a plain leaf write
-    # like forced — no schedule co-override needed. Held at 0 to isolate the rollout
-    # axis when usid_rollout is swept.
+    # usid_delta routes loss_weights.delta (the delta-of-rollout loss, parallel to the rollout
+    # level loss). Held at 0 to isolate the rollout axis when usid_rollout is swept.
     wc_usid_delta = getattr(snakemake.wildcards, "usid_delta", None)
     # behavior_weight routes the behavior-block weight of the augmented [LFP|behavior] reconstruction
-    # losses — the full-output-observer merge's LFP:behavior balance knob. It is applied to ALL THREE
-    # recon read sites at once: natural Phase-1 (natural_hyperparams.loss), B1' Phase-2
-    # (usid_hyperparams.loss.b1_recon), unnatural Phase-3 (usid_hyperparams.loss). The deep-merge
-    # preserves sibling leaves (b1_recon.lfp_weight, horizon, ...).
+    # losses — the full-output-observer merge's LFP:behavior balance knob. It is applied to the natural
+    # Phase-1 recon (natural_hyperparams.loss) and the unnatural Phase-3 recon (usid_hyperparams.loss).
+    # The deep-merge preserves sibling leaves (lfp_weight, horizon, ...).
     wc_behavior_weight = getattr(snakemake.wildcards, "behavior_weight", None)
     # NOTE: the fold_behavior wildcard is NOT routed here. It is threaded as a real cond-param —
     # fit_lds_to_data reads it off cond_params and _load_usid_config injects it as models.fold_behavior —
     # so it reaches cfg.models.fold_behavior directly, without this usid_overrides injection seam.
-    if any(w is not None for w in (wc_forced, wc_usid_rollout, wc_usid_teacher,
+    if any(w is not None for w in (wc_usid_rollout, wc_usid_teacher,
                                    wc_usid_delta, wc_behavior_weight)):
         wildcard_usid_overrides = {"usid_hyperparams": {}}
-        # forced + usid_rollout + usid_teacher share the loss.{loss_weights,schedule} leaves.
         loss_weights = {}
-        if wc_forced is not None:
-            loss_weights["forced"] = float(wc_forced)
         if wc_usid_rollout is not None:
             loss_weights["rollout"] = float(wc_usid_rollout)
         if wc_usid_teacher is not None:
@@ -346,22 +339,9 @@ if __name__ == "__main__" and "snakemake" in locals():
         loss_block = {}
         if loss_weights:
             loss_block["loss_weights"] = loss_weights
-        # cold_usid.yaml pins rollout AND teacher via USID-phase SCHEDULEs (linear ramps that persist
-        # past their window), so setting loss_weights.{rollout,teacher} alone is silently overridden.
-        # Co-override the schedule to the swept value (flat start=end=v) so a 0 stays 0 with no ramp.
-        schedule = {}
-        if wc_usid_rollout is not None:
-            r = float(wc_usid_rollout)
-            schedule["rollout"] = {"mode": "linear", "start": r, "end": r, "epochs": 20}
-        if wc_usid_teacher is not None:
-            t = float(wc_usid_teacher)
-            schedule["teacher"] = {"mode": "linear", "start": t, "end": t, "epochs": 20}
-        if schedule:
-            loss_block["schedule"] = schedule
         if wc_behavior_weight is not None:
             bw = float(wc_behavior_weight)
             loss_block["behavior_weight"] = bw                              # Phase 3 (unnatural recon)
-            loss_block.setdefault("b1_recon", {})["behavior_weight"] = bw   # Phase 2 (B1' pretrain recon)
             # Phase 1 (natural recon) lives under natural_hyperparams, not usid_hyperparams:
             wildcard_usid_overrides["natural_hyperparams"] = {"loss": {"behavior_weight": bw}}
         if loss_block:
@@ -371,7 +351,7 @@ if __name__ == "__main__" and "snakemake" in locals():
             existing, wildcard_usid_overrides
         )
         log.info(
-            f"[model_fit] wildcard usid_overrides: forced={wc_forced!r}, "
+            f"[model_fit] wildcard usid_overrides: "
             f"usid_rollout={wc_usid_rollout!r}, usid_teacher={wc_usid_teacher!r}, "
             f"usid_delta={wc_usid_delta!r}, "
             f"behavior_weight={wc_behavior_weight!r}"
