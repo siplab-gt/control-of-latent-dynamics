@@ -41,7 +41,14 @@ def safe_std_compute(arr: np.ndarray, axis: int, name: str, log=None):
     m = np.mean(arr, axis=axis)
     s = np.std(arr, axis=axis)
 
-    bad_std = ~np.isfinite(s) | (s <= 0)
+    # A near-constant channel (std ~ 0 but not exactly 0) makes both (arr-mean)/std and the merged-readout
+    # output bias d = -mean/std blow up — e.g. the reaching task's degenerate 3rd behavior dim has
+    # std ~5e-5, giving d ~1e4, which poisons the z-scored controller tracking objective and the
+    # full-output observer innovation. Treat any std that is a negligible fraction of the typical channel
+    # std the same as an exactly-constant channel (clamped to 1.0 below).
+    _finite_pos = s[np.isfinite(s) & (s > 0)]
+    std_floor = 1e-3 * float(np.median(_finite_pos)) if _finite_pos.size else 0.0
+    bad_std = ~np.isfinite(s) | (s <= std_floor)
     bad_mean = ~np.isfinite(m)
     if bad_std.any() or bad_mean.any():
         n_std = int(bad_std.sum())
