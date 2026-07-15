@@ -7,6 +7,15 @@ from src.ctrl import Controller
 
 @define
 class LQMPCController(Controller):
+    """Linear-quadratic MPC: a convex (CVXPY) QP over the light command, solved on the LINEAR model.
+
+    The NN opsin model is NOT wired into this optimization — LQMPC plans as if light maps linearly to
+    state, ignoring the opsin's saturating nonlinearity. On the USID+opsin arm it therefore over-drives
+    the light (empirically ~2x the no-opsin BRAID controller), saturates ChR2, and goes negative (Q < 0),
+    so it is NOT a relevant controller for USID+opsin research — use NLMPC (or iLQR), which plan on the
+    nonlinear opsin (compute_photocurrents). LQMPC remains valid for the no-opsin BRAID baseline.
+    """
+
     def reset(self):
         super().reset()
         self.init_optimization()
