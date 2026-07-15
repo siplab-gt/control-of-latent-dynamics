@@ -50,9 +50,9 @@ def _v_clamp_dummy_neuron_eqs(v_clamp: float) -> str:
     return (
         f"v = {v_clamp} : 1\n"
         f"            Iopto : 1\n"
-        f"            x = 0*um : meter\n"
-        f"            y = 0*um : meter\n"
-        f"            z = 0*um : meter"
+        f"            x : meter\n"
+        f"            y : meter\n"
+        f"            z : meter"
     )
 
 

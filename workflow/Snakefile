@@ -1018,11 +1018,11 @@ rule calibrate_opsin_plant:
         configfiles=configfile_inputs_excluding_sweeps,
     params:
         target_iopto=lambda wc: wc.target_iopto,
-        # phim_scale (>1 = less light-sensitive plant) and peak_saturation_bound
-        # are optional; default to 1.0 / 0.3 (the script defaults) when absent.
+        # phim_scale (>1 = less light-sensitive plant) and peak_saturation_headroom
+        # are optional; default to 1.0 / 15.0 (the script defaults) when absent.
         phim_scale=lambda wc: config["calibrate_opsin_plant"].get("phim_scale", 1.0),
-        peak_saturation_bound=lambda wc: config["calibrate_opsin_plant"].get(
-            "peak_saturation_bound", 0.3),
+        peak_saturation_headroom=lambda wc: config["calibrate_opsin_plant"].get(
+            "peak_saturation_headroom", 15.0),
         fiber_distance_um=lambda wc: config["calibrate_opsin_plant"].get(
             "fiber_distance_um", 500.0),
         e_ratio=lambda wc: config["calibrate_opsin_plant"].get("e_ratio", 3.5),
@@ -1040,7 +1040,7 @@ rule calibrate_opsin_plant:
         "{input.voperating} {output[0]} "
         "--target-iopto {params.target_iopto} "
         "--phim-scale {params.phim_scale} "
-        "--peak-saturation-bound {params.peak_saturation_bound} "
+        "--peak-saturation-headroom {params.peak_saturation_headroom} "
         "--fiber-distance-um {params.fiber_distance_um} "
         "--e-ratio {params.e_ratio} "
         "> {log} 2>&1"
@@ -1122,6 +1122,7 @@ rule opsin_train_cold:
 rule model_fit:
     input:
         "src/model_fit/__init__.py",
+        "src/helpers.py",  # safe_std_compute/normalization + save_pkl_gz used by model_fit -> retrigger on change
         method=get_model_fit_method,
         usid_deps=get_usid_dependencies,
         natural_data=get_natural_data_input,

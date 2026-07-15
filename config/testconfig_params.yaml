@@ -305,7 +305,7 @@ calibrate_opsin_plant:
   # (raises solved g0 ~3.4× vs the legacy 0.05@100µm point); g0 = target_iopto × 3.488.
   # target_iopto=0.8 (g0 2.79) is the mid-plateau operating point: Q_track plateaus at ~+0.40
   # across g0 2.5–3.2; 0.8 gives USID+oed +0.397 with margin from the saturation gate
-  # (peak |Iopto| @75mW ≈ 8.6 < bound 10; g0>3.2 fails the gate). phim_scale=5 unchanged.
+  # (peak |Iopto| @75mW ≈ 8.6 < bound 12 = 15 × target_iopto). phim_scale=5 unchanged.
   target_iopto: 0.8
   phim_scale: 5
   # Reference fiber→neuron distance for the g0 solve (lines up with the
@@ -315,12 +315,9 @@ calibrate_opsin_plant:
   # v-distribution (vinf absent task input, median over neurons). e_ratio sets E
   # placement: E = v_low + e_ratio*window; lower = E closer = stronger (V−E) dependence.
   e_ratio: 3.5
-  # Guard RELAXED to 10.0: at target≈mean(|u_in|) the OPERATING-point drive is
-  # natural-scale (pk@5mW≈0.6-1.0, validated) but the 75 mW saturation peak (the
-  # rare lognormal tail) reaches ~4-8, which the old 0.30 bound would block. The
-  # real fSNN-stability gate is chr2_stability_check + n_sanitize_clipped /
-  # n_nonfinite flags on the actual sys_id/model_fit runs — monitor those.
-  peak_saturation_bound: 10.0
+  # peak_saturation_headroom left at the script default (15 × target_iopto). The real
+  # fSNN-stability gate is chr2_stability_check + n_sanitize_clipped / n_nonfinite flags
+  # on the actual sys_id/model_fit runs — monitor those.
 
 opsin_train_cold:
   # Hyperparams for the opsin_train_cold rule (COLD self-trained NN opsin).

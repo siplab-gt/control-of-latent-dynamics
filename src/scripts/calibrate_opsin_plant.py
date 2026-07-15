@@ -67,13 +67,13 @@ DEFAULT_BENCH_DURATION_MS = DEFAULT_PULSE_DURATION_MS
 DEFAULT_MODEL_PERIOD_MS = 1.0
 _STEADY_STATE_TAIL_SAMPLES = 10
 
-# Bansal's saturation light produces a smaller |Iopto| envelope than PyRhO at
-# the same target_iopto, so the legacy bound (1.5) leaves orders-of-magnitude
-# headroom that masks Bansal kinetic-shape regressions. Tighten to 0.3, which
-# is ≈20% above the empirically observed PyRhO peak (~0.25 at 75 mW/mm² with
-# target_iopto=0.05) — a Bansal recalibration that produces a much larger
-# peak fails the bench check rather than silently driving fSNN out of regime.
-DEFAULT_PEAK_SATURATION_BOUND = 0.3
+# Saturation-light peak |Iopto| must stay under the fSNN input envelope, above which a kinetic-shape
+# regression would silently drive the fSNN out of regime. The saturation peak scales with g0 ∝
+# target_iopto (observed peak/target ratio ≈ 10.7 for the Bansal plant @75 mW/mm²), so the gate is a
+# multiple of target_iopto — like the relative pre-saturation gate — and never desyncs when target_iopto
+# changes. Headroom 15 → ~40% margin over the ~10.7 ratio: passes normal kinetic variation, rejects a
+# materially larger peak.
+DEFAULT_PEAK_SATURATION_HEADROOM = 15.0
 
 # Reference fiber→neuron distance for the g0 solve. 500 µm lines the chr2/Bansal
 # calibration up with the proportional_current plant (`cleo_prep.py` uses a
@@ -95,9 +95,9 @@ def _dimensionless_dummy_neuron_model(v_clamp: float) -> str:
     return (
         f"v = {v_clamp} : 1\n"
         f"            Iopto : 1\n"
-        f"            x = 0*um : meter\n"
-        f"            y = 0*um : meter\n"
-        f"            z = 0*um : meter"
+        f"            x : meter\n"
+        f"            y : meter\n"
+        f"            z : meter"
     )
 
 
@@ -154,7 +154,7 @@ def calibrate(
     bench_duration_ms: float = DEFAULT_BENCH_DURATION_MS,
     model_period_ms: float = DEFAULT_MODEL_PERIOD_MS,
     rel_err_tolerance: float = 0.05,
-    peak_saturation_bound: float = DEFAULT_PEAK_SATURATION_BOUND,
+    peak_saturation_headroom: float = DEFAULT_PEAK_SATURATION_HEADROOM,
     phim_scale: float = 1.0,
     fiber_distance_um: float = DEFAULT_FIBER_DISTANCE_UM,
     e_ratio: float = E_RATIO,
@@ -268,8 +268,8 @@ def calibrate(
             f"out of its working regime."
         )
 
-    # Step 3: saturation check — peak |Iopto| under 75 mW/mm² must stay below
-    # the absolute bound so fSNN's driving-current envelope isn't violated.
+    # Step 3: saturation check — peak |Iopto| under 75 mW/mm² must stay below the target-scaled bound
+    # (headroom × target_iopto) so fSNN's driving-current envelope isn't violated.
     # Need a fresh opsin instance because Brian2's start_scope() in
     # _run_constant_pulse would otherwise discard state mid-use.
     opsin_sat = UnitlessChr2FourState(g0=g0, E=E, phim=phim)
@@ -282,14 +282,16 @@ def calibrate(
         fiber_distance_um=fiber_distance_um,
     )
     peak_sat = float(np.max(np.abs(iopto_sat)))
+    peak_saturation_bound = peak_saturation_headroom * abs(target_iopto)
     log.info(
-        f"Saturation ({saturation_light_mWmm2:g} mW/mm²): peak |Iopto| = {peak_sat:.6e} "
-        f"vs bound {peak_saturation_bound:g}"
+        f"Saturation ({saturation_light_mWmm2:g} mW/mm²): peak |Iopto| = {peak_sat:.6e} vs bound "
+        f"{peak_saturation_bound:g} (= {peak_saturation_headroom:g} × target_iopto {target_iopto:g})"
     )
     if peak_sat > peak_saturation_bound:
         raise RuntimeError(
             f"Saturation check failed: peak |Iopto| {peak_sat:.6e} > bound {peak_saturation_bound:g} "
-            f"at {saturation_light_mWmm2:g} mW/mm². fSNN's input envelope would be violated; "
+            f"(= {peak_saturation_headroom:g} × target_iopto {target_iopto:g}) at "
+            f"{saturation_light_mWmm2:g} mW/mm². fSNN's input envelope would be violated; "
             f"revisit v_high/v_low window or target_iopto."
         )
 
@@ -331,6 +333,7 @@ def calibrate(
             "peak_at_target": peak_at_target,
             "peak_target_bound": peak_target_bound,
             "peak_at_saturation": peak_sat,
+            "peak_saturation_headroom": peak_saturation_headroom,
             "peak_saturation_bound": peak_saturation_bound,
         },
         "ratios": {"E": e_ratio},
@@ -375,13 +378,12 @@ def main():
                         help="Brian2 model period (Iopto sampling resolution).")
     parser.add_argument("--rel-err-tolerance", type=float, default=0.05,
                         help="Bench tolerance for |Iopto_ss - target|/target.")
-    parser.add_argument("--peak-saturation-bound", type=float,
-                        default=DEFAULT_PEAK_SATURATION_BOUND,
-                        help="Absolute bound on |Iopto| at saturation-light input. "
-                             "Default 0.3 (≈20%% margin above the empirically observed "
-                             "PyRhO peak ~0.25); Bansal-anchored calibration produces a "
-                             "smaller envelope, so this gate catches kinetic-shape "
-                             "regressions that the legacy 1.5 bound would mask.")
+    parser.add_argument("--peak-saturation-headroom", type=float,
+                        default=DEFAULT_PEAK_SATURATION_HEADROOM,
+                        help="Saturation gate as a multiple of target_iopto: peak |Iopto| at "
+                             "saturation light must stay below headroom × target_iopto. Default 15 "
+                             "(~40%% margin above the observed peak/target ratio ~10.7); scales with "
+                             "target_iopto so it never needs manual re-tuning.")
     parser.add_argument("--phim-scale", type=float, default=1.0,
                         help="Multiplier on the opsin half-saturation phim. >1 = less "
                              "light-sensitive (saturates later, more linear over the "
@@ -414,7 +416,7 @@ def main():
         bench_duration_ms=args.bench_duration_ms,
         model_period_ms=args.model_period_ms,
         rel_err_tolerance=args.rel_err_tolerance,
-        peak_saturation_bound=args.peak_saturation_bound,
+        peak_saturation_headroom=args.peak_saturation_headroom,
         phim_scale=args.phim_scale,
         fiber_distance_um=args.fiber_distance_um,
         e_ratio=args.e_ratio,
