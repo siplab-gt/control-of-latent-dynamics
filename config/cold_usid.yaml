@@ -255,4 +255,10 @@ usid_hyperparams:
   val_split: 0.15
   subset_ratio: 0.5
 
+  # Parallel multistart: n_starts seeded candidates trained together, successively-halved to the best by
+  # y-rollout R² (rungs = 0-based epoch indices within the full unnatural sub-phase). n_starts=1 is the
+  # untouched single fit. The seed lottery lives in the COLD unnatural/opto fit, so this is the stage to
+  # raise n_starts on. Sweep n_starts as a cond-param wildcard, never a runtime override.
+  multistart: { n_starts: 1, rungs: [10, 25, 50], rule: median, eta: 2, grace: 1, base_seed: 10007 }
+
 # (oracle_usid omitted — architecturally incompatible with COLD; same as oracle_natural.)

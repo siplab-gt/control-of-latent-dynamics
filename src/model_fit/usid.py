@@ -119,9 +119,17 @@ def fit_lds_to_data(
     # wildcard string to int, so int() handles both an int and a str value.
     fold_behavior = bool(int(cond_params["fold_behavior"]))
 
+    # Unnatural-fit parallel multistart count (model_fit wildcard). Overrides usid_hyperparams.multistart.n_starts;
+    # >1 activates the successive-halving ensemble in train_unnatural. preprocess_params casts the string to int.
+    n_starts = int(cond_params["n_starts"])
+
+
+
+
     # === USID config: cold_usid.yaml + runtime dims + COLD usid_overrides. no_opsin is a per-setting
     # runtime kwarg (the BRAID-vs-USID sweep axis), so inject it here — train_unnatural reads it strictly.
-    cfg = _load_usid_config(ny_lfp, k_opto, seed, config.get("usid_overrides"), nz=nz, fold_behavior=fold_behavior)
+    cfg = _load_usid_config(ny_lfp, k_opto, seed, config.get("usid_overrides"), nz=nz, fold_behavior=fold_behavior,
+                            n_starts=n_starts)
     cfg.no_opsin = not use_opsin
 
     # === Natural electrode data, normalized in the controller's Y/Z coordinates (model_fit stats) ===
@@ -195,7 +203,7 @@ def fit_lds_to_data(
 # ---------------------------------------------------------------------------
 
 def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = None, nz: int = None,
-                      fold_behavior: bool = True):
+                      fold_behavior: bool = True, n_starts: int = 1):
     """Load COLD-side USID config and apply runtime + COLD-config overrides.
 
     Base config is ``config/cold_usid.yaml`` (inside the COLD repo), maintained
@@ -204,7 +212,8 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
 
       1. cold_usid.yaml (base).
       2. Runtime-dependent fields injected here (data.source, models.ny,
-         models.n_clusters, models.nz, models.fold_behavior, seed).
+         models.n_clusters, models.nz, models.fold_behavior,
+         usid_hyperparams.multistart.n_starts, seed).
       3. COLD config's ``usid_overrides:`` block (if present) — lets individual
          COLD configs (e.g., ultra_light_config.yaml) tweak any USID hyperparam
          without editing cold_usid.yaml itself.
@@ -235,6 +244,9 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
             "nz": nz,            # behavior partition width (ZN.shape[1]) of the merged readout Cy
             "fold_behavior": fold_behavior,   # observer fold (fold_behavior wildcard); False -> LFP-only observer
         },
+        # n_starts from the model_fit n_starts wildcard; overrides only the multistart count and preserves the
+        # cold_usid.yaml rungs/rule/eta. Applies to the unnatural fit (usid_hyperparams), the seed-lottery stage.
+        "usid_hyperparams": {"multistart": {"n_starts": n_starts}},
         "seed": seed,
     }
     merged_dict = _deep_merge(base_dict, overrides)
