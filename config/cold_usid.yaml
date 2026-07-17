@@ -57,7 +57,13 @@ models:
                            # overrides this per-cell (0 -> LFP-only observer, behavior a pure readout).
   ny: 1                    # Placeholder — overridden at runtime from sys_id data shape.
   n_clusters: 1            # Placeholder — overridden at runtime from cond_params.k.
-  a_param_type: schur      # RealSchurParam (max_radius=0.99); alternative: ShearPolarRealSchurParam.
+  a_param_type: schur      # RealSchurParam; alternative: ShearPolarRealSchurParam.
+  # Spectral-radius clamps applied inside the A parameterizations on every forward (part of the model's
+  # identity: recorded in the checkpoint meta, reused by every rebuild). The clamp sets the slowest retained
+  # mode: rho=0.97 -> tau ~33 steps, 0.99 -> ~100, against a 100 ms control horizon. Under zero_k2, K2=0
+  # leaves A22 as the block the deployed controller free-runs, so a22_max_radius bounds its memory directly.
+  a11_max_radius: 0.99     # natural A11 clamp
+  a22_max_radius: 0.97     # unnatural A22 clamp
   form: estimator_kf       # stored-matrix convention (open-loop blocks + filter gain K_f); merged-tree default.
   a11_init: default        # natural A11 seed. NOT "prior" — that samples the synthetic generative prior COLD lacks.
   a22_init: perturbed_identity  # unnatural A22 seed (scaled-identity + perturbation). NOT "prior" (synthetic-only).
@@ -194,12 +200,8 @@ usid_hyperparams:
   loss:
     loss_weights:
       delta: 1             # Teacher-forced 1-step MSE on USID output.
-      rollout: 0.1         # Multi-step OBSERVER-OFF rollout MSE. The horizon runs open-loop
-                           # (K1=K2=0), driven only by the input path B'·photocurrent, so this term
-                           # identifies B'/A22/A12/Cy2 against the opto->output map — the open-loop
-                           # response the controller plans against. (This is the term previously split
-                           # out as a separate 'forced' loss; in the usid refac the rollout IS the
-                           # observer-off rollout.)
+      rollout: 0.1         # Multi-step rollout MSE on A_open — the operator the deployed controller
+                           # free-runs. The horizon takes no K·y drive, only B'·photocurrent.
       teacher: 0.1         # Full-sequence teacher 1-step loss (observer ON).
       ifp: 0.5             # Input-free penalty — active in COLD as of the
                            # natural_electrode_data integration in
