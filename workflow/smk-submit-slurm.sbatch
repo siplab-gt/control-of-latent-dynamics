@@ -4,7 +4,7 @@
 #SBATCH --mem-per-cpu=4G                        # Memory for coordinator
 #SBATCH -t20:00:00                              # Time limit (fit before 2026-05-12T06:00 maintenance)
 #SBATCH -ologs/slurm-%j.out                         # Combined output and error messages file
-#SBATCH -A gts-crozell3                  # Account (primary recovered to 75.6 SU 2026-06-01; ece fallback)
+#SBATCH -A gts-crozell3-ece                  # Account (ece 151 SU; gts-crozell3 at 48 SU, too low for a 60-cell sweep)
 cd $SLURM_SUBMIT_DIR                            # Change to working directory
 
 module load anaconda3                           # Load module dependencies
@@ -48,7 +48,7 @@ snakemake \
     --jobs 100 \
     --max-jobs-per-second 1 \
     --max-status-checks-per-second 2 \
-    --default-resources slurm_account=gts-crozell3 tasks_per_gpu=0 \
+    --default-resources slurm_account=gts-crozell3-ece tasks_per_gpu=0 \
     --envvars LD_LIBRARY_PATH PYTHONPATH USID_REPO_ROOT \
     --rerun-incomplete \
     --keep-going
