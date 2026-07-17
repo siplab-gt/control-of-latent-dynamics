@@ -44,8 +44,15 @@ seed: 42                   # Placeholder — overridden by _load_usid_config at 
 models:
   n1: 8                    # Natural subspace dim. Should roughly match fSNN's intrinsic dim.
   n2: 8                    # Unnatural subspace dim.
-  zero_k2: true            # Hard K2==0 for the USID phase (x2 input-driven only, matching the validated
-                           # best config); read by train_unnatural as cfg.models.zero_k2.
+  zero_k2: false           # Leave the unnatural gain K2 trainable; read by train_unnatural as
+                           # cfg.models.zero_k2.
+                           # K2==0 is DARE-optimal only where the unnatural subspace has NO process noise
+                           # (Q22=0) — true of the synthetic generator, false of COLD's fSNN, whose x2
+                           # absorbs real residual dynamics. It was also the safe choice under the old
+                           # predictor form, where the learned gain was the ill-conditioned K_p; the
+                           # estimator_kf form learns the bounded filter gain K_f instead, so the pin buys
+                           # nothing and costs the x2 observer. Measured (sweep 11212664, 15 seeds):
+                           # unpinning is +0.096 Q_track (t=3.38, 12/15) and closes the post-merge gap.
   fold_behavior: true      # observer fold default (full-output); the fold_behavior model_fit wildcard
                            # overrides this per-cell (0 -> LFP-only observer, behavior a pure readout).
   ny: 1                    # Placeholder — overridden at runtime from sys_id data shape.
