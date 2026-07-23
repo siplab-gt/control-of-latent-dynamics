@@ -74,7 +74,7 @@ def _deep_merge_overrides(base: dict, override: dict) -> dict:
 # snapshot (they are data, not config, and would bloat/break the YAML).
 _SNAPSHOT_DROP = {
     "y_mean", "y_std", "u_mean", "u_std", "z_mean", "z_std", "x_mean", "x_std",
-    "Iopto_per_neuron", "channel_neuron_transmittance",
+    "Iopto_per_neuron", "channel_neuron_transmittance", "opto_trial_starts",
 }
 
 
@@ -196,6 +196,13 @@ def model_fit(
     # the merged readout Cy predicts.
     config['z_mean'] = z_mean
     config['z_std'] = z_std
+
+    # Per-trial onsets (into the [:T] recording) so the USID model_fit can window the opto recording
+    # continuously WITHIN each sys-id trial and split whole trials into train/val (no overlapping-window
+    # leakage). i_trial_boundaries[i, 0] is trial i's onset; [:n_trials] are all < T, so they index the
+    # sliced arrays directly. Data (not config) — dropped from the config snapshot; BRAID/known_factors
+    # ignore it.
+    config['opto_trial_starts'] = expt_data.i_trial_boundaries[:n_trials, 0].astype(int)
 
     # Opsin-fit validation data (only present when sys_id_expts recorded it).
     # Sliced to the same T window used for YN/UN/ZN so downstream diagnostics

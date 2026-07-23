@@ -119,17 +119,20 @@ def fit_lds_to_data(
     # wildcard string to int, so int() handles both an int and a str value.
     fold_behavior = bool(int(cond_params["fold_behavior"]))
 
-    # Unnatural-fit parallel multistart count (model_fit wildcard). Overrides usid_hyperparams.multistart.n_starts;
-    # >1 activates the successive-halving ensemble in train_unnatural. preprocess_params casts the string to int.
-    n_starts = int(cond_params["n_starts"])
+    # Per-leg parallel multistart counts (model_fit wildcards). Each injects the matching top-level
+    # multistart.*_restarts; >1 activates the successive-halving ensemble in that leg's stage.
+    # preprocess_params casts the wildcard string to int.
+    natural_restarts = int(cond_params["natural_restarts"])
+    usid_restarts = int(cond_params["usid_restarts"])
 
-
-
+    # Validation-loss regime (model_fit wildcard): selects the validation.loss_weights that drive best-val
+    # checkpointing + multistart culling. delta_dom = pre-refactor criterion; rollout_dom = current default.
+    val_regime = str(cond_params["val_regime"])
 
     # === USID config: cold_usid.yaml + runtime dims + COLD usid_overrides. no_opsin is a per-setting
     # runtime kwarg (the BRAID-vs-USID sweep axis), so inject it here — train_unnatural reads it strictly.
     cfg = _load_usid_config(ny_lfp, k_opto, seed, config.get("usid_overrides"), nz=nz, fold_behavior=fold_behavior,
-                            n_starts=n_starts)
+                            natural_restarts=natural_restarts, usid_restarts=usid_restarts, val_regime=val_regime)
     cfg.no_opsin = not use_opsin
 
     # === Natural electrode data, normalized in the controller's Y/Z coordinates (model_fit stats) ===
@@ -154,12 +157,22 @@ def fit_lds_to_data(
         natural_data_path, y_mean, y_std, z_mean=z_mean, z_std=z_std
     )
 
-    # === De-normalize the opto light so the frozen opsin receives raw mW/mm² (model_fit z-scored it) ===
+    # === Opto light for B' training. The frozen opsin needs raw mW/mm² (model_fit z-scored it), but the
+    # no-opsin subspace path applies B' to the light directly — and every controller feeds that path
+    # z-scored light ((u - u_mean)/u_std, from lds.u_mean/u_std). So B' must be trained in the SAME gauge
+    # it is deployed in: raw when use_opsin, z-scored otherwise. nat_u_ref is the input-free ("no light")
+    # value in that gauge: raw 0, or its z-scored image -u_mean/u_std. ===
     opto_UN = UN[:, :k_opto]
-    U_raw = np.clip(opto_UN * u_std[:k_opto] + u_mean[:k_opto], 0, None).astype(np.float32)
+    if use_opsin:
+        opto_input = np.clip(opto_UN * u_std[:k_opto] + u_mean[:k_opto], 0, None).astype(np.float32)
+        nat_u_ref = np.zeros(k_opto, dtype=np.float32)
+    else:
+        opto_input = opto_UN.astype(np.float32)
+        nat_u_ref = (-u_mean[:k_opto] / u_std[:k_opto]).astype(np.float32)
 
-    # === Concat NormStats over the augmented [LFP|behavior] output (width ny_lfp+nz); u is identity
-    # (raw light). This is bundle.norm — the single source for the output bias d = -(y_mean/y_std). ===
+    # === Concat NormStats over the augmented [LFP|behavior] output (width ny_lfp+nz). u is identity: the
+    # light already carries its intended gauge (raw or z-scored per above), so normalize_bundle must not
+    # rescale it. This is bundle.norm — the single source for the output bias d = -(y_mean/y_std). ===
     norm_stats = NormStats(
         y_mean=torch.tensor(np.concatenate([y_mean, z_mean]), dtype=torch.float32),
         y_std=torch.tensor(np.concatenate([y_std, z_std]), dtype=torch.float32),
@@ -167,9 +180,18 @@ def fit_lds_to_data(
         u_std=torch.ones(k_opto, dtype=torch.float32),
     )
 
+    # Per-trial onsets from model_fit (data, threaded via config) so the opto recording is windowed
+    # continuously within each sys-id trial and whole trials — never overlapping windows — split train/val.
+    opto_trial_starts = config.get('opto_trial_starts')
+    if opto_trial_starts is None:
+        raise ValueError(
+            "config['opto_trial_starts'] is unset; model_fit.py must thread the sys-id trial onsets "
+            "(expt_data.i_trial_boundaries[:n_trials, 0]) so the USID opto pool windows within trials."
+        )
+
     bundle = load_cold_databundle(
-        YN, ZN, U_raw, XN, natural_YN, natural_ZN, norm_stats, cfg, device,
-        k_opto=k_opto, seed=seed,
+        YN, ZN, opto_input, XN, natural_YN, natural_ZN, norm_stats, cfg, device,
+        k_opto=k_opto, seed=seed, nat_u_ref=nat_u_ref, opto_trial_starts=opto_trial_starts,
     )
 
     # === Opsin checkpoint dir (loaded inside the pipeline with the 'external' provenance gate). Only
@@ -202,8 +224,19 @@ def fit_lds_to_data(
 # Config loading
 # ---------------------------------------------------------------------------
 
+# Validation loss-weight regimes selected by the model_fit `val_regime` wildcard. The validation loss is
+# the criterion for best-val checkpointing (both legs) and multistart rung-culling, so it steers which basin
+# the fit keeps. Only delta/rollout differ between regimes; the leg-specific regularizers stay 0 at
+# validation. `validation.rollout` (K/W) is left to cold_usid.yaml (this injects only loss_weights).
+_VAL_REGIMES = {
+    "delta_dom":   {"delta": 1.0, "rollout": 0.2, "teacher": 0.0, "innov_white": 0.0, "ifp": 0.0, "kreg": 0.0},
+    "rollout_dom": {"delta": 0.2, "rollout": 1.0, "teacher": 0.0, "innov_white": 0.0, "ifp": 0.0, "kreg": 0.0},
+}
+
+
 def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = None, nz: int = None,
-                      fold_behavior: bool = True, n_starts: int = 1):
+                      fold_behavior: bool = True, natural_restarts: int = 1, usid_restarts: int = 1,
+                      val_regime: str = "rollout_dom"):
     """Load COLD-side USID config and apply runtime + COLD-config overrides.
 
     Base config is ``config/cold_usid.yaml`` (inside the COLD repo), maintained
@@ -213,7 +246,8 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
       1. cold_usid.yaml (base).
       2. Runtime-dependent fields injected here (data.source, models.ny,
          models.n_clusters, models.nz, models.fold_behavior,
-         usid_hyperparams.multistart.n_starts, seed).
+         multistart.natural_restarts, multistart.usid_restarts,
+         validation.loss_weights (val_regime wildcard), seed).
       3. COLD config's ``usid_overrides:`` block (if present) — lets individual
          COLD configs (e.g., ultra_light_config.yaml) tweak any USID hyperparam
          without editing cold_usid.yaml itself.
@@ -234,6 +268,9 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
     with open(cold_usid_yaml, "r", encoding="utf-8") as f:
         base_dict = yaml.safe_load(f) or {}
 
+    if val_regime not in _VAL_REGIMES:
+        raise ValueError(f"val_regime must be one of {sorted(_VAL_REGIMES)}, got {val_regime!r}")
+
     overrides = {
         "data": {
             "source": "cold_inline",
@@ -244,9 +281,12 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
             "nz": nz,            # behavior partition width (ZN.shape[1]) of the merged readout Cy
             "fold_behavior": fold_behavior,   # observer fold (fold_behavior wildcard); False -> LFP-only observer
         },
-        # n_starts from the model_fit n_starts wildcard; overrides only the multistart count and preserves the
-        # cold_usid.yaml rungs/rule/eta. Applies to the unnatural fit (usid_hyperparams), the seed-lottery stage.
-        "usid_hyperparams": {"multistart": {"n_starts": n_starts}},
+        # Per-leg counts from the model_fit natural_restarts/usid_restarts wildcards, deep-merged with
+        # cold_usid.yaml's shared rungs/rule/eta/grace/base_seed. The usid leg is the seed-lottery stage.
+        "multistart": {"natural_restarts": natural_restarts, "usid_restarts": usid_restarts},
+        # Validation loss-weights from the val_regime wildcard (selection criterion for best-val + multistart
+        # culling); overrides cold_usid.yaml's validation.loss_weights, leaving validation.rollout untouched.
+        "validation": {"loss_weights": _VAL_REGIMES[val_regime]},
         "seed": seed,
     }
     merged_dict = _deep_merge(base_dict, overrides)
