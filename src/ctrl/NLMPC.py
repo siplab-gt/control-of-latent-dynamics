@@ -30,19 +30,29 @@ from src.ctrl._cz_helpers import apply_cz, build_cz_state, has_cz
 log = logging.getLogger(__name__)
 
 
-def _rollout_state(x0, u_for_B, A11, A22, K1, K2, C1, C2, A12,
-                   B1_prime, B2_prime, ref_trajectory, ref_type,
+def _rollout_state(x0, u_for_B, A_cl, B_block, ref_trajectory, ref_type,
                    cz_state=None):
-    """Roll out subspace-LDS state dynamics through the MPC horizon.
+    """Roll out the closed-loop subspace-LDS state through the MPC horizon.
+
+    The observer-form update
+        x1' = A11 x1 + K1 (C1 x1 + C2 x2) + B1' u (+ A12 x2)
+        x2' = A22 x2 + K2 (C2 x2) + B2' u
+    is exactly linear in x = [x1; x2] (the innovation y_pred - C1 x1 equals
+    C2 x2), so it is a single closed-loop block system
+        x_{t+1} = A_cl x_t + B_block u_t,
+        A_cl = [[A11 + K1 C1, K1 C2 + A12], [0, A22 + K2 C2]],
+        B_block = [B1'; B2'].
+    A_cl / B_block are precomputed once from the frozen model in
+    `_setup_torch_matrices`; here the driven term B_block u is applied to the
+    whole horizon in one matmul and only the small A_cl x recurrence is serial.
 
     Args:
         x0: (n,) initial state [x1; x2] (torch tensor)
-        u_for_B: (H, k_opto) input vector that B'_1 / B'_2 are multiplied by.
-            In opsin-mode this is `photocurrents` (NN_opsin output);
-            in linearized-subspace-mode (USID `use_opsin=False`) this is
-            `u_zscored` directly. Same recurrence math; the caller chooses
-            what to feed in.
-        A11..B2_prime: state-space matrices (torch tensors)
+        u_for_B: (H, k_opto) input B' is multiplied by — `photocurrents`
+            (NN_opsin output) in opsin-mode, `u_zscored` in linearized-subspace
+            mode (USID `use_opsin=False`). Same recurrence; caller picks.
+        A_cl: (n, n) closed-loop state matrix (torch tensor)
+        B_block: (n, k_opto) stacked [B1'; B2'] input matrix (torch tensor)
         ref_trajectory: (H, n_r) reference in z-scored space (torch tensor)
         ref_type: "X" or "Z"
         cz_state: dict from `build_cz_state` describing linear/nonlinear
@@ -51,33 +61,17 @@ def _rollout_state(x0, u_for_B, A11, A22, K1, K2, C1, C2, A12,
     Returns:
         tracking_cost: scalar (torch tensor)
     """
-    n1 = A11.shape[0]
     H = u_for_B.shape[0]
+    driven = u_for_B @ B_block.T  # (H, n): B_block u_t for the whole horizon
 
-    x1 = x0[:n1]
-    x2 = x0[n1:]
+    x = x0
     cost = torch.tensor(0.0, dtype=x0.dtype, device=x0.device)
-
     for t in range(H):
-        u_t = u_for_B[t]
-
-        # State update (observer form, using y = C1@x1 + C2@x2 as predicted y)
-        y_pred = C1 @ x1 + C2 @ x2
-
-        x1_next = A11 @ x1 + K1 @ y_pred + B1_prime @ u_t
-        if A12 is not None:
-            x1_next = x1_next + A12 @ x2
-        innovation = y_pred - C1 @ x1
-        x2_next = A22 @ x2 + K2 @ innovation + B2_prime @ u_t
-
-        x1, x2 = x1_next, x2_next
-
-        # Tracking cost
-        x_full = torch.cat([x1, x2])
+        x = A_cl @ x + driven[t]
         if ref_type == "Z" and cz_state is not None and has_cz(cz_state):
-            ctrl_var = apply_cz(cz_state, x_full)
+            ctrl_var = apply_cz(cz_state, x)
         else:
-            ctrl_var = x_full
+            ctrl_var = x
         cost = cost + torch.sum((ctrl_var - ref_trajectory[t]) ** 2)
 
     return cost / H
@@ -317,6 +311,21 @@ class NLMPCController(Controller):
                 'B2_prime': torch.tensor(lds.B2_prime, dtype=torch.float32),
                 'A12': torch.tensor(lds.A12, dtype=torch.float32) if lds.A12 is not None else None,
             }
+            # Precompute the closed-loop block system the rollout iterates:
+            # x_{t+1} = A_cl x_t + B_block u_t (frozen model → build once). See
+            # _rollout_state for the derivation (innovation = C2 x2).
+            m = self._torch_matrices
+            n1 = m['A11'].shape[0]
+            n2 = m['A22'].shape[0]
+            A_cl = torch.zeros((n1 + n2, n1 + n2), dtype=torch.float32)
+            A_cl[:n1, :n1] = m['A11'] + m['K1'] @ m['C1']
+            top_right = m['K1'] @ m['C2']
+            if m['A12'] is not None:
+                top_right = top_right + m['A12']
+            A_cl[:n1, n1:] = top_right
+            A_cl[n1:, n1:] = m['A22'] + m['K2'] @ m['C2']
+            m['A_cl'] = A_cl
+            m['B_block'] = torch.cat([m['B1_prime'], m['B2_prime']], dim=0)
         else:
             # Unified-LDS shape (BRAID). Only A / B_opto / C / Cz are present.
             self._torch_matrices = {
@@ -422,18 +431,14 @@ class NLMPCController(Controller):
                 photocurrents, _ = self._run_opsin_forward(u_light, h0=h0_planning)
                 tracking_cost = _rollout_state(
                     x0, photocurrents,
-                    mat['A11'], mat['A22'], mat['K1'], mat['K2'],
-                    mat['C1'], mat['C2'], mat['A12'],
-                    mat['B1_prime'], mat['B2_prime'],
+                    mat['A_cl'], mat['B_block'],
                     ref, self.ref_type, self._cz_state,
                 )
             elif self._subspace_mode:
                 u_zscored = (u_light - mat['u_mean_opto']) / mat['u_std_opto']
                 tracking_cost = _rollout_state(
                     x0, u_zscored,
-                    mat['A11'], mat['A22'], mat['K1'], mat['K2'],
-                    mat['C1'], mat['C2'], mat['A12'],
-                    mat['B1_prime'], mat['B2_prime'],
+                    mat['A_cl'], mat['B_block'],
                     ref, self.ref_type, self._cz_state,
                 )
             else:  # linearized_unified (BRAID)
