@@ -74,12 +74,17 @@ params:
   natural_restarts: 4     # natural-fit parallel multistart count (model_fit wildcard); 4 = successive-halving ensemble (default, the metric knee), rungs/rule from cold_usid.yaml. 1 = single fit.
   usid_restarts: 4        # unnatural-fit parallel multistart count (model_fit wildcard); the seed-lottery leg. Same scale as natural_restarts.
   val_regime: rollout_dom # validation-loss criterion (model_fit wildcard) for best-val checkpointing + multistart culling: rollout_dom {delta:0.2,rollout:1.0} (= cold_usid.yaml) | delta_dom {delta:1.0,rollout:0.2}.
-  latency: true
-  ctrl_type: LQMPC
-  ctrl_horizon_ms: 300
-  nlmpc_grad_iters: 10
-  k: 22
-  m: 42
+  # Closed-loop controller settings. NLMPC is the only controller valid on a with-opsin
+  # arm (LQMPC plans linearly and over-drives light through the saturating opsin);
+  # LQMPC remains valid for the no-opsin BRAID baseline.
+  latency: false
+  ctrl_type: NLMPC
+  ctrl_horizon_ms: 100
+  # Inner-solve iteration cap. The convergence test stops earlier when the projected
+  # gradient flattens; the cap must be high enough that it is not what ends the solve.
+  nlmpc_grad_iters: 300
+  k: 32
+  m: 32
 
 # Top-level architectural switches
 power_per_neuron_uW: 1
@@ -229,6 +234,9 @@ ctrl_expts:
   baseline_latency_ms: 1
   solvers: ["osqp", "clarabel", "scs"]
   nlmpc_step_size: 0.5
+  # All stim-rec settings track Z, so this belongs to every setting rather than to
+  # per-setting ctrl_expts_<setting> blocks.
+  ref_type: Z
 
 ctrl_expts_OL:
   time_limit_ms: 2000
@@ -254,9 +262,6 @@ ctrl_expts_iLQR:
   ilqr_mu_min: 1e-6
   ilqr_mu_max: 1e6
   ilqr_mu_factor: 10.0
-
-ctrl_expts_usid_stim_rec:
-  ref_type: Z
 
 chr2_stability_check:
   # Verdict thresholds. ALL must hold for chr2_stable=True. Values are
