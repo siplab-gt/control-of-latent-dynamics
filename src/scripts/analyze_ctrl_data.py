@@ -9,6 +9,7 @@ from sklearn.metrics import r2_score
 from snakemake.script import snakemake
 
 from src.helpers import (
+    drop_constant_behavior,
     load_factors_emg,
     preprocess_params,
     setup_debugger,
@@ -304,8 +305,13 @@ def analyze_ctrl_data(
         except (ValueError, ZeroDivisionError):
             return np.nan
 
+    # Zref comes back from the controller already spanning the model's behavior channels, while
+    # ctrl_data.Z is the raw recorded readout; trim Z (and the NULL twin) to match.
+    ctrl_Z = drop_constant_behavior(ctrl_data.Z, "ctrl Z")
+    null_Z = drop_constant_behavior(null_ctrl_data.Z, "null ctrl Z")
+
     # R2
-    results["R2_track_Zref_Z"] = r2_score_masked(ctrl_data.Zref, ctrl_data.Z)
+    results["R2_track_Zref_Z"] = r2_score_masked(ctrl_data.Zref, ctrl_Z)
     results["R2_track_Xref_X_fsnn"] = r2_score_masked(ctrl_data.Xref_fsnn, ctrl_data.X)
     results["R2_track_Xref_Xhat_fsnn"] = r2_score_masked(
         ctrl_data.Xref_fsnn, ctrl_data.Xhat_fsnn
@@ -316,7 +322,7 @@ def analyze_ctrl_data(
 
     # Q
     results["Q_track_Zref_Z"] = q_track_masked(
-        ctrl_data.Zref, ctrl_data.Z, null_ctrl_data.Z
+        ctrl_data.Zref, ctrl_Z, null_Z
     )
     results["Q_track_Xref_X_fsnn"] = q_track_masked(
         ctrl_data.Xref_fsnn, ctrl_data.X, null_ctrl_data.X

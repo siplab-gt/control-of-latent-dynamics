@@ -12,6 +12,7 @@ from sklearn.linear_model import LinearRegression
 
 from src.data_classes import BaseDataClass
 from src.helpers import (
+    drop_constant_behavior,
     preprocess_params,
     safe_std_compute,
     sanitize_normalized,
@@ -139,7 +140,7 @@ def model_fit(
         T = len(expt_data.X)
     X = expt_data.X[:T]
     Y = expt_data.Y[:T]
-    Z = expt_data.Z[:T]
+    Z = drop_constant_behavior(expt_data.Z[:T], "Z", log=log)
     if str2bool(cond_params.model_task_inputs):
         U = np.hstack([expt_data.Uopto, expt_data.Utask])
     else:

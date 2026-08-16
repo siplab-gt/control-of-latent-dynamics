@@ -3,6 +3,7 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
+from src.helpers import drop_constant_behavior
 from src.scripts.model_fit import LDS, ModelFitPredData
 from src.scripts.sys_id_expts import ExptData
 
@@ -21,16 +22,17 @@ def analyze_model_fit(
         T = len(sys_id_data.X)
     X = sys_id_data.X[:T]
     Y = sys_id_data.Y[:T]
-    Z = sys_id_data.Z[:T]
+    Z = drop_constant_behavior(sys_id_data.Z[:T], "Z")
     Zhat_from_X = LinearRegression().fit(X, Z).predict(X)
     # save R2 for model fit quality
     metrics = {
         "R2_model_fit_X_Xhat_fsnn": r2_score(X, model_fit_pred_data.Xhat_lds2fsnn),
         # R2(Y) and R2(Z) both use sklearn's default multioutput='uniform_average', so the two
-        # columns are directly comparable as channel-averaged fit quality.
+        # columns are directly comparable as channel-averaged fit quality. Z carries only the
+        # task's driven channels (drop_constant_behavior), so no zero-variance dim can dominate
+        # the channel average.
         "R2_model_fit_Z_Zhat": r2_score(Z, model_fit_pred_data.Zhat),
-        # sanity check: should be 1. variance_weighted accounts for the constant 3rd reaching
-        # output (zero-variance dim gets zero weight) so the perfect state->Z map reads as 1.0.
+        # sanity check: should be 1.
         "R2_model_fit_Z_X": r2_score(Z, Zhat_from_X, multioutput="variance_weighted"),
         "R2_model_fit_Y_Yhat": r2_score(Y, model_fit_pred_data.Yhat)
         if Y.shape[1] > 0

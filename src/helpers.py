@@ -22,6 +22,86 @@ keeps the downstream `.astype(np.float32)` from producing ±inf → NaN loss,
 at the cost of that channel's contribution being meaningless."""
 
 
+_DEGENERATE_STD_RATIO = 1e-3
+"""Relative std below which `safe_std_compute` floors a channel to 1.0."""
+
+_CONSTANT_TAIL_MAX_RATIO = 1e-2
+"""Upper bound on a dropped channel's std relative to the kept channels' scale.
+
+Deliberately looser than `_DEGENERATE_STD_RATIO`: this only has to separate "constant" from
+"driven", and the two populations are three orders of magnitude apart (the legacy tail measures
+~3e-4 of the kept scale, a driven channel ~1). The slack matters because the closed-loop NULL arm
+has the weakest behavior amplitude in the pipeline, where a tighter bound leaves under 2x margin
+and a weak-EMG cell would hard-fail on data that is in fact fine."""
+
+N_BEHAVIOR_KEPT = 2
+"""Leading behavior channels the reaching and cycling tasks actually drive.
+
+Both tasks emit a 3rd behavior output pinned to the constant -0.5 (`src/fsnn/reaching.py`,
+`src/fsnn/cycling.py`). Its std is ~1e-4, so `safe_std_compute` floors it to 1.0 and the merged
+[LFP|behavior] readout then owes it a constant -mean/std ~ +0.5 through C.x. The output loss is
+block-normalized (`usid/train/loss.py::_reduce_output`), giving the behavior block the same weight as
+the whole LFP block: at nz=3 that channel takes 1/6 of the reconstruction objective to reproduce a
+constant, and the LFP block falls from 91% of the objective to 50%. Every Z intake trims to these
+channels.
+"""
+
+
+def drop_constant_behavior(Z: np.ndarray, name: str = "Z", log=None) -> np.ndarray:
+    """Trim a behavior array to its informative leading channels.
+
+    Idempotent: an array already at or below `N_BEHAVIOR_KEPT` channels is returned unchanged, so the
+    helper is safe to apply at every Z intake without tracking which ones ran first.
+
+    Args:
+        Z: (T, n_behavior) behavior array, or a bare (n_behavior,) single-timestep measurement as the
+            closed-loop observer reads it off the network each step.
+        name: diagnostic label for the log line and the error message.
+        log: optional logger; falls back to stderr.
+    Returns:
+        Z trimmed along its last axis, or Z unchanged when it has no channels to drop.
+    Raises:
+        ValueError: a dropped channel carries real variance, so the constant-tail assumption this
+            trim rests on does not hold for these data.
+    """
+    Z = np.asarray(Z)
+    if Z.shape[-1] <= N_BEHAVIOR_KEPT:
+        return Z
+    if Z.ndim == 1:
+        return Z[:N_BEHAVIOR_KEPT]   # one timestep carries no variance to check the tail against
+    if Z.ndim != 2:
+        raise ValueError(f"{name}: expected a (T, n_behavior) or (n_behavior,) array, got shape {Z.shape}.")
+
+    # float64 before the std: the tail sits at a constant ~-0.5, where float32 cancellation inflates
+    # its std roughly 2x (7.4e-5 vs 3.2e-5 measured) and biases this check toward a false raise.
+    s = np.std(Z.astype(np.float64), axis=0)
+    kept_s = s[:N_BEHAVIOR_KEPT]
+    usable = kept_s[np.isfinite(kept_s) & (kept_s > 0)]
+    dropped = s[N_BEHAVIOR_KEPT:]
+    if usable.size == 0:
+        msg = (f"{name}: kept channels carry no usable variance (std={kept_s}); trimming without "
+               f"verifying the dropped tail.")
+        (log.warning if log is not None else lambda m: print(f"[WARN] {m}", file=sys.stderr))(msg)
+        return Z[:, :N_BEHAVIOR_KEPT]
+    kept_scale = float(np.median(usable))
+    informative = np.isfinite(dropped) & (dropped > _CONSTANT_TAIL_MAX_RATIO * kept_scale)
+    if informative.any():
+        raise ValueError(
+            f"{name}: channel(s) {np.flatnonzero(informative) + N_BEHAVIOR_KEPT} beyond the first "
+            f"{N_BEHAVIOR_KEPT} carry variance (std={dropped[informative]}, kept-channel scale "
+            f"{kept_scale:g}); they are not the constant legacy tail this trim assumes. The task's "
+            f"behavior definition changed -- update N_BEHAVIOR_KEPT."
+        )
+
+    msg = (f"{name}: dropping {Z.shape[-1] - N_BEHAVIOR_KEPT} constant behavior channel(s) "
+           f"(std={dropped}); keeping {N_BEHAVIOR_KEPT}.")
+    if log is not None:
+        log.info(msg)
+    else:
+        print(f"[INFO] {msg}", file=sys.stderr)
+    return Z[:, :N_BEHAVIOR_KEPT]
+
+
 def safe_std_compute(arr: np.ndarray, axis: int, name: str, log=None):
     """Compute mean + std with degenerate-channel fallback.
 
@@ -47,7 +127,7 @@ def safe_std_compute(arr: np.ndarray, axis: int, name: str, log=None):
     # full-output observer innovation. Treat any std that is a negligible fraction of the typical channel
     # std the same as an exactly-constant channel (clamped to 1.0 below).
     _finite_pos = s[np.isfinite(s) & (s > 0)]
-    std_floor = 1e-3 * float(np.median(_finite_pos)) if _finite_pos.size else 0.0
+    std_floor = _DEGENERATE_STD_RATIO * float(np.median(_finite_pos)) if _finite_pos.size else 0.0
     bad_std = ~np.isfinite(s) | (s <= std_floor)
     bad_mean = ~np.isfinite(m)
     if bad_std.any() or bad_mean.any():

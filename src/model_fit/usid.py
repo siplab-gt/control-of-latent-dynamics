@@ -38,7 +38,7 @@ from scripts.cold_training import cold_full_run
 from usid.data.sources.cold import load_cold_databundle
 from usid.interface.data import NormStats
 from usid.util.config import to_ns
-from src.helpers import sanitize_normalized
+from src.helpers import drop_constant_behavior, sanitize_normalized
 from src.scripts.sys_id_expts import ExptData
 
 
@@ -347,7 +347,7 @@ def _load_and_normalize_natural_data(
     natural_ZN = None
     nat_zn_clipped = 0
     if z_mean is not None and z_std is not None:
-        natural_Z = natural_expt.Z.astype(np.float64)
+        natural_Z = drop_constant_behavior(natural_expt.Z, "Natural_Z", log=log).astype(np.float64)
         natural_ZN = (natural_Z - z_mean) / z_std
         natural_ZN, nat_zn_clipped = sanitize_normalized(natural_ZN, "Natural_ZN", log=log)
         natural_ZN = natural_ZN.astype(np.float32)

@@ -13,7 +13,7 @@ from jaxtyping import Float
 from scipy import stats
 
 from src.ctrl.solvers import Solver
-from src.helpers import array_vals_by_t
+from src.helpers import array_vals_by_t, drop_constant_behavior
 from src.model_fit import LDS
 from src.scripts.cleo_prep import CleoPrep
 
@@ -348,7 +348,9 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         LFP-only-observer model)."""
         y_lfp_z = self.zscore(y, "y")
         if self.lds.m > y_lfp_z.shape[0]:
-            z_behav = self.cleo_prep.fsnn.ng_z.z[:]
+            # Same trim as the reference and the fitted z stats: the network still exposes the task's
+            # constant legacy channel, but the model's behavior block does not span it.
+            z_behav = drop_constant_behavior(self.cleo_prep.fsnn.ng_z.z[:], "observed z")
             return np.concatenate([y_lfp_z, self.zscore(z_behav, "z")])
         return y_lfp_z
 
@@ -412,7 +414,9 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
         if self._cached_ref_trajectory is None:
             fsnn = self.cleo_prep.fsnn
             if self.ref_type == "Z":
-                ref = self.zscore(fsnn.fout_ta.values, "z")
+                # Trim before zscore: lds.z_mean/z_std are fit on the trimmed behavior, so the
+                # reference must span the same channels the model reads out.
+                ref = self.zscore(drop_constant_behavior(fsnn.fout_ta.values, "fout"), "z")
             elif self.ref_type == "X":
                 ref = self.zscore(fsnn.ytilde_ta.values, "x")
             self._cached_ref_trajectory = ref
