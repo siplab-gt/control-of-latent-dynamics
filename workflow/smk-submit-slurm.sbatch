@@ -4,13 +4,18 @@
 #SBATCH --mem-per-cpu=4G                        # Memory for coordinator
 #SBATCH -t20:00:00                              # Time limit (fit before 2026-05-12T06:00 maintenance)
 #SBATCH -ologs/slurm-%j.out                         # Combined output and error messages file
-#SBATCH -A gts-crozell3-ece                  # Account (ece 151 SU; gts-crozell3 at 48 SU, too low for a 60-cell sweep)
+#SBATCH -A gts-crozell3                       # Secondary account (74 SU as of 2026-08-09)
 cd $SLURM_SUBMIT_DIR                            # Change to working directory
 
 module load anaconda3                           # Load module dependencies
-module load cuda/12.6.1                         # CUDA 12.6 required by torch 2.10+cu126
+module load cuda/12.6.1                         # CUDA 12.6 required by torch 2.7.1+cu126
 eval "$(conda shell.bash hook)"
-conda activate ~/r-crozell3-0/envs/USID
+conda activate "${USID_CONDA_ENV:-$HOME/r-crozell3-0/envs/USID312gpu}"
+# PACE's default environment carries spack gcc-12.3.0's libstdc++ on LD_LIBRARY_PATH, and sbatch
+# --export=ALL propagates it into the job. It predates CXXABI_1.3.15, which matplotlib's compiled
+# extension needs, so the env's own newer libstdc++ has to win the search order. Propagated to every
+# child job by the --envvars LD_LIBRARY_PATH below.
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # USID repo path (required for model_fit_method=usid)
 export USID_REPO_ROOT="/storage/project/r-crozell3-0/zbeddingfield3/projects/usid"
@@ -48,7 +53,7 @@ snakemake \
     --jobs 100 \
     --max-jobs-per-second 1 \
     --max-status-checks-per-second 2 \
-    --default-resources slurm_account=gts-crozell3-ece tasks_per_gpu=0 \
+    --default-resources slurm_account=gts-crozell3 tasks_per_gpu=0 \
     --envvars LD_LIBRARY_PATH PYTHONPATH USID_REPO_ROOT \
     --rerun-incomplete \
     --keep-going
