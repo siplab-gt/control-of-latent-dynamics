@@ -161,16 +161,7 @@ natural_hyperparams:
     innovation_whiteness:
       num_lags: 10
       burn_in: 20          # Discards first 20 timesteps per window before ACF.
-  validation:
-    loss_weights:
-      delta: 1.0
-      rollout: 0.2         # Slightly higher rollout weight at val for a
-                           # generalization-sensitive metric.
-      teacher: 0.0
-      innov_white: 0.0
-    rollout:
-      K: 80
-      W: 16
+  # validation is a shared top-level block (below), read by both legs.
   window_seq_len: 128
   window_stride: 16
   train_split: 0.7
@@ -233,16 +224,7 @@ usid_hyperparams:
                              # de-saturation lever, in-phase. 1.0 = equal LFP/behavior.
     ifp:
       burn_in: 20
-  validation:
-    loss_weights:
-      delta: 1.0
-      rollout: 0.2
-      teacher: 0.0
-      ifp: 0.0             # Required active USID loss name (validation parse fails without it).
-                           # 0 = tracked at val but not weighted into the val-loss / early-stop key.
-    rollout:
-      K: 80
-      W: 16
+  # validation is a shared top-level block (below), read by both legs.
   # Fraction of USID training pool filled from natural-electrode input-free
   # samples (natural_YN with u = no-input-equivalent). Displaces input-driven
   # opto samples 1:1 so total pool stays at N_opto windows. 0.0 disables.
@@ -255,10 +237,21 @@ usid_hyperparams:
   val_split: 0.15
   subset_ratio: 0.5
 
-  # Parallel multistart: n_starts seeded candidates trained together, successively-halved to the best by
-  # y-rollout R² (rungs = 0-based epoch indices within the full unnatural sub-phase). n_starts=1 is the
-  # untouched single fit. The seed lottery lives in the COLD unnatural/opto fit, so this is the stage to
-  # raise n_starts on. Sweep n_starts as a cond-param wildcard, never a runtime override.
-  multistart: { n_starts: 1, rungs: [10, 25, 50], rule: median, eta: 2, grace: 1, base_seed: 10007 }
+# Parallel multistart: natural_restarts / usid_restarts seeded candidates per leg train together,
+# successively-halved to the best by validation loss (rungs = 0-based epoch indices within the leg's rung
+# sub-phase). restarts=1 is the untouched single fit. The seed lottery lives in the COLD unnatural/opto fit,
+# so usid_restarts is the count to raise. Both are model_fit cond-param wildcards and these values are the
+# defaults the wildcards inject; sweep them as wildcards, never as a runtime override.
+multistart: { natural_restarts: 4, usid_restarts: 4, rungs: [10, 25, 50], rule: median, eta: 2, grace: 1, base_seed: 10007 }
+
+# Shared validation map read by both legs, mirroring the synthetic trainer.yaml block. Rollout-dominant (the
+# control-relevant horizon, raw magnitude ~1.25x delta's so 1.0/0.2 = 5x actually inverts the contribution);
+# leg-specific regularizers (innov_white, ifp, kreg) are 0 at validation, so the metric is a pure fit score.
+# Each leg's parse reads only its own active loss names from this block. This map is also the multistart
+# selector's criterion, so a delta-dominated validation would make the seed lottery pick on a mostly 1-step
+# teacher-forced score.
+validation:
+  loss_weights: { delta: 0.2, rollout: 1.0, teacher: 0.0, innov_white: 0.0, ifp: 0.0, kreg: 0.0 }
+  rollout: { K: 80, W: 16 }
 
 # (oracle_usid omitted — architecturally incompatible with COLD; same as oracle_natural.)
