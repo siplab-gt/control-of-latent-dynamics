@@ -1106,15 +1106,16 @@ rule opsin_train_cold:
     resources:
         # GPU partition for the NN-training half (5000 epochs at hidden_size=32
         # is ~10 min on V100 vs ~100 min on CPU). Brian2 datagen still runs on
-        # the same node's CPUs via joblib — GPU just sits idle for ~30 min
-        # while datagen finishes, then accelerates the training pass. Memory
-        # at 16 GB covers Brian2 cython compile + 4 loky workers; we've seen
-        # workers cycle deaths under 16 GB but joblib retries them.
+        # the same node's CPUs via joblib — GPU sits idle while datagen finishes,
+        # then accelerates the training pass. Memory is sized for the Brian2 cython
+        # compile plus 4 concurrent loky workers; a worker that reaches the cgroup
+        # ceiling is killed and its sequence is regenerated from scratch, so
+        # under-sizing here costs wall time rather than correctness.
         # Match COLD's other GPU rules (model_fit, ctrl_expts) on rtx6000.
         slurm_partition="gpu-rtx6000",
         gpu=1,
-        mem_mb=16000,
-        runtime=180,
+        mem_mb=32000,
+        runtime=360,
     script:
         "../src/scripts/opsin_train.py"
 

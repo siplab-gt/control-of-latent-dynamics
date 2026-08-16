@@ -76,6 +76,14 @@ def _generate_one_sequence(
     Brian2 scope. The light distribution is selected by ``opsin_stim_method`` via
     ``src.opsin_stim.build_opsin_light``; the Brian2 photocurrent sim below is
     distribution-agnostic. Keeps loky workers isolated."""
+    # Brian2's default cython cache is multiprocess-safe, which serializes every compile
+    # behind a file lock; concurrent loky workers then spend their wall time recompiling the
+    # same code instead of simulating. A per-process cache dir removes the contention at the
+    # cost of no cross-process reuse. Same treatment as src/fsnn/__init__.py.
+    b2.prefs.codegen.runtime.cython.cache_dir = (
+        f"resources/cython_cache/{os.uname().nodename}-{os.getpid()}")
+    b2.prefs.codegen.runtime.cython.multiprocess_safe = False
+
     rng = np.random.default_rng(seed + seq_idx)
     trace = build_opsin_light(
         opsin_stim_method, rng, time_steps, u_max_mWmm2, light_params,
