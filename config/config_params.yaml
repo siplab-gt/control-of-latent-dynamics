@@ -1,3 +1,31 @@
+# #############################################################################
+# ##  DO NOT RUN THIS CONFIG UNTIL IT IS UNIFIED WITH testconfig_params.yaml ##
+# #############################################################################
+#
+# Running this file instead of testconfig_params.yaml silently changed four things
+# at once in the Aug-2026 runs and destroyed the control arm:
+#
+#   1. prep_fsnn_reaching.n_rate_neurons 800 here vs 200 in testconfig_params.yaml
+#      (line 174 vs testconfig_params.yaml:139). It feeds fsnn_params
+#      (workflow/Snakefile:1278-1289,1465), so Snakemake's params trigger regenerates
+#      every fSNN plant, changing n_factors on 9/10 seeds. It also cascades into the
+#      opsin calibration: rule measure_voperating_range consumes fsnn_post_train.pkl.gz
+#      (Snakefile:926-938,981), so a different plant measures a different voltage
+#      window and hence a different E (17.83 -> 19.41 observed).
+#   2. This file has no model_fit_braid_stim_rec block and sets top-level
+#      model_fit_method: usid + use_opsin: true (lines 112-113), so braid_stim_rec
+#      falls through _resolve_model_fit_method (workflow/Snakefile:798-802) and runs
+#      USID WITH THE OPSIN -- the BRAID control silently becomes a duplicate of the
+#      USID arm. config_sweeps.yaml does not sweep `setting` (line 60 pins
+#      usid_stim_rec), so this only bites when this file is paired with a sweep file
+#      that does sweep it. testconfig_params.yaml carries the block (lines 164-170)
+#      and deliberately omits a top-level default.
+#   3. opsin_train_cold epochs/n_sequences/sequence_length/time_steps are all larger,
+#      retraining the NN opsin on a different dataset.
+#
+# Unify the two files (port the model_fit_<setting> blocks and the calibrate_opsin_plant
+# keys here, and decide n_rate_neurons deliberately), then DELETE THIS COMMENT.
+#
 # =============================================================================
 # config_params.yaml — production COLD pipeline (params block).
 #
