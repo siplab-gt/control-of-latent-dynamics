@@ -28,6 +28,7 @@ from typing import Tuple
 
 import brian2.only as b2
 import numpy as np
+import torch
 from brian2 import ms
 from joblib import Parallel, delayed
 
@@ -259,6 +260,10 @@ def main(snakemake) -> None:
     save_dir = (Path(usid_repo) / "experiments" / "opsin_results_external"
                 / "cold" / opsin_stim_method / timestamp)
     save_dir.mkdir(parents=True, exist_ok=True)
+
+    # train_opsin_external's `seed` covers only the train/val/test split; GRU weight init and DataLoader
+    # shuffling ride torch's global RNG, so seed it here or every retrain is a fresh draw.
+    torch.manual_seed(seed)
 
     best_path = train_opsin_external(
         light=light,
