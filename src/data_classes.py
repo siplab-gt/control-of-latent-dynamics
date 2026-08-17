@@ -44,7 +44,6 @@ class COLDUSIDHandoff(BaseDataClass):
     wildcards_hash: str     # Hash of COLD wildcards for deterministic output naming
 
     # Data masks/tags for evaluation
-    opto_trial_boundaries: Optional[np.ndarray] = None  # (n_trials, 2) start/end indices
     spiked_mask: Optional[np.ndarray] = None  # (T_opto,) boolean mask where stimulation is active
 
     @property

@@ -65,6 +65,7 @@ params:
   natural_restarts: 1     # single fit per leg: this is a smoke config, and the ensemble multiplies fit cost
   usid_restarts: 1        # without changing the code paths it exercises.
   val_regime: rollout_dom # validation-loss criterion (model_fit wildcard): rollout_dom {delta:0.2,rollout:1.0} (= cold_usid.yaml) | delta_dom {delta:1.0,rollout:0.2}.
+  pool_row_len: 800       # USID opto-pool row length in samples (model_fit wildcard, 10 ms/sample). Rows are cut from the contiguous recording; capped at half the recording when it is shorter.
   latency: false
   ctrl_type: LQMPC
   ctrl_horizon_ms: 200

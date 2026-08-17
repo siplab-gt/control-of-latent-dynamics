@@ -95,7 +95,7 @@ steps_params = {
     # settings/target_iopto) and consumed by model_fit; a swept axis so different
     # training sets can be compared like any other sweep (see get_cold_opsin_input).
     "opsin_train_cold": ["opsin_stim_method"],
-    "model_fit": ["n_trials_sys_id", "model_task_inputs", "usid_rollout", "usid_teacher", "usid_delta", "behavior_weight", "fold_behavior", "natural_restarts", "usid_restarts", "val_regime"],
+    "model_fit": ["n_trials_sys_id", "model_task_inputs", "usid_rollout", "usid_teacher", "usid_delta", "behavior_weight", "fold_behavior", "natural_restarts", "usid_restarts", "val_regime", "pool_row_len"],
     "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
     "analysis": [],
 }

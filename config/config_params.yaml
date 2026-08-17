@@ -102,6 +102,7 @@ params:
   natural_restarts: 4     # natural-fit parallel multistart count (model_fit wildcard); 4 = successive-halving ensemble (default, the metric knee), rungs/rule from cold_usid.yaml. 1 = single fit.
   usid_restarts: 4        # unnatural-fit parallel multistart count (model_fit wildcard); the seed-lottery leg. Same scale as natural_restarts.
   val_regime: rollout_dom # validation-loss criterion (model_fit wildcard) for best-val checkpointing + multistart culling: rollout_dom {delta:0.2,rollout:1.0} (= cold_usid.yaml) | delta_dom {delta:1.0,rollout:0.2}.
+  pool_row_len: 800       # USID opto-pool row length in samples (model_fit wildcard, 10 ms/sample). Rows are cut from the contiguous recording; capped at half the recording when it is shorter.
   # Closed-loop controller settings. NLMPC is the only controller valid on a with-opsin
   # arm (LQMPC plans linearly and over-drives light through the saturating opsin);
   # LQMPC remains valid for the no-opsin BRAID baseline.

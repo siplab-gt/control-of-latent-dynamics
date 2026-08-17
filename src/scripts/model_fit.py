@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+import brian2 as b2
 import numpy as np
 import yaml
 from sklearn.linear_model import LinearRegression
@@ -75,7 +76,7 @@ def _deep_merge_overrides(base: dict, override: dict) -> dict:
 # snapshot (they are data, not config, and would bloat/break the YAML).
 _SNAPSHOT_DROP = {
     "y_mean", "y_std", "u_mean", "u_std", "z_mean", "z_std", "x_mean", "x_std",
-    "Iopto_per_neuron", "channel_neuron_transmittance", "opto_trial_starts",
+    "Iopto_per_neuron", "channel_neuron_transmittance",
 }
 
 
@@ -85,6 +86,8 @@ def _to_plain(obj):
         return {str(k): _to_plain(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_to_plain(v) for v in obj]
+    if isinstance(obj, b2.Quantity):
+        return str(obj)                 # "0.5 * mmetre" — keeps the unit readable in the snapshot
     if isinstance(obj, np.generic):
         return obj.item()
     if isinstance(obj, np.ndarray):
@@ -110,7 +113,7 @@ def _dump_config_snapshot(cond_params, base_params, config, lds, lds_path):
             "wildcards": _to_plain(cond_params),                  # swept axes (cell path)
             "base_params": _to_plain(base_params),                # non-swept params block
             "cold_config": _to_plain(cold),                       # plant, sys-ID, ctrl, overlays, usid_overrides
-            "usid_config": (getattr(lds, "metadata", {}) or {}).get("resolved_usid_config"),  # resolved usid_hyperparams (None for BRAID)
+            "usid_config": _to_plain((getattr(lds, "metadata", {}) or {}).get("resolved_usid_config")),  # resolved usid_hyperparams (None for BRAID)
         }
         snap["config_hash"] = hashlib.sha1(
             json.dumps(snap, sort_keys=True, default=str).encode()
@@ -197,13 +200,6 @@ def model_fit(
     # the merged readout Cy predicts.
     config['z_mean'] = z_mean
     config['z_std'] = z_std
-
-    # Per-trial onsets (into the [:T] recording) so the USID model_fit can window the opto recording
-    # continuously WITHIN each sys-id trial and split whole trials into train/val (no overlapping-window
-    # leakage). i_trial_boundaries[i, 0] is trial i's onset; [:n_trials] are all < T, so they index the
-    # sliced arrays directly. Data (not config) — dropped from the config snapshot; BRAID/known_factors
-    # ignore it.
-    config['opto_trial_starts'] = expt_data.i_trial_boundaries[:n_trials, 0].astype(int)
 
     # Opsin-fit validation data (only present when sys_id_expts recorded it).
     # Sliced to the same T window used for YN/UN/ZN so downstream diagnostics

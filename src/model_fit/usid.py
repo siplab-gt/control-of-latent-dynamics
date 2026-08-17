@@ -129,10 +129,15 @@ def fit_lds_to_data(
     # checkpointing + multistart culling. delta_dom = pre-refactor criterion; rollout_dom = current default.
     val_regime = str(cond_params["val_regime"])
 
+    # Opto-pool row length (model_fit wildcard): the length of the contiguous rows the opto recording is
+    # cut into, which sets both the opsin GRU's free-run length and the windows each row yields.
+    pool_row_len = int(cond_params["pool_row_len"])
+
     # === USID config: cold_usid.yaml + runtime dims + COLD usid_overrides. no_opsin is a per-setting
     # runtime kwarg (the BRAID-vs-USID sweep axis), so inject it here — train_unnatural reads it strictly.
     cfg = _load_usid_config(ny_lfp, k_opto, seed, config.get("usid_overrides"), nz=nz, fold_behavior=fold_behavior,
-                            natural_restarts=natural_restarts, usid_restarts=usid_restarts, val_regime=val_regime)
+                            natural_restarts=natural_restarts, usid_restarts=usid_restarts, val_regime=val_regime,
+                            pool_row_len=pool_row_len)
     cfg.no_opsin = not use_opsin
 
     # === Natural electrode data, normalized in the controller's Y/Z coordinates (model_fit stats) ===
@@ -180,18 +185,9 @@ def fit_lds_to_data(
         u_std=torch.ones(k_opto, dtype=torch.float32),
     )
 
-    # Per-trial onsets from model_fit (data, threaded via config) so the opto recording is windowed
-    # continuously within each sys-id trial and whole trials — never overlapping windows — split train/val.
-    opto_trial_starts = config.get('opto_trial_starts')
-    if opto_trial_starts is None:
-        raise ValueError(
-            "config['opto_trial_starts'] is unset; model_fit.py must thread the sys-id trial onsets "
-            "(expt_data.i_trial_boundaries[:n_trials, 0]) so the USID opto pool windows within trials."
-        )
-
     bundle = load_cold_databundle(
         YN, ZN, opto_input, XN, natural_YN, natural_ZN, norm_stats, cfg, device,
-        k_opto=k_opto, seed=seed, nat_u_ref=nat_u_ref, opto_trial_starts=opto_trial_starts,
+        k_opto=k_opto, seed=seed, nat_u_ref=nat_u_ref,
     )
 
     # === Opsin checkpoint dir (loaded inside the pipeline with the 'external' provenance gate). Only
@@ -236,7 +232,7 @@ _VAL_REGIMES = {
 
 def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = None, nz: int = None,
                       fold_behavior: bool = True, natural_restarts: int = 1, usid_restarts: int = 1,
-                      val_regime: str = "rollout_dom"):
+                      val_regime: str = "rollout_dom", pool_row_len: int = 800):
     """Load COLD-side USID config and apply runtime + COLD-config overrides.
 
     Base config is ``config/cold_usid.yaml`` (inside the COLD repo), maintained
@@ -247,7 +243,8 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
       2. Runtime-dependent fields injected here (data.source, models.ny,
          models.n_clusters, models.nz, models.fold_behavior,
          multistart.natural_restarts, multistart.usid_restarts,
-         validation.loss_weights (val_regime wildcard), seed).
+         validation.loss_weights (val_regime wildcard),
+         usid_hyperparams.pool_row_len (pool_row_len wildcard), seed).
       3. COLD config's ``usid_overrides:`` block (if present) — lets individual
          COLD configs (e.g., ultra_light_config.yaml) tweak any USID hyperparam
          without editing cold_usid.yaml itself.
@@ -287,6 +284,9 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
         # Validation loss-weights from the val_regime wildcard (selection criterion for best-val + multistart
         # culling); overrides cold_usid.yaml's validation.loss_weights, leaving validation.rollout untouched.
         "validation": {"loss_weights": _VAL_REGIMES[val_regime]},
+        # Opto-pool row length from the model_fit pool_row_len wildcard; sets how long a row the frozen
+        # opsin GRU free-runs and how many windows each row yields.
+        "usid_hyperparams": {"pool_row_len": pool_row_len},
         "seed": seed,
     }
     merged_dict = _deep_merge(base_dict, overrides)

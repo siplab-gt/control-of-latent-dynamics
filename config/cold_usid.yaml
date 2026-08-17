@@ -198,12 +198,12 @@ usid_hyperparams:
                            # natural_electrode_data integration in
                            # load_cold_databundle. IFP fires on samples marked
                            # is_input_free=True; COLD constructs those by
-                           # slicing natural_YN at USID window dims and setting
-                           # u to the no-input equivalent (zeros under
+                           # cutting natural_YN into pool_row_len rows and
+                           # setting u to the no-input equivalent (zeros under
                            # use_opsin=True, -u_mean/u_std under z-scored).
-                           # Sample ratio controlled by input_free_data_split
+                           # Row ratio controlled by input_free_data_split
                            # below; input-free displaces input-driven 1:1 so
-                           # total pool stays at N_opto windows. Matches
+                           # total pool stays at N_opto rows. Matches
                            # usid/data/sources/synthetic.py synthetic
                            # logic. Disable by setting input_free_data_split=0.0.
     huber_delta: 0.1
@@ -226,11 +226,17 @@ usid_hyperparams:
       burn_in: 20
   # validation is a shared top-level block (below), read by both legs.
   # Fraction of USID training pool filled from natural-electrode input-free
-  # samples (natural_YN with u = no-input-equivalent). Displaces input-driven
-  # opto samples 1:1 so total pool stays at N_opto windows. 0.0 disables.
+  # rows (natural_YN with u = no-input-equivalent). Displaces input-driven
+  # opto rows 1:1 so total pool stays at N_opto rows. 0.0 disables.
   # Keep ≤ 0.5 in practice — at 1.0, mixed_target → 0 and there's no opto to
   # fit B' against.
   input_free_data_split: 0.5
+  # USID pool row length in samples (10 ms/sample -> 8 s). Rows are cut from the
+  # contiguous opto recording at evenly spaced points, NOT at sys-id trial onsets:
+  # the recording is one uninterrupted simulation, so trial onsets mark task events
+  # rather than breaks. The frozen opsin GRU runs a full row from rest and windows
+  # are drawn inside it, so this also sets how long the GRU free-runs.
+  pool_row_len: 800
   window_seq_len: 96
   window_stride: 16
   train_split: 0.7
