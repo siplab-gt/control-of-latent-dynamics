@@ -91,48 +91,60 @@ def _to_plain(obj):
     if isinstance(obj, np.generic):
         return obj.item()
     if isinstance(obj, np.ndarray):
-        return obj.tolist() if obj.size <= 32 else f"<ndarray shape={list(obj.shape)}>"
+        if obj.size > 32:
+            return f"<ndarray shape={list(obj.shape)}>"
+        return [_to_plain(v) for v in obj.tolist()]
     if hasattr(obj, "__dict__") and not isinstance(obj, type):
         return {str(k): _to_plain(v) for k, v in vars(obj).items()}
     return obj
 
 
-def _dump_config_snapshot(cond_params, base_params, config, lds, lds_path):
-    """Write config_snapshot.yaml into the cell dir: the EXACT merged config this cell
-    used — swept wildcards + base COLD config + resolved USID config — for drift-free
-    reproducibility and the harvest config grid (src/scripts/harvest_config_grid.py).
+def _cold_snapshot_half(cond_params, base_params, config):
+    """The part of the snapshot knowable before the fit: wildcards + params + COLD config."""
+    cold = {k: v for k, v in config.items() if k not in _SNAPSHOT_DROP}
+    return {
+        "wildcards": _to_plain(cond_params),                  # swept axes (cell path)
+        "base_params": _to_plain(base_params),                # non-swept params block
+        "cold_config": _to_plain(cold),                       # plant, sys-ID, ctrl, overlays, usid_overrides
+    }
 
-    Drift-free by construction: it dumps the live merged-config objects the cell trained
-    with, not a hand-curated key list. It is a declared Snakemake output, so the file is
-    ALWAYS written (a stub on failure) — but a snapshot error never raises into the fit.
+
+def check_config_snapshot_serializable(cond_params, base_params, config):
+    """Fail before the fit if this cell could not record its own config.
+
+    Only the COLD half can be checked here: `usid_config` is read off the fitted LDS's
+    metadata, so it does not exist until the fit resolves it. Everything that has actually
+    broken serialization to date (a Brian2 Quantity in the COLD config) lives in this half,
+    so checking it up front turns a wasted GPU-hour into an immediate error.
     """
-    out = Path(lds_path).parent / "config_snapshot.yaml"
-    try:
-        cold = {k: v for k, v in config.items() if k not in _SNAPSHOT_DROP}
-        snap = {
-            "wildcards": _to_plain(cond_params),                  # swept axes (cell path)
-            "base_params": _to_plain(base_params),                # non-swept params block
-            "cold_config": _to_plain(cold),                       # plant, sys-ID, ctrl, overlays, usid_overrides
-            "usid_config": _to_plain((getattr(lds, "metadata", {}) or {}).get("resolved_usid_config")),  # resolved usid_hyperparams (None for BRAID)
-        }
-        snap["config_hash"] = hashlib.sha1(
-            json.dumps(snap, sort_keys=True, default=str).encode()
-        ).hexdigest()[:12]
-        with out.open("w") as f:
-            yaml.safe_dump(snap, f, sort_keys=True, default_flow_style=False, allow_unicode=True)
-        log.info(f"Wrote config snapshot ({snap['config_hash']}) -> {out}")
-    except Exception as e:
-        log.warning(f"config snapshot failed; writing stub so the output exists (non-fatal): {e}")
-        try:
-            with out.open("w") as f:
-                yaml.safe_dump({"config_snapshot_error": str(e)}, f)
-        except Exception:
-            pass
+    yaml.safe_dump(_cold_snapshot_half(cond_params, base_params, config))
+
+
+def _dump_config_snapshot(cond_params, base_params, config, lds, out):
+    """Write config_snapshot.yaml: the merged config this cell used — swept wildcards +
+    base COLD config + resolved USID config — for reproducibility and the harvest config
+    grid (src/scripts/harvest_config_grid.py).
+
+    Dumps the live merged-config objects the cell trained with, not a hand-curated key
+    list. Raises on failure: a cell that cannot record its own config is not a usable
+    result, and this file is the only record of the merged USID config on the COLD path.
+    """
+    out = Path(out)
+    snap = _cold_snapshot_half(cond_params, base_params, config)
+    # resolved usid_hyperparams; None for BRAID, which resolves no USID config
+    snap["usid_config"] = _to_plain((getattr(lds, "metadata", {}) or {}).get("resolved_usid_config"))
+    snap["config_hash"] = hashlib.sha1(
+        json.dumps(snap, sort_keys=True, default=str).encode()
+    ).hexdigest()[:12]
+    with out.open("w") as f:
+        yaml.safe_dump(snap, f, sort_keys=True, default_flow_style=False, allow_unicode=True)
+    log.info(f"Wrote config snapshot ({snap['config_hash']}) -> {out}")
 
 
 def model_fit(
     cond_params, base_params, expt_data_file, method_module_file, outfiles, config
 ):
+    check_config_snapshot_serializable(cond_params, base_params, config)
     expt_data = ExptData.load(expt_data_file)
     n_trials = int(cond_params.n_trials_sys_id)
     assert n_trials <= expt_data.n_trials, f"{n_trials=} > {expt_data.n_trials=}"
@@ -253,7 +265,7 @@ def model_fit(
     save_pkl_gz(lds, outfiles.lds_model)
 
     # Drift-free config record: dump the exact merged config this cell used.
-    _dump_config_snapshot(cond_params, base_params, config, lds, outfiles.lds_model)
+    _dump_config_snapshot(cond_params, base_params, config, lds, outfiles.config_snapshot)
 
     # Write fit-quality analysis atomically with the LDS so the two can't
     # go out of sync. Keeps the CSV fresh whenever model_fit retrains.
@@ -285,7 +297,21 @@ if __name__ == "__main__" and "snakemake" in locals():
     if cold_opsin:
         sentinel = cold_opsin[0] if isinstance(cold_opsin, (list, tuple)) else cold_opsin
         best_model_path = Path(sentinel).read_text().strip()
-        config_dict['opsin_checkpoint_path'] = str(Path(best_model_path).parent.parent)
+        # Default: hand USID the method directory, so it takes the highest-sorting run —
+        # normally the one the sentinel names, since run dirs are timestamps.
+        # `opsin_checkpoint_pin` overrides with one specific checkpoint file, for debugging
+        # a past era against today's code (nothing in the pipeline sets it).
+        pin = snakemake.config.get('opsin_checkpoint_pin')
+        if pin:
+            pin = Path(pin)
+            if not pin.is_file():
+                raise FileNotFoundError(
+                    f"opsin_checkpoint_pin={pin} is not a file. Pin the checkpoint itself "
+                    f"(.../<timestamp>/best_model.pth), not its directory.")
+            config_dict['opsin_checkpoint_path'] = str(pin)
+            log.info(f"opsin PINNED to {pin} (sentinel would have given {best_model_path})")
+        else:
+            config_dict['opsin_checkpoint_path'] = str(Path(best_model_path).parent.parent)
 
     # Per-setting overlay: keys placed in config[f"model_fit_{setting}"]
     # override their top-level counterparts. Lets `setting` sweep choose
