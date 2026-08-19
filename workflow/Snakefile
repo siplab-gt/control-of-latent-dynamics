@@ -95,7 +95,7 @@ steps_params = {
     # settings/target_iopto) and consumed by model_fit; a swept axis so different
     # training sets can be compared like any other sweep (see get_cold_opsin_input).
     "opsin_train_cold": ["opsin_stim_method"],
-    "model_fit": ["n_trials_sys_id", "model_task_inputs", "usid_rollout", "usid_teacher", "usid_delta", "behavior_weight", "fold_behavior", "natural_restarts", "usid_restarts", "val_regime", "pool_row_len"],
+    "model_fit": ["n_trials_sys_id", "model_task_inputs", "usid_rollout", "usid_teacher", "usid_delta", "behavior_weight", "fold_behavior", "natural_restarts", "usid_restarts", "val_regime", "pool_row_len", "a11_max_radius", "a22_max_radius", "a_cl_lim", "init_scale"],
     "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
     "analysis": [],
 }
@@ -1095,6 +1095,7 @@ rule opsin_train_cold:
         calibration=f"results/opsin_calibration/target_iopto_{config['params']['target_iopto']}/chr2_4s_fsnn_calibration.json",
         script="src/scripts/opsin_train.py",
         opsins="src/opsins.py",
+        stim="src/opsin_stim/__init__.py",
         configfiles=configfile_inputs_excluding_sweeps,
     output:
         sentinel="results/opsin_train_cold/opsin_stim_method_{opsin_stim_method}/best_model.path",
