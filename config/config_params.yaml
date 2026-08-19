@@ -89,7 +89,7 @@ params:
   # current_mix = 60% sustained blocks + 40% white lognormal (validated default) |
   # ou = single clipped Ornstein-Uhlenbeck colored-noise process. Equivalent for control
   # Q (sweep 10833292); ou is simpler, current_mix has better deep-saturation coverage.
-  opsin_stim_method: current_mix
+  opsin_stim_method: logwalk
   # USID model_fit-level loss-weight wildcards (route into usid_overrides via
   # src/scripts/model_fit.py): each maps to a usid_hyperparams.loss.loss_weights leaf.
   # Defaults match the static cold_usid.yaml values so a run that does not sweep them
@@ -103,6 +103,13 @@ params:
   usid_restarts: 4        # unnatural-fit parallel multistart count (model_fit wildcard); the seed-lottery leg. Same scale as natural_restarts.
   val_regime: rollout_dom # validation-loss criterion (model_fit wildcard) for best-val checkpointing + multistart culling: rollout_dom {delta:0.2,rollout:1.0} (= cold_usid.yaml) | delta_dom {delta:1.0,rollout:0.2}.
   pool_row_len: 800       # USID opto-pool row length in samples (model_fit wildcard, 10 ms/sample). Rows are cut from the contiguous recording; capped at half the recording when it is shorter.
+  a11_max_radius: 0.99    # natural A11 Schur clamp (model_fit wildcard); slowest retained natural mode.
+  a22_max_radius: 0.97    # unnatural A22 Schur clamp (model_fit wildcard); under zero_k2 this is the block the controller free-runs.
+  a_cl_lim: 0.99          # rail on rho(A_cl)=rho(A_open-K*C) (model_fit wildcard), enforced by the init shrink and training guard; 1.0 admits boundary-riding observers.
+  # Init-scale preset for the Jul-17 vs Jul-23 A/B: 'jul23' (shipped: K1/A12 at unit scale,
+  # coupling and B' normalized by 1/sqrt of the summed dim) vs 'jul17' (flat 0.1), plus
+  # jul17_{k1,a12,bprime,coupling} reverting one group at a time.
+  init_scale: jul23
   # Closed-loop controller settings. NLMPC is the only controller valid on a with-opsin
   # arm (LQMPC plans linearly and over-drives light through the saturating opsin);
   # LQMPC remains valid for the no-opsin BRAID baseline.
@@ -120,6 +127,10 @@ power_per_neuron_uW: 1
 model_fit_method: "usid"
 use_opsin: true
 opsin_checkpoint_path: null
+# Debugging override: pin one opsin checkpoint FILE (.../<timestamp>/best_model.pth) instead of
+# letting model_fit hand USID the method dir, from which it takes the highest-sorting run.
+# Null in every production run; set it only to re-fit a past era against current code.
+opsin_checkpoint_pin: null
 report_period_s: 60
 train_device: cuda
 model_fit_device: gpu
@@ -200,8 +211,8 @@ calibrate_opsin_plant:
 opsin_train_cold:
   n_sequences: 500
   time_steps: 500
-  sequence_length: 250
-  epochs: 5000
+  sequence_length: 500
+  epochs: 2000
   batch_size: 16
   lr: 3e-3
   hidden_size: 32
@@ -231,6 +242,17 @@ opsin_train_cold:
   ou_tau_ms: 120.0
   ou_std_mWmm2: 25.0
 
+  # logwalk method knobs (src.opsin_stim). Only read when opsin_stim_method=logwalk.
+  # Segment dwell is log-uniform on [1, dwell_max_steps], so this one leaf spans both of
+  # current_mix's (dwell 1 = white, dwell ~160 = sustained block). reset_probability picks
+  # a fresh log-uniform amplitude; otherwise the level is the previous one scaled by
+  # exp(N(0, step_sigma)), which is what produces small steps away from a settled baseline.
+  logwalk_amp_min_mWmm2: 0.1
+  logwalk_amp_max_mWmm2: 75.0
+  logwalk_dwell_max_steps: 160
+  logwalk_reset_probability: 0.35
+  logwalk_step_sigma: 0.5
+  logwalk_off_probability: 0.25
 model_fit:
   linear_Cz: true
 
