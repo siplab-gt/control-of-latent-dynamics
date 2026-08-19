@@ -73,10 +73,11 @@ def _generate_one_sequence(
     n_sequences: int,
     light_params: dict,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Generate a single commanded-light trace + photocurrent pair under a fresh
-    Brian2 scope. The light distribution is selected by ``opsin_stim_method`` via
+    """Generate a single light trace + photocurrent pair under a fresh Brian2 scope.
+    The light distribution is selected by ``opsin_stim_method`` via
     ``src.opsin_stim.build_opsin_light``; the Brian2 photocurrent sim below is
-    distribution-agnostic. Keeps loky workers isolated."""
+    distribution-agnostic. The light paired with it is always the commanded trace, matching
+    the photocurrent. Keeps loky workers isolated."""
     # Brian2's default cython cache is multiprocess-safe, which serializes every compile
     # behind a file lock; concurrent loky workers then spend their wall time recompiling the
     # same code instead of simulating. A per-process cache dir removes the contention at the
@@ -103,7 +104,14 @@ def _generate_one_sequence(
     duration_ms = time_steps * model_period_ms
     photocurrent_raw, light_raw = data_gen.run_simulation(duration_ms)
     p = photocurrent_raw[1]
-    l = light_raw[1]
+    # The opsin is trained on the commanded trace, which is the gauge every downstream stage
+    # feeds it: sys_id_expts stores Uopto as `light.irradiance_[1:]`, stripping the leading
+    # bookkeeping sample that Stimulator.reset() records, so Uopto[t] == commanded[t]. cleo's
+    # `irradiance_` is not a physical readback -- Light.update() stores the commanded value
+    # verbatim -- so an unstripped `irradiance_` is the same array shifted one sample, and
+    # training on it puts the opsin one sample out of phase with the B' that model_fit fits
+    # around it.
+    l = np.asarray(trace, dtype=float)
     if len(p) < time_steps:
         p = np.pad(p, (0, time_steps - len(p)), mode="edge")
     if len(l) < time_steps:
