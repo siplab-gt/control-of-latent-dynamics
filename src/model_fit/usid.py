@@ -133,11 +133,21 @@ def fit_lds_to_data(
     # cut into, which sets both the opsin GRU's free-run length and the windows each row yields.
     pool_row_len = int(cond_params["pool_row_len"])
 
+    # Spectral limits (model_fit wildcards). a11/a22_max_radius are hard Schur clamps on the open-loop
+    # blocks; a_cl_lim is the rail on the coupled operator A_cl = A_open - K*C that the init shrink and
+    # the training guard enforce. Each sets the slowest mode its block can retain.
+    a11_max_radius = float(cond_params["a11_max_radius"])
+    a22_max_radius = float(cond_params["a22_max_radius"])
+    a_cl_lim = float(cond_params["a_cl_lim"])
+    init_scale = str(cond_params["init_scale"])
+
     # === USID config: cold_usid.yaml + runtime dims + COLD usid_overrides. no_opsin is a per-setting
     # runtime kwarg (the BRAID-vs-USID sweep axis), so inject it here — train_unnatural reads it strictly.
     cfg = _load_usid_config(ny_lfp, k_opto, seed, config.get("usid_overrides"), nz=nz, fold_behavior=fold_behavior,
                             natural_restarts=natural_restarts, usid_restarts=usid_restarts, val_regime=val_regime,
-                            pool_row_len=pool_row_len)
+                            pool_row_len=pool_row_len, a11_max_radius=a11_max_radius,
+                            a22_max_radius=a22_max_radius, a_cl_lim=a_cl_lim,
+                            init_scale=init_scale)
     cfg.no_opsin = not use_opsin
 
     # === Natural electrode data, normalized in the controller's Y/Z coordinates (model_fit stats) ===
@@ -232,7 +242,9 @@ _VAL_REGIMES = {
 
 def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = None, nz: int = None,
                       fold_behavior: bool = True, natural_restarts: int = 1, usid_restarts: int = 1,
-                      val_regime: str = "rollout_dom", pool_row_len: int = 800):
+                      val_regime: str = "rollout_dom", pool_row_len: int = 800,
+                      a11_max_radius: float = 0.99, a22_max_radius: float = 0.97,
+                      a_cl_lim: float = 0.99, init_scale: str = "jul23"):
     """Load COLD-side USID config and apply runtime + COLD-config overrides.
 
     Base config is ``config/cold_usid.yaml`` (inside the COLD repo), maintained
@@ -244,7 +256,8 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
          models.n_clusters, models.nz, models.fold_behavior,
          multistart.natural_restarts, multistart.usid_restarts,
          validation.loss_weights (val_regime wildcard),
-         usid_hyperparams.pool_row_len (pool_row_len wildcard), seed).
+         usid_hyperparams.pool_row_len (pool_row_len wildcard),
+         models.a11_max_radius / a22_max_radius / a_cl_lim (spectral-limit wildcards), seed).
       3. COLD config's ``usid_overrides:`` block (if present) — lets individual
          COLD configs (e.g., ultra_light_config.yaml) tweak any USID hyperparam
          without editing cold_usid.yaml itself.
@@ -277,6 +290,14 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
             "n_clusters": k_opto,
             "nz": nz,            # behavior partition width (ZN.shape[1]) of the merged readout Cy
             "fold_behavior": fold_behavior,   # observer fold (fold_behavior wildcard); False -> LFP-only observer
+            # Spectral limits from the a11_max_radius/a22_max_radius/a_cl_lim wildcards. The two clamps ride
+            # in the checkpoint meta (a rebuild at a different radius is a different transition); a_cl_lim
+            # rides there too because it decides which trained models a rebuild will accept.
+            "a11_max_radius": a11_max_radius,
+            "a22_max_radius": a22_max_radius,
+            "a_cl_lim": a_cl_lim,
+            # Preset selecting the standard deviations of the initial parameter draw (init_scale wildcard).
+            "init_scale": init_scale,
         },
         # Per-leg counts from the model_fit natural_restarts/usid_restarts wildcards, deep-merged with
         # cold_usid.yaml's shared rungs/rule/eta/grace/base_seed. The usid leg is the seed-lottery stage.
@@ -292,6 +313,17 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
     merged_dict = _deep_merge(base_dict, overrides)
     if cold_overrides:
         merged_dict = _deep_merge(merged_dict, cold_overrides)
+    # cold_usid.yaml ships ny/n_clusters as placeholders (1) that only these runtime values make correct, so
+    # losing the override yields a model built at ny=1 that fails much later, deep in the natural fit. Check
+    # the merge landed rather than trusting it.
+    merged_models = merged_dict.get("models", {})
+    for name, want in (("ny", ny), ("n_clusters", k_opto), ("nz", nz)):
+        got = merged_models.get(name)
+        if got != want:
+            raise ValueError(
+                f"_load_usid_config: models.{name} is {got!r} after merging, expected the runtime value "
+                f"{want!r}. The overrides dict lost its models entry (a duplicate literal key silently "
+                f"replaces an earlier one) or cold_overrides clobbered it.")
     return to_ns(merged_dict)
 
 
