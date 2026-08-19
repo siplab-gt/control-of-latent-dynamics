@@ -17,10 +17,16 @@ near-identical opsin fidelity and Q, so the choice is a parsimony/coverage prefe
                 continuous distribution (3 knobs vs current_mix's ~8); ramps smoothly through
                 all amplitudes (best low/operating-band fidelity), but under-covers the
                 sustained extremes vs current_mix's blocks.
+  logwalk     : piecewise-constant light with log-uniform dwell and a log-amplitude random
+                walk. Collapses current_mix's block/white pair into one leaf: dwell 1 is the
+                i.i.d. white limit, dwell ~dwell_max the sustained-block limit, and every
+                dwell in between is reachable. Correlated successive amplitudes additionally
+                produce small steps away from a settled baseline, which neither leaf of
+                current_mix generates (its median ON-block transition is tens of mW/mm^2).
 """
 import numpy as np
 
-OPSIN_STIM_METHODS = ("current_mix", "ou")
+OPSIN_STIM_METHODS = ("current_mix", "ou", "logwalk")
 
 
 def _block_trace(rng, time_steps, u_max, amp_max, sustain_min, sustain_max,
@@ -67,6 +73,40 @@ def _ou_trace(rng, time_steps, u_max, dt_ms, mu, tau_ms, std):
     return np.clip(x, 0.0, u_max)
 
 
+def _logwalk_trace(rng, time_steps, u_max, amp_min, amp_max, dwell_max,
+                   reset_prob, step_sigma, off_prob):
+    """Piecewise-constant light whose segment dwell is log-uniform on [1, dwell_max] and
+    whose amplitude follows a random walk in log space. Each segment is either exact zero
+    (prob off_prob, pinning Iopto(0)=0 and exercising recovery kinetics), a fresh
+    log-uniform draw over [amp_min, amp_max] (prob reset_prob, covering the full actuator
+    range), or the previous amplitude scaled by exp(N(0, step_sigma)).
+
+    The scaled branch is the one current_mix cannot produce: successive levels are
+    correlated, so some transitions are small *relative* steps, which at a low baseline are
+    small *absolute* steps. Those identify the incremental gain d(Iopto)/d(light) near zero
+    light, which needs a settled baseline plus a small perturbation. Sampling low amplitudes
+    is not sufficient on its own -- current_mix's white leaf already puts ~32% of its samples
+    below 2.63 mW/mm^2, i.i.d., and identifies nothing there because it never settles."""
+    log_lo, log_hi = float(np.log(amp_min)), float(np.log(amp_max))
+    log_dwell = float(np.log(dwell_max))
+    trace = np.zeros(time_steps, dtype=np.float64)
+    pos = 0
+    log_a = rng.uniform(log_lo, log_hi)
+    while pos < time_steps:
+        L = max(1, int(round(float(np.exp(rng.uniform(0.0, log_dwell))))))
+        if rng.random() < off_prob:
+            amp = 0.0
+        else:
+            if rng.random() < reset_prob:
+                log_a = rng.uniform(log_lo, log_hi)
+            else:
+                log_a = float(np.clip(log_a + rng.normal(0.0, step_sigma), log_lo, log_hi))
+            amp = float(np.exp(log_a))
+        trace[pos:pos + L] = min(amp, u_max)
+        pos += L
+    return trace[:time_steps]
+
+
 def _resolve_leaf(method, seq_idx, n_sequences, params):
     """Map a top-level method to the leaf generator for sequence ``seq_idx``. ``current_mix``
     is a per-sequence block/white mixture (by the const_block_fraction partition, reproducing
@@ -76,6 +116,8 @@ def _resolve_leaf(method, seq_idx, n_sequences, params):
         return "block" if seq_idx < n_const else "white"
     if method == "ou":
         return "ou"
+    if method == "logwalk":
+        return "logwalk"
     raise ValueError(
         f"unknown opsin_stim_method {method!r}; valid: {OPSIN_STIM_METHODS}")
 
@@ -94,6 +136,12 @@ def build_opsin_light(method, rng, time_steps, u_max, params, seq_idx=0, n_seque
             params["block_on_probability"])
     elif leaf == "white":
         trace = _white_trace(rng, time_steps, u_max, params["typical_Irr0_mWmm2"])
+    elif leaf == "logwalk":
+        trace = _logwalk_trace(
+            rng, time_steps, u_max, params["logwalk_amp_min_mWmm2"],
+            params["logwalk_amp_max_mWmm2"], params["logwalk_dwell_max_steps"],
+            params["logwalk_reset_probability"], params["logwalk_step_sigma"],
+            params["logwalk_off_probability"])
     elif leaf == "ou":
         trace = _ou_trace(
             rng, time_steps, u_max, params["command_dt_ms"], params["ou_mu_mWmm2"],

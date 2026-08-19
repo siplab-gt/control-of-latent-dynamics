@@ -74,6 +74,7 @@ def _generate_one_sequence(
     light_params: dict,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Generate a single light trace + photocurrent pair under a fresh Brian2 scope.
+
     The light distribution is selected by ``opsin_stim_method`` via
     ``src.opsin_stim.build_opsin_light``; the Brian2 photocurrent sim below is
     distribution-agnostic. The light paired with it is always the commanded trace, matching
@@ -138,7 +139,8 @@ def generate_cold_opsin_pool(
     """Drive N independent single-neuron sims; stack to (N, T, 1) arrays. The
     commanded-light distribution for each sequence is selected by
     ``opsin_stim_method`` (see ``src.opsin_stim.build_opsin_light``); the paired
-    photocurrent is the single-neuron Brian2 ChR2 response, distribution-agnostic."""
+    photocurrent is the single-neuron Brian2 ChR2 response, distribution-agnostic.
+    The light paired with it is the commanded trace."""
     if verbose:
         log.info(
             f"Generating {n_sequences} COLD opsin sequences (single-neuron, no fSNN).")
@@ -200,9 +202,9 @@ def main(snakemake) -> None:
 
     n_sequences = int(train_cfg["n_sequences"])
     time_steps = int(train_cfg["time_steps"])
-    sequence_length = int(train_cfg.get("sequence_length", time_steps))
-    seed = int(train_cfg["seed"])
+    sequence_length = int(train_cfg["sequence_length"])
     epochs = int(train_cfg["epochs"])
+    seed = int(train_cfg["seed"])
     batch_size = int(train_cfg["batch_size"])
     lr = float(train_cfg["lr"])
     hidden_size = int(train_cfg.get("hidden_size", 32))
@@ -236,6 +238,13 @@ def main(snakemake) -> None:
         "ou_mu_mWmm2": float(train_cfg.get("ou_mu_mWmm2", 18.0)),
         "ou_tau_ms": float(train_cfg.get("ou_tau_ms", 120.0)),
         "ou_std_mWmm2": float(train_cfg.get("ou_std_mWmm2", 25.0)),
+        # logwalk: log-uniform dwell + log-amplitude random walk
+        "logwalk_amp_min_mWmm2": float(train_cfg.get("logwalk_amp_min_mWmm2", 0.1)),
+        "logwalk_amp_max_mWmm2": float(train_cfg.get("logwalk_amp_max_mWmm2", u_max_mWmm2)),
+        "logwalk_dwell_max_steps": int(train_cfg.get("logwalk_dwell_max_steps", 160)),
+        "logwalk_reset_probability": float(train_cfg.get("logwalk_reset_probability", 0.35)),
+        "logwalk_step_sigma": float(train_cfg.get("logwalk_step_sigma", 0.5)),
+        "logwalk_off_probability": float(train_cfg.get("logwalk_off_probability", 0.25)),
         "command_dt_ms": model_period_ms,
     }
 
@@ -262,8 +271,9 @@ def main(snakemake) -> None:
     # the given parent and lex-sorts by name to pick the newest). Matches the
     # convention USID synthetic opsin training uses under
     # ``experiments/opsin_results/<timestamp>/``.
-    # Per-method subdir so an opsin_stim_method sweep's checkpoints do not collide
-    # (the sentinel below names the exact best_model.pth model_fit loads).
+    # Per-method subdir so an opsin_stim_method sweep's checkpoints do not collide: model_fit
+    # hands USID the parent directory and load_trained_opsin takes its highest-sorting run, so
+    # two arms sharing a parent would cross-load the newer one's checkpoint.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     save_dir = (Path(usid_repo) / "experiments" / "opsin_results_external"
                 / "cold" / opsin_stim_method / timestamp)
