@@ -207,12 +207,17 @@ def main(snakemake) -> None:
     seed = int(train_cfg["seed"])
     batch_size = int(train_cfg["batch_size"])
     lr = float(train_cfg["lr"])
-    hidden_size = int(train_cfg.get("hidden_size", 32))
-    num_layers = int(train_cfg.get("num_layers", 2))
-    scheduler_patience = int(train_cfg.get("scheduler_patience", 200))
-    scheduler_factor = float(train_cfg.get("scheduler_factor", 0.8))
-    scheduler_min_lr = float(train_cfg.get("scheduler_min_lr", 1e-6))
+    hidden_size = int(train_cfg["hidden_size"])
+    num_layers = int(train_cfg["num_layers"])
+    scheduler_patience = int(train_cfg["scheduler_patience"])
+    scheduler_factor = float(train_cfg["scheduler_factor"])
+    scheduler_min_lr = float(train_cfg["scheduler_min_lr"])
 
+    # Two light properties are single-sourced from the blocks that own them rather than
+    # duplicated here: the actuator cap the opsin must cover (expts.u_max_mWmm2, also read by
+    # the sys-ID stim generators) and the plant's typical irradiance (cleo_prep, also read by
+    # cleo_prep itself and measure_voperating_range). The amplitude knobs below are validated
+    # against the cap so a training pool cannot silently span a range the actuator cannot emit.
     typical_Irr0_mWmm2 = float(config["cleo_prep"]["typical_Irr0_mWmm2"])
     u_max_mWmm2 = float(config["expts"]["u_max_mWmm2"])
     model_period_ms = float(
@@ -225,28 +230,40 @@ def main(snakemake) -> None:
     opsin_stim_method = snakemake.wildcards.opsin_stim_method
     light_params = {
         # current_mix: block leaf
-        "const_block_fraction": float(train_cfg.get("const_block_fraction", 0.6)),
-        "sustain_amp_max": float(train_cfg.get("sustain_amp_max", u_max_mWmm2)),
-        "sustain_steps_min": int(train_cfg.get("sustain_steps_min", 40)),
-        "sustain_steps_max": int(train_cfg.get("sustain_steps_max", 160)),
-        "off_steps_min": int(train_cfg.get("off_steps_min", 10)),
-        "off_steps_max": int(train_cfg.get("off_steps_max", 40)),
-        "block_on_probability": float(train_cfg.get("block_on_probability", 0.5)),
+        "const_block_fraction": float(train_cfg["const_block_fraction"]),
+        "sustain_amp_max": float(train_cfg["sustain_amp_max"]),
+        "sustain_steps_min": int(train_cfg["sustain_steps_min"]),
+        "sustain_steps_max": int(train_cfg["sustain_steps_max"]),
+        "off_steps_min": int(train_cfg["off_steps_min"]),
+        "off_steps_max": int(train_cfg["off_steps_max"]),
+        "block_on_probability": float(train_cfg["block_on_probability"]),
         # current_mix: white (40%) leaf
         "typical_Irr0_mWmm2": typical_Irr0_mWmm2,
         # ou: clipped Ornstein-Uhlenbeck colored noise
-        "ou_mu_mWmm2": float(train_cfg.get("ou_mu_mWmm2", 18.0)),
-        "ou_tau_ms": float(train_cfg.get("ou_tau_ms", 120.0)),
-        "ou_std_mWmm2": float(train_cfg.get("ou_std_mWmm2", 25.0)),
+        "ou_mu_mWmm2": float(train_cfg["ou_mu_mWmm2"]),
+        "ou_tau_ms": float(train_cfg["ou_tau_ms"]),
+        "ou_std_mWmm2": float(train_cfg["ou_std_mWmm2"]),
         # logwalk: log-uniform dwell + log-amplitude random walk
-        "logwalk_amp_min_mWmm2": float(train_cfg.get("logwalk_amp_min_mWmm2", 0.1)),
-        "logwalk_amp_max_mWmm2": float(train_cfg.get("logwalk_amp_max_mWmm2", u_max_mWmm2)),
-        "logwalk_dwell_max_steps": int(train_cfg.get("logwalk_dwell_max_steps", 160)),
-        "logwalk_reset_probability": float(train_cfg.get("logwalk_reset_probability", 0.35)),
-        "logwalk_step_sigma": float(train_cfg.get("logwalk_step_sigma", 0.5)),
-        "logwalk_off_probability": float(train_cfg.get("logwalk_off_probability", 0.25)),
+        "logwalk_amp_min_mWmm2": float(train_cfg["logwalk_amp_min_mWmm2"]),
+        "logwalk_amp_max_mWmm2": float(train_cfg["logwalk_amp_max_mWmm2"]),
+        "logwalk_dwell_max_steps": int(train_cfg["logwalk_dwell_max_steps"]),
+        "logwalk_reset_probability": float(train_cfg["logwalk_reset_probability"]),
+        "logwalk_step_sigma": float(train_cfg["logwalk_step_sigma"]),
+        "logwalk_off_probability": float(train_cfg["logwalk_off_probability"]),
         "command_dt_ms": model_period_ms,
     }
+
+    for key in ("sustain_amp_max", "logwalk_amp_min_mWmm2", "logwalk_amp_max_mWmm2"):
+        amp = float(light_params[key])
+        if not 0.0 <= amp <= u_max_mWmm2:
+            raise ValueError(
+                f"opsin_train_cold.{key} = {amp} is outside the actuator range "
+                f"[0, {u_max_mWmm2}] set by expts.u_max_mWmm2. The opsin would be trained "
+                f"over light the actuator cannot emit, or would miss part of its range.")
+    if float(light_params["logwalk_amp_min_mWmm2"]) >= float(light_params["logwalk_amp_max_mWmm2"]):
+        raise ValueError(
+            "opsin_train_cold.logwalk_amp_min_mWmm2 must be strictly below "
+            "logwalk_amp_max_mWmm2; the log-amplitude range would be empty or inverted.")
 
     light, photocurrent = generate_cold_opsin_pool(
         g0=g0, E=E, phim=phim, v_clamp=v_clamp,
