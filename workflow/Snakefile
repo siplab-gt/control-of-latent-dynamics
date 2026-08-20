@@ -336,9 +336,9 @@ def example_ctrl_data_files(setting: str, seed: int):
         else:
             raise ValueError(f"Unsupported setting for example figs: {setting}")
         return [
-            ref_wildcard_path("ctrl_data.pkl.gz", setting=setting, seed=seed, **param_set)(
-                wc
-            )
+            ref_wildcard_path(
+                "ctrl_data.pkl.gz", setting=setting, seed=seed, **param_set
+            )(wc)
             for param_set in param_sets
         ]
 
@@ -543,6 +543,7 @@ rule stats_table:
     input:
         "<results>/{setting}_{task}_dependence/control.pkl.gz",
         "<results>/{setting}_{task}_dependence/key.pkl.gz",
+        "src/scripts/stats_table.py",
     output:
         "<results>/{setting}_{task}_dependence/stats-table.csv",
         "<results>/{setting}_{task}_dependence/stats-table.tex",

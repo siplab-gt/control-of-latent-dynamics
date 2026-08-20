@@ -21,11 +21,11 @@ mean_line_lw = 1.5
 # rename dict for various columns for improved display
 _r = dict(
     # Q_track_Xref_Xhat_lds=r"$Q_{\text{track}}(X_{\text{ref}}, \widehat{X}_{\text{LDS}})$",
-    Q_track_Xref_Xhat_lds=r"$Q_{\text{track}}(\widehat{x}_{\text{LDS}})$",
+    Q_track_Xref_Xhat_lds=r"$Q_{\text{track}}(\widehat{\mathbf{x}}')$",
     # Q_track_Xref_X_fsnn=r"$Q_{\text{track}}(X_{\text{ref}}, X_{\text{fSNN}})$",
     Q_track_Xref_X_fsnn=r"$Q_{\text{track}}(x_{\text{fSNN}})$",
     # Q_track_Zref_Z=r"$Q_{\text{track}}(Z_{\text{ref}}, Z)$",
-    Q_track_Zref_Z=r"$Q_{\text{track}}(z)$",
+    Q_track_Zref_Z=r"$Q_{\text{track}}(\mathbf{z})$",
     optimal_alpha_stim=r"$\alpha_\text{stim}^*$",
     k_knee=r"$k_{\text{knee}}$",
     k=r"$k$",

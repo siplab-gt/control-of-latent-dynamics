@@ -29,7 +29,7 @@ def stats_table(
     combined = pd.concat(
         [key_df.set_index("ep"), control_df.set_index("ep")],
         axis=1,
-        keys=[f"Key metric {key_metric}", f"Control performance {control_metric}"],
+        keys=[f"{key_metric}", f"{control_metric}"],
     ).reset_index()
 
     combined.to_csv(output_csv, index=False)
@@ -55,7 +55,7 @@ def stats_table(
         combined[col] = combined[col].apply(lambda x: format_val(x, is_q))
 
     to_replace = {
-        "ep": "EP",
+        "ep": "Exploratory parameter",
         "cmi": "CMI (bits)",
         "p_value": "$p$-value",
         "q_value": "$q$-value",
@@ -65,10 +65,13 @@ def stats_table(
     combined = combined.rename(
         columns={col: to_replace[col] for col in to_replace.keys()}
     )
-    setting_alias = {"sufficient_stim": "Q1", "optimal_stim_rec": "Q2"}[
-        params["setting"]
-    ]
+    setting_alias = {
+        "sufficient_stim": "stimulation dimensionality experiments",
+        "optimal_stim_rec": "stimulation--recording balance experiments",
+    }[params["setting"]]
+
     q = "q1" if "sufficient_stim" in params["setting"] else "q2"
+
     combined.to_latex(
         output_tex,
         index=False,
