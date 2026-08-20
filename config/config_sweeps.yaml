@@ -1,16 +1,12 @@
-# =============================================================================
-# config_sweeps.yaml — sweep-axes companion to config_params.yaml.
+# Swept axes for the production pipeline. Every axis NOT listed here takes its default from
+# config/config_params.yaml.
 #
-# The cell budget is the FULL CARTESIAN PRODUCT of the axes listed in
-# `sweeps:` below × the (k, m) pairs from `q_usid:`. Any axis NOT listed
-# here is held at its default value from config_params.yaml.
+# This file previously enumerated nine axes as a full Cartesian product: 129,600 combinations
+# x 7 (k, m) pairs = 907,200 cells, which is roughly 45,000 SU and was never runnable. It read
+# as a configuration but functioned as a catalogue of every axis anyone had swept. Reduced to
+# the seed roster; add axes deliberately, in a tmp/<name>_sweeps.yaml copy, for one-off work.
 #
-# WARNING: this is the production sweep — Cartesian product is large.
-# Estimate cells before running. To reduce wall-clock without degrading
-# per-cell quality, comment out axes (their defaults from
-# config_params.yaml will then apply).
-# =============================================================================
-
+# q_usid lives in the params file, its single source of truth.
 sweeps:
   seed:
     - 17230616
@@ -18,47 +14,8 @@ sweeps:
     - 16320829
     - 18060520
     - 18220427
-  n_trials_sys_id:
-    - 1
-    - 2
-    - 5
-    - 10
-    - 50
-    - 100
-  n_latent_dims_offset:
-    - -2
-    - -1
-    - 0
-    - 1
-    - 5
-    - 10
-  density_scale:
-    - 1
-    - 1.33
-    - 1.67
-    - 2
-  network_area_scale:
-    - 1.44
-    - 2
-    - 3
-  beam_width_um:
-    - 10
-    - 50
-    - 100
-    - 200
-    - 400
-  model_task_inputs:
-    - false
-    - true
-  ctrl_type:
-    - OL
-    - LQMPC
-    - NLMPC
-  latency:
-    - true
-    - false
-
-# (k, m) pair generation — Cartesian-multiplied with `sweeps:` above.
-q_usid:
-  channel_budget: 64
-  num_stim_ratio_levels: 7
+    - 17904338
+    - 16683271
+    - 18445190
+    - 17126854
+    - 16998027

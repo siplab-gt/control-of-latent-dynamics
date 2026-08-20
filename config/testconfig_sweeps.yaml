@@ -1,25 +1,14 @@
-# =============================================================================
-# testconfig_sweeps.yaml — sweep-axes companion to testconfig_params.yaml.
+# Swept axes for the testconfig pipeline. Every axis NOT listed here takes its default from
+# config/testconfig_params.yaml, and those defaults describe the logwalk cell that scored
+# Q = 0.367 (mean over this roster). So this file is the roster and nothing else: it fans the
+# reference condition across seeds without varying anything about the condition itself.
 #
-# The cell budget for this run is the FULL CARTESIAN PRODUCT of the axes
-# listed in `sweeps:` below × the (k, m) pairs from `q_usid:`. Any axis
-# that does NOT appear in `sweeps:` is held at its default value from
-# testconfig_params.yaml.
+# q_usid is NOT repeated here -- it lives in the params file, which is its single source of
+# truth. A sweeps file may still override it when an experiment needs a different (k, m) grid.
 #
-# Cell count (current axes — three-setting comparison post-Bansal):
-#   seeds (5) × ctrl_type (3) × setting (3) × k/m pairs (1) = 45 ctrl_expts cells
-#   plus 5 × 3 × 1 = 15 NULL baselines = 60 total ctrl_expts cells.
-#   Other params (task, n_trials_sys_id, n_latent_dims_offset, latency,
-#   ctrl_horizon_ms, nlmpc_grad_iters) flat at default.
-#
-# Settings axis decomposes the model-fit / opsin-loop choice:
-#   - usid_stim_rec            : USID method, NN opsin in light→photocurrent loop
-#   - usid_stim_rec_no_opsin   : USID method, no opsin (B' eats z-scored light)
-#   - braid_stim_rec           : BRAID method, no opsin (unified A·x + B_opto·u_z)
-# Per-setting overrides live in testconfig_params.yaml as model_fit_<setting>
-# blocks (model_fit_method, use_opsin).
-# =============================================================================
-
+# For a one-off experiment, copy this to tmp/<name>_sweeps.yaml and add axes there. Keep the
+# `_sweeps` token in the filename so the rule-input blocklist skips it, or every cell re-runs
+# when the file's mtime changes.
 sweeps:
   seed:
     - 17230616
@@ -27,41 +16,8 @@ sweeps:
     - 16320829
     - 18060520
     - 18220427
-  # Isolated 10-vs-50 system-ID data-quantity comparison. n_trials_sys_id is a
-  # model_fit-level wildcard: sys_id_expts always generates n_trials_sys_id_max
-  # = max(this list) trials, and model_fit slices to the per-cell value. So
-  # [10, 50] keeps the max at 50 (matching the cached default), reusing the
-  # cleo_prep / sys_id_data / natural_electrode_data / opsin artifacts and
-  # re-running only model_fit onward. Do NOT add 100 here — that would bump the
-  # max and force regeneration of every sys_id_data.pkl.gz.
-  n_trials_sys_id:
-    - 10
-    - 50
-  ctrl_type:
-    - OL
-    - LQMPC
-    - NLMPC
-    - iLQR
-  setting:
-    # Four-setting comparison sweep on the post-Bansal Bansal-derived
-    # UnitlessChr2FourState plant (linear V−E driving force, dimensionless
-    # Iopto). Each setting probes a different model-fit / opsin-loop choice:
-    #   - usid_stim_rec               : USID method, NN opsin in light→photocurrent loop
-    #   - usid_stim_rec_no_opsin      : USID method, no opsin (B' eats z-scored light)
-    #   - braid_stim_rec              : BRAID method, no opsin, linear Cz
-    #   - braid_stim_rec_nonlinear    : BRAID method, no opsin, nonlinear Cz (Cz1HL64U)
-    # Per-setting overrides (model_fit_method, use_opsin, linear_Cz) live in
-    # testconfig_params.yaml as model_fit_<setting> blocks.
-    - usid_stim_rec
-    - usid_stim_rec_no_opsin
-    - braid_stim_rec
-    - braid_stim_rec_nonlinear
-
-# (k, m) pair generation — Cartesian-multiplied with `sweeps:` above.
-# linspace(1, 63, 3) = [1, 32, 63] rounded to ints; target_k=32 filters to
-# the middle pair (k=32, m=64-32=32) — a single balanced stim/rec split for
-# this model-comparison sweep.
-q_usid:
-  channel_budget: 64
-  num_stim_ratio_levels: 3
-  target_k: 32
+    - 17904338
+    - 16683271
+    - 18445190
+    - 17126854
+    - 16998027
