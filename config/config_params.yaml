@@ -333,3 +333,12 @@ chr2_stability_check:
   # Z divergence/saturation. Bare is subsampled to chr2's grid in the
   # analyzer so extreme-value statistics are sample-count-fair.
   z_max_ratio_max: 3.0
+
+# (k, m) grid for the sweep, read by the Snakefile as config["q_usid"]. It lives here so a
+# params-only invocation is legal; a sweeps file may override any of these keys.
+#   channel_budget         total recorded channels; m = budget - k
+#   num_stim_ratio_levels  how many k values to place across [1, budget-1]
+#   target_k               optional filter to a single (k, m) pair
+q_usid:
+  channel_budget: 64
+  num_stim_ratio_levels: 7

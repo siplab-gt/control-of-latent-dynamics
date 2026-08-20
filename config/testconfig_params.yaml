@@ -60,10 +60,10 @@ params:
   usid_rollout: 0.1      # USID open-loop rollout loss weight (model_fit wildcard); 0.1 = committed default
   usid_teacher: 0.1       # USID teacher loss weight (model_fit wildcard); 0.1 = cold_usid default. 0 = drop teacher (clean tf-only with usid_rollout=0).
   usid_delta: 1.0         # USID delta-of-rollout loss weight (model_fit wildcard); 1.0 = cold_usid default. 0 = isolate the rollout-level axis (no delta-of-rollout conflation).
-  behavior_weight: 1.0    # Behavior-block weight in the augmented [LFP|behavior] reconstruction losses (model_fit wildcard; routes into the natural Phase-1 and unnatural Phase-3 recons). 1.0 = equal LFP/behavior blocks. >1 upweights behavior reconstruction.
+  behavior_weight: 1    # Behavior-block weight in the augmented [LFP|behavior] reconstruction losses (model_fit wildcard; routes into the natural Phase-1 and unnatural Phase-3 recons). 1.0 = equal LFP/behavior blocks. >1 upweights behavior reconstruction.
   fold_behavior: 1        # observer fold (model_fit wildcard): 1 = full-output (default; behavior folded into K1/K2 observer); 0 = LFP-only (K behavior cols pinned 0, behavior a pure readout).
-  natural_restarts: 1     # single fit per leg: this is a smoke config, and the ensemble multiplies fit cost
-  usid_restarts: 1        # without changing the code paths it exercises.
+  natural_restarts: 4     # single fit per leg: this is a smoke config, and the ensemble multiplies fit cost
+  usid_restarts: 4        # without changing the code paths it exercises.
   val_regime: rollout_dom # validation-loss criterion (model_fit wildcard): rollout_dom {delta:0.2,rollout:1.0} (= cold_usid.yaml) | delta_dom {delta:1.0,rollout:0.2}.
   pool_row_len: 800       # USID opto-pool row length in samples (model_fit wildcard, 10 ms/sample). Rows are cut from the contiguous recording; capped at half the recording when it is shorter.
   a11_max_radius: 0.99    # natural A11 Schur clamp (model_fit wildcard); slowest retained natural mode.
@@ -74,9 +74,9 @@ params:
   # jul17_{k1,a12,bprime,coupling} reverting one group at a time.
   init_scale: jul23
   latency: false
-  ctrl_type: LQMPC
-  ctrl_horizon_ms: 200
-  nlmpc_grad_iters: 5
+  ctrl_type: NLMPC
+  ctrl_horizon_ms: 100
+  nlmpc_grad_iters: 300
   k: 22
   m: 42
 
@@ -427,3 +427,13 @@ chr2_stability_check:
   # Z divergence/saturation. Bare is subsampled to chr2's grid in the
   # analyzer so extreme-value statistics are sample-count-fair.
   z_max_ratio_max: 3.0
+
+# (k, m) grid for the sweep, read by the Snakefile as config["q_usid"]. It lives here so a
+# params-only invocation is legal; a sweeps file may override any of these keys.
+#   channel_budget         total recorded channels; m = budget - k
+#   num_stim_ratio_levels  how many k values to place across [1, budget-1]
+#   target_k               optional filter to a single (k, m) pair
+q_usid:
+  channel_budget: 64
+  num_stim_ratio_levels: 3
+  target_k: 32

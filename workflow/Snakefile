@@ -25,12 +25,16 @@ import warnings
 # invocation use:
 #     snakemake --configfile config/<name>_params.yaml \
 #               --configfile config/<name>_sweeps.yaml ...
-if "params" not in config or "sweeps" not in config:
+if "params" not in config:
     raise ValueError(
-        "Snakefile requires both `params:` and `sweeps:` blocks in the merged "
-        "config. Pass two --configfile flags: <name>_params.yaml and "
-        "<name>_sweeps.yaml. See smk-submit-slurm.sbatch for an example."
+        "Snakefile requires a `params:` block in the merged config. Pass "
+        "--configfile config/<name>_params.yaml. See smk-submit-slurm.sbatch for an "
+        "example."
     )
+# `sweeps:` is optional. Absent means no swept axes, so every cell param takes its
+# `params:` default and the DAG is the single cell those defaults describe -- which is what
+# reproducing one published cell requires. A sweeps file, when passed, adds axes on top.
+config.setdefault("sweeps", {})
 
 
 def _sweep_or_default(key):

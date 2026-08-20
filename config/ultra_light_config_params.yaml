@@ -248,6 +248,10 @@ opsin_train_cold:
   # current_mix's (dwell 1 = white, dwell ~160 = sustained block). reset_probability picks
   # a fresh log-uniform amplitude; otherwise the level is the previous one scaled by
   # exp(N(0, step_sigma)), which is what produces small steps away from a settled baseline.
+  # ou method knobs (clipped Ornstein-Uhlenbeck colored noise; src.opsin_stim).
+  ou_mu_mWmm2: 18.0
+  ou_tau_ms: 120.0
+  ou_std_mWmm2: 25.0
   logwalk_amp_min_mWmm2: 0.1
   logwalk_amp_max_mWmm2: 75.0
   logwalk_dwell_max_steps: 160
@@ -266,3 +270,12 @@ sys_id_expts:
 natural_electrode_expts:
   natural_only: true
   n_trials_natural: 3
+
+# (k, m) grid for the sweep, read by the Snakefile as config["q_usid"]. It lives here so a
+# params-only invocation is legal; a sweeps file may override any of these keys.
+#   channel_budget         total recorded channels; m = budget - k
+#   num_stim_ratio_levels  how many k values to place across [1, budget-1]
+#   target_k               optional filter to a single (k, m) pair
+q_usid:
+  channel_budget: 64
+  num_stim_ratio_levels: 1
