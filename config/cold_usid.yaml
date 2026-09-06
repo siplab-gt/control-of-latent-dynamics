@@ -212,8 +212,6 @@ usid_hyperparams:
       rollout: 0.1         # Multi-step rollout MSE on A_open — the operator the deployed controller
                            # free-runs. The horizon takes no K·y drive, only B'·photocurrent.
       teacher: 0.1         # Full-sequence teacher 1-step loss (observer ON).
-      d2: 0.0              # Natural-block invariance penalty on x1's second moment
-                           # (||S_drv - S_free||^2). 0.0 = off.
       ifp: 0.5             # Input-free penalty — active in COLD as of the
                            # natural_electrode_data integration in
                            # load_cold_databundle. IFP fires on samples marked
@@ -243,8 +241,6 @@ usid_hyperparams:
                              # the observer-off rollout scores behavior too — the {Cy2-behavior,B2'}
                              # de-saturation lever, in-phase. 1.0 = equal LFP/behavior.
     ifp:
-      burn_in: 20
-    d2:
       burn_in: 20
   # validation is a shared top-level block (below), read by both legs.
   # Fraction of USID training pool filled from natural-electrode input-free
@@ -279,7 +275,7 @@ multistart: { natural_restarts: 4, usid_restarts: 4, rungs: [10, 25, 50], rule: 
 # selector's criterion, so a delta-dominated validation would make the seed lottery pick on a mostly 1-step
 # teacher-forced score.
 validation:
-  loss_weights: { delta: 0.2, rollout: 1.0, teacher: 0.0, innov_white: 0.0, ifp: 0.0, kreg: 0.0, d2: 0.0 }
+  loss_weights: { delta: 0.2, rollout: 1.0, teacher: 0.0, innov_white: 0.0, ifp: 0.0, kreg: 0.0 }
   rollout: { K: 80, W: 16 }
 
 # (oracle_usid omitted — architecturally incompatible with COLD; same as oracle_natural.)
