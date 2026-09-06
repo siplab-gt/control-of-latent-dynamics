@@ -72,6 +72,11 @@ models:
   form: estimator_kf       # stored-matrix convention (open-loop blocks + filter gain K_f); merged-tree default.
   a11_init: default        # natural A11 seed. NOT "prior" — that samples the synthetic generative prior COLD lacks.
   a22_init: perturbed_identity  # unnatural A22 seed (scaled-identity + perturbation). NOT "prior" (synthetic-only).
+  # Natural-leg initializer, from the nat_init wildcard. "default" is the random draw; "ssi" replaces
+  # A11/K1/Cy1 with a CVA subspace fit of the natural training rows. The subspace A11 is pinned through
+  # set_from_matrix (a general operator is outside the block-diagonal Schur image), so under "ssi" A11
+  # carries no gradient and every multistart candidate is the same fit.
+  nat_init: default
 
 training:
   loss: mse
@@ -149,9 +154,12 @@ natural_hyperparams:
       teacher: 0.1         # Full-sequence teacher 1-step loss. Directly penalizes
                            # `forward(Y, U)` so Yhat magnitude does not drift (fixes
                            # R²(Y) over-scaling).
-      innov_white: 0.5     # Innovation-whiteness penalty. Realistic for COLD LFP
-                           # — penalizes autocorrelation of y - C·x̂ at lags 1..10
-                           # (burn_in=20). Improves observer-gain K1 quality.
+      innov_white: 0.0     # Innovation-whiteness penalty. Off: at 0.5 it took ~70% of the natural
+                           # objective and collapsed rho(A_open) to 0.52 against a true ~0.995, costing
+                           # 1.18 log MSE on held-out stim-free data (10/10 seeds). The governing value
+                           # is the innov_white wildcard default in config/*_params.yaml; this base is
+                           # kept in step with it. The term penalizes autocorrelation of y - C·x̂ at
+                           # lags 1..10 (burn_in=20 below).
     huber_delta: 0.1
     rollout_weighting:
       type: exponential
@@ -166,6 +174,11 @@ natural_hyperparams:
     innovation_whiteness:
       num_lags: 10
       burn_in: 20          # Discards first 20 timesteps per window before ACF.
+    acf:
+      num_lags: 20         # Lags of the output ACF matched against the model's implied one. Matches
+                           # the horizon the held-out rollout is scored at, so the term constrains the
+                           # decay over the span that is actually evaluated. The weight rides on the
+                           # acf wildcard; 0.0 leaves the term inert.
   # validation is a shared top-level block (below), read by both legs.
   window_seq_len: 128
   window_stride: 16
@@ -199,6 +212,8 @@ usid_hyperparams:
       rollout: 0.1         # Multi-step rollout MSE on A_open — the operator the deployed controller
                            # free-runs. The horizon takes no K·y drive, only B'·photocurrent.
       teacher: 0.1         # Full-sequence teacher 1-step loss (observer ON).
+      d2: 0.0              # Natural-block invariance penalty on x1's second moment
+                           # (||S_drv - S_free||^2). 0.0 = off.
       ifp: 0.5             # Input-free penalty — active in COLD as of the
                            # natural_electrode_data integration in
                            # load_cold_databundle. IFP fires on samples marked
@@ -228,6 +243,8 @@ usid_hyperparams:
                              # the observer-off rollout scores behavior too — the {Cy2-behavior,B2'}
                              # de-saturation lever, in-phase. 1.0 = equal LFP/behavior.
     ifp:
+      burn_in: 20
+    d2:
       burn_in: 20
   # validation is a shared top-level block (below), read by both legs.
   # Fraction of USID training pool filled from natural-electrode input-free
@@ -262,7 +279,7 @@ multistart: { natural_restarts: 4, usid_restarts: 4, rungs: [10, 25, 50], rule: 
 # selector's criterion, so a delta-dominated validation would make the seed lottery pick on a mostly 1-step
 # teacher-forced score.
 validation:
-  loss_weights: { delta: 0.2, rollout: 1.0, teacher: 0.0, innov_white: 0.0, ifp: 0.0, kreg: 0.0 }
+  loss_weights: { delta: 0.2, rollout: 1.0, teacher: 0.0, innov_white: 0.0, ifp: 0.0, kreg: 0.0, d2: 0.0 }
   rollout: { K: 80, W: 16 }
 
 # (oracle_usid omitted — architecturally incompatible with COLD; same as oracle_natural.)

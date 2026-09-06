@@ -139,7 +139,23 @@ def fit_lds_to_data(
     a11_max_radius = float(cond_params["a11_max_radius"])
     a22_max_radius = float(cond_params["a22_max_radius"])
     a_cl_lim = float(cond_params["a_cl_lim"])
+    # Input-free penalty weight (ifp wildcard). The only loss term that separates the natural and
+    # unnatural blocks on naturalness grounds: it drives Cy2*x2 -> 0 on input-free windows, so x1
+    # must explain all spontaneous activity. At 0 nothing distinguishes the blocks but the
+    # block-triangular structure itself.
+    ifp = float(cond_params["ifp"])
     init_scale = str(cond_params["init_scale"])
+    # Natural-leg output-ACF weight (acf wildcard) and the rollout horizon of the validation score
+    # (val_rollout_k wildcard). Together they are the two handles on whether the natural leg learns
+    # and whether checkpoint selection can see it.
+    acf = float(cond_params["acf"])
+    val_rollout_k = int(cond_params["val_rollout_k"])
+    # A11/K1/Cy1 with a CVA subspace fit of the natural training rows and pins A11.
+    # Natural-leg innovation-whiteness and K1-regularization weights (innov_white / kreg wildcards).
+    # innov_white shapes K1 by penalizing innovation autocorrelation, kreg by penalizing K1's
+    # magnitude. A weight of 0.0 leaves its term uncomputed (usid/train/step.py::training_step).
+    innov_white = float(cond_params["innov_white"])
+    kreg = float(cond_params["kreg"])
 
     # === USID config: cold_usid.yaml + runtime dims + COLD usid_overrides. no_opsin is a per-setting
     # runtime kwarg (the BRAID-vs-USID sweep axis), so inject it here — train_unnatural reads it strictly.
@@ -147,7 +163,8 @@ def fit_lds_to_data(
                             natural_restarts=natural_restarts, usid_restarts=usid_restarts, val_regime=val_regime,
                             pool_row_len=pool_row_len, a11_max_radius=a11_max_radius,
                             a22_max_radius=a22_max_radius, a_cl_lim=a_cl_lim,
-                            init_scale=init_scale)
+                            init_scale=init_scale, ifp=ifp, acf=acf,
+                            innov_white=innov_white, kreg=kreg)
     cfg.no_opsin = not use_opsin
 
     # === Natural electrode data, normalized in the controller's Y/Z coordinates (model_fit stats) ===
@@ -235,8 +252,10 @@ def fit_lds_to_data(
 # the fit keeps. Only delta/rollout differ between regimes; the leg-specific regularizers stay 0 at
 # validation. `validation.rollout` (K/W) is left to cold_usid.yaml (this injects only loss_weights).
 _VAL_REGIMES = {
-    "delta_dom":   {"delta": 1.0, "rollout": 0.2, "teacher": 0.0, "innov_white": 0.0, "ifp": 0.0, "kreg": 0.0},
-    "rollout_dom": {"delta": 0.2, "rollout": 1.0, "teacher": 0.0, "innov_white": 0.0, "ifp": 0.0, "kreg": 0.0},
+    "delta_dom":   {"delta": 1.0, "rollout": 0.2, "teacher": 0.0, "innov_white": 0.0, "ifp": 0.0,
+                    "kreg": 0.0, "acf": 0.0},
+    "rollout_dom": {"delta": 0.2, "rollout": 1.0, "teacher": 0.0, "innov_white": 0.0, "ifp": 0.0,
+                    "kreg": 0.0, "acf": 0.0},
 }
 
 
@@ -244,7 +263,9 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
                       fold_behavior: bool = True, natural_restarts: int = 1, usid_restarts: int = 1,
                       val_regime: str = "rollout_dom", pool_row_len: int = 800,
                       a11_max_radius: float = 0.99, a22_max_radius: float = 0.97,
-                      a_cl_lim: float = 0.99, init_scale: str = "jul23"):
+                      a_cl_lim: float = 0.99, init_scale: str = "jul23",
+                      ifp: float = 0.5, acf: float = 0.0, val_rollout_k: int = 80,
+                      innov_white: float = 0.0, kreg: float = 0.0):
     """Load COLD-side USID config and apply runtime + COLD-config overrides.
 
     Base config is ``config/cold_usid.yaml`` (inside the COLD repo), maintained
@@ -253,10 +274,10 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
 
       1. cold_usid.yaml (base).
       2. Runtime-dependent fields injected here (data.source, models.ny,
-         models.n_clusters, models.nz, models.fold_behavior,
          multistart.natural_restarts, multistart.usid_restarts,
          validation.loss_weights (val_regime wildcard),
          usid_hyperparams.pool_row_len (pool_row_len wildcard),
+         natural_hyperparams.loss.loss_weights.{acf, innov_white, kreg},
          models.a11_max_radius / a22_max_radius / a_cl_lim (spectral-limit wildcards), seed).
       3. COLD config's ``usid_overrides:`` block (if present) — lets individual
          COLD configs (e.g., ultra_light_config.yaml) tweak any USID hyperparam
@@ -304,10 +325,26 @@ def _load_usid_config(ny: int, k_opto: int, seed: int, cold_overrides: dict = No
         "multistart": {"natural_restarts": natural_restarts, "usid_restarts": usid_restarts},
         # Validation loss-weights from the val_regime wildcard (selection criterion for best-val + multistart
         # culling); overrides cold_usid.yaml's validation.loss_weights, leaving validation.rollout untouched.
-        "validation": {"loss_weights": _VAL_REGIMES[val_regime]},
+        # Rollout horizon of the selection score from the val_rollout_k wildcard. Every admissible
+        # rho has decayed long before K=80, which leaves the term unable to separate candidates.
+        "validation": {"loss_weights": _VAL_REGIMES[val_regime], "rollout": {"K": val_rollout_k}},
         # Opto-pool row length from the model_fit pool_row_len wildcard; sets how long a row the frozen
         # opsin GRU free-runs and how many windows each row yields.
-        "usid_hyperparams": {"pool_row_len": pool_row_len},
+        # Training loss weights: pool row length from the pool_row_len wildcard, input-free penalty
+        # weight from the ifp wildcard. Only the training weight is set — validation.loss_weights
+        # zeroes ifp regardless, so selection stays a pure fit score.
+        "usid_hyperparams": {
+            "pool_row_len": pool_row_len,
+            "loss": {"loss_weights": {"ifp": ifp}},
+        },
+        # Natural-leg training weights from the acf / innov_white / kreg wildcards. acf is the only
+        # term that reads the open-loop natural dynamics directly (teacher-forced and rollout both
+        # constrain A_open - K*C). innov_white and kreg are the two K1-shaping terms: the first
+        # penalizes innovation autocorrelation, the second K1's magnitude. Declaring kreg here is
+        # also what puts KRegLoss in the active registry at all (usid/train/stage_common.py gates on
+        # the weight's presence), and at 0.0 the term is never computed.
+        "natural_hyperparams": {"loss": {"loss_weights": {
+            "acf": acf, "innov_white": innov_white, "kreg": kreg}}},
         "seed": seed,
     }
     merged_dict = _deep_merge(base_dict, overrides)

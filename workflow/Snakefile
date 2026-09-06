@@ -59,6 +59,16 @@ wildcard_constraints:
     ctrl_type=_wc_constraint("ctrl_type", extras=("NULL",)),
     ctrl_horizon_ms=r"\d+",
     nlmpc_grad_iters=r"\d+",
+    ifp=_wc_constraint("ifp"),
+    acf=_wc_constraint("acf"),
+    val_rollout_k=_wc_constraint("val_rollout_k"),
+    innov_white=_wc_constraint("innov_white"),
+    kreg=_wc_constraint("kreg"),
+    alpha_attrib=_wc_constraint("alpha_attrib"),
+    Lambda_cost=_wc_constraint("Lambda_cost"),
+    Lambda_state=_wc_constraint("Lambda_state"),
+    Lambda_nat=_wc_constraint("Lambda_nat"),
+    Lambda_omega=_wc_constraint("Lambda_omega"),
 
 
 rule all:
@@ -99,8 +109,8 @@ steps_params = {
     # settings/target_iopto) and consumed by model_fit; a swept axis so different
     # training sets can be compared like any other sweep (see get_cold_opsin_input).
     "opsin_train_cold": ["opsin_stim_method"],
-    "model_fit": ["n_trials_sys_id", "model_task_inputs", "usid_rollout", "usid_teacher", "usid_delta", "behavior_weight", "fold_behavior", "natural_restarts", "usid_restarts", "val_regime", "pool_row_len", "a11_max_radius", "a22_max_radius", "a_cl_lim", "init_scale"],
-    "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters"],
+    "model_fit": ["n_trials_sys_id", "model_task_inputs", "usid_rollout", "usid_teacher", "usid_delta", "behavior_weight", "fold_behavior", "natural_restarts", "usid_restarts", "val_regime", "pool_row_len", "a11_max_radius", "a22_max_radius", "a_cl_lim", "init_scale", "ifp", "acf", "val_rollout_k", "innov_white", "kreg"],
+    "ctrl_expts": ["latency", "ctrl_type", "ctrl_horizon_ms", "nlmpc_grad_iters", "alpha_attrib", "Lambda_cost", "Lambda_state", "Lambda_nat", "Lambda_omega"],
     "analysis": [],
 }
 
@@ -125,6 +135,18 @@ for p in all_cond_params:
         f"params block missing default for {p!r}; every condition param "
         "must have a single default value in the params file."
     )
+
+
+# The attribution wildcards a NULL cell is pinned to. The NULL twin is a property of the plant
+# and the model, not of the objective the stimulated cell happens to be running, so one NULL run
+# and one geometry serve an entire alpha sweep.
+ATTRIB_DEFAULT_WC = {
+    "alpha_attrib": config["params"]["alpha_attrib"],
+    "Lambda_cost": config["params"]["Lambda_cost"],
+    "Lambda_state": config["params"]["Lambda_state"],
+    "Lambda_nat": config["params"]["Lambda_nat"],
+    "Lambda_omega": config["params"]["Lambda_omega"],
+}
 
 
 def step_from_filename(filename: str) -> str:

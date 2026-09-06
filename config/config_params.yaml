@@ -106,6 +106,11 @@ params:
   a11_max_radius: 0.99    # natural A11 Schur clamp (model_fit wildcard); slowest retained natural mode.
   a22_max_radius: 0.97    # unnatural A22 Schur clamp (model_fit wildcard); under zero_k2 this is the block the controller free-runs.
   a_cl_lim: 0.99          # rail on rho(A_cl)=rho(A_open-K*C) (model_fit wildcard), enforced by the init shrink and training guard; 1.0 admits boundary-riding observers.
+  ifp: 0.5                 # input-free penalty weight (training only)
+  acf: 0.0                 # natural-leg output-ACF weight; the only term that reads A_open directly
+  val_rollout_k: 80        # rollout horizon of the validation/selection score
+  innov_white: 0.0         # natural-leg innovation-whiteness weight; 0.0 removes the term entirely
+  kreg: 0.0                # natural-leg K1 L2 weight; 0.0 is inert (the term is not even computed)
   # Init-scale preset for the Jul-17 vs Jul-23 A/B: 'jul23' (shipped: K1/A12 at unit scale,
   # coupling and B' normalized by 1/sqrt of the summed dim) vs 'jul17' (flat 0.1), plus
   # jul17_{k1,a12,bprime,coupling} reverting one group at a time.
@@ -119,6 +124,13 @@ params:
   # Inner-solve iteration cap. The convergence test stops earlier when the projected
   # gradient flattens; the cap must be high enough that it is not what ends the solve.
   nlmpc_grad_iters: 300
+  # Attribution objective (EVAL_PLAN P1). Every weight defaults to 0, so the objective is
+  # tracking + effort exactly as before unless a sweep turns one on.
+  alpha_attrib: 0.0        # commanded induced share of the required behavioral deviation
+  Lambda_cost: 0.0         # weight on the commanded share (subspace LDS)
+  Lambda_state: 0.0        # weight on ||x2||^2 -- the (d') mechanism constraint
+  Lambda_nat: 0.0          # weight on the whitened natural deviation -- the (n') constraint
+  Lambda_omega: 0.0        # weight on the atypicality-share setpoint (unified LDS)
   k: 32
   m: 32
 
