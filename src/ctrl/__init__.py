@@ -12,6 +12,7 @@ from brian2 import Quantity, mm2, ms, mwatt, second
 from jaxtyping import Float
 from scipy import stats
 
+from src.ctrl._blocks import observer_step
 from src.ctrl.solvers import Solver
 from src.helpers import array_vals_by_t, drop_constant_behavior
 from src.model_fit import LDS
@@ -311,31 +312,12 @@ class Controller(cleo.ioproc.LatencyIOProcessor):
 
     @staticmethod
     def _observer_step(obs, x1, x2, y_zscored, u_opto_zscored):
-        """Single USID observer step (predictor form).
+        """Single USID observer step, computing x[t+1] from x[t], y[t], u[t].
 
-        Computes x[t+1] from x[t], y[t], u[t] using the subspace observer
-        equations directly, bypassing the Kalman filter.
-
-        Args:
-            obs: SubspaceLDS with A11, A22, K1, K2, C1, A12,
-                 B1_prime, B2_prime attributes
-            x1: (n1,) natural state at time t
-            x2: (n2,) unnatural state at time t
-            y_zscored: (ny,) z-scored observation at time t
-            u_opto_zscored: (k_opto,) z-scored opto input at time t
-
-        Returns:
-            x1_next: (n1,) natural state at time t+1
-            x2_next: (n2,) unnatural state at time t+1
+        Bypasses the Kalman filter: the subspace observer equations are applied directly, shared
+        with the offline metrics through `src.ctrl._blocks`.
         """
-        # obs.d is the affine output bias (ỹ = C·x + d); subtract it so the innovation
-        # and the K1 drive act on the C·x residual the observer gains were fitted against.
-        innovation = (y_zscored - obs.d) - obs.C1 @ x1
-        x1_next = obs.A11 @ x1 + obs.K1 @ (y_zscored - obs.d) + obs.B1_prime @ u_opto_zscored
-        if obs.A12 is not None:
-            x1_next += obs.A12 @ x2
-        x2_next = obs.A22 @ x2 + obs.K2 @ innovation + obs.B2_prime @ u_opto_zscored
-        return x1_next, x2_next
+        return observer_step(obs, x1, x2, y_zscored, u_opto_zscored)
 
     def _observer_y_zscored(self, y):
         """Z-scored observer measurement for the subspace observer step.
