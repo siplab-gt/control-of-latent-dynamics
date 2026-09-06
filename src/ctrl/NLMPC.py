@@ -25,9 +25,14 @@ from attrs import define, field
 from brian2 import mm2, ms, mwatt
 
 from src.ctrl import Controller
-from src.ctrl._cz_helpers import apply_cz, build_cz_state, has_cz
+from src.ctrl._blocks import closed_loop_blocks, readout_blocks
+from src.ctrl._cz_helpers import apply_cz, build_cz_state, has_cz, require_linear_cz
 
 log = logging.getLogger(__name__)
+
+_SHARE_EPS = 1e-8
+"""Floor on the denominators of the commanded-share terms, for windows where the required
+deviation or the induced deviation is identically zero."""
 
 
 def _rollout_state(x0, u_for_B, A_cl, B_block, ref_trajectory, ref_type,
@@ -60,21 +65,24 @@ def _rollout_state(x0, u_for_B, A_cl, B_block, ref_trajectory, ref_type,
 
     Returns:
         tracking_cost: scalar (torch tensor)
+        trajectory: (H, n) states, for the attribution cost terms in `compute_control`.
     """
     H = u_for_B.shape[0]
     driven = u_for_B @ B_block.T  # (H, n): B_block u_t for the whole horizon
 
     x = x0
+    states = []
     cost = torch.tensor(0.0, dtype=x0.dtype, device=x0.device)
     for t in range(H):
         x = A_cl @ x + driven[t]
+        states.append(x)
         if ref_type == "Z" and cz_state is not None and has_cz(cz_state):
             ctrl_var = apply_cz(cz_state, x)
         else:
             ctrl_var = x
         cost = cost + torch.sum((ctrl_var - ref_trajectory[t]) ** 2)
 
-    return cost / H
+    return cost / H, torch.stack(states)
 
 
 def _rollout_state_unified(x0, u_zscored, A, B_opto, ref_trajectory, ref_type,
@@ -99,13 +107,16 @@ def _rollout_state_unified(x0, u_zscored, A, B_opto, ref_trajectory, ref_type,
 
     Returns:
         tracking_cost: scalar (torch tensor)
+        trajectory: (H, n) states, for the atypicality-share cost term in `compute_control`.
     """
     H = u_zscored.shape[0]
     x = x0
+    states = []
     cost = torch.tensor(0.0, dtype=x0.dtype, device=x0.device)
 
     for t in range(H):
         x = A @ x + B_opto @ u_zscored[t]
+        states.append(x)
 
         if ref_type == "Z" and cz_state is not None and has_cz(cz_state):
             ctrl_var = apply_cz(cz_state, x)
@@ -113,7 +124,7 @@ def _rollout_state_unified(x0, u_zscored, A, B_opto, ref_trajectory, ref_type,
             ctrl_var = x
         cost = cost + torch.sum((ctrl_var - ref_trajectory[t]) ** 2)
 
-    return cost / H
+    return cost / H, torch.stack(states)
 
 
 def _solve_projected_adam(loss_fn, u0, lr, max_iters, tol, patience, u_max):
@@ -256,6 +267,32 @@ class NLMPCController(Controller):
     nlmpc_gtol: float = 1e-6
     """L-BFGS-B projected-gradient inf-norm convergence tolerance."""
 
+    # --- attribution objective (EVAL_PLAN P1). Every term is inert at its default. ---
+    alpha_attrib: float = 0.0
+    """Commanded share of the required behavioral deviation carried by the induced component.
+
+    On a subspace LDS it is the share of `r̃` the unnatural block delivers, `Cz2·x2 → α·r̃`. The
+    tracking term fixes the sum, so the natural block's induced contribution takes `(1−α)·r̃` by
+    subtraction. On a unified LDS it is the commanded share of the induced readout deviation
+    landing in atypical directions. Inert unless the matching Lambda is nonzero."""
+    Lambda_cost: float = 0.0
+    """Weight on the commanded induced share (subspace LDS)."""
+    Lambda_state: float = 0.0
+    """Weight on `‖x2‖²` — the (d′) mechanism constraint. Constrains x2 itself rather than its
+    readout, which `Lambda_cost` leaves free in `ker(Cz2)`."""
+    Lambda_nat: float = 0.0
+    """Weight on `Δx1ᵀ P₁⁻¹ Δx1` — the (n′) intrinsic-range constraint. Bounds the natural block's
+    excursion in units of its own NULL-trial spread, which the block-share terms do not."""
+    Lambda_omega: float = 0.0
+    """Weight on the atypicality-share setpoint (unified LDS): `Λ_Ω·Σ_t (s_t − α)²` with
+    `s_t = Δŷᵀ Ω Δŷ / ‖Δŷ‖²`, the unified counterpart of the commanded share."""
+    null_covariance: np.ndarray = None
+    """(m, m) NULL-trial covariance of the augmented readout. Builds `Ω` for the unified arm."""
+    natural_covariance: np.ndarray = None
+    """(n1, n1) NULL-trial covariance of the filtered natural state. Builds `P₁⁻¹` for (n′)."""
+    lambda_ref: float = None
+    """Graded-weight scale for `Ω`: `w_i = λ_i / (λ_i + lambda_ref)`."""
+
     # Internal state (not constructor args)
     _u_light_warm: np.ndarray = field(default=None, init=False, repr=False)
     _torch_matrices: dict = field(factory=dict, init=False, repr=False)
@@ -312,20 +349,13 @@ class NLMPCController(Controller):
                 'A12': torch.tensor(lds.A12, dtype=torch.float32) if lds.A12 is not None else None,
             }
             # Precompute the closed-loop block system the rollout iterates:
-            # x_{t+1} = A_cl x_t + B_block u_t (frozen model → build once). See
-            # _rollout_state for the derivation (innovation = C2 x2).
+            # x_{t+1} = A_cl x_t + B_block u_t (frozen model → build once). Assembled by
+            # _blocks so the offline attribution metrics replay the identical recursion.
             m = self._torch_matrices
-            n1 = m['A11'].shape[0]
-            n2 = m['A22'].shape[0]
-            A_cl = torch.zeros((n1 + n2, n1 + n2), dtype=torch.float32)
-            A_cl[:n1, :n1] = m['A11'] + m['K1'] @ m['C1']
-            top_right = m['K1'] @ m['C2']
-            if m['A12'] is not None:
-                top_right = top_right + m['A12']
-            A_cl[:n1, n1:] = top_right
-            A_cl[n1:, n1:] = m['A22'] + m['K2'] @ m['C2']
-            m['A_cl'] = A_cl
-            m['B_block'] = torch.cat([m['B1_prime'], m['B2_prime']], dim=0)
+            A_cl_np, B_block_np = closed_loop_blocks(lds)
+            m['A_cl'] = torch.tensor(A_cl_np, dtype=torch.float32)
+            m['B_block'] = torch.tensor(B_block_np, dtype=torch.float32)
+            m['n1'] = lds.A11.shape[0]
         else:
             # Unified-LDS shape (BRAID). Only A / B_opto / C / Cz are present.
             self._torch_matrices = {
@@ -336,6 +366,7 @@ class NLMPCController(Controller):
         # Single source of truth for Cz dispatch across subspace and unified
         # modes, linear and nonlinear. See src/ctrl/_cz_helpers.py.
         self._cz_state = build_cz_state(lds)
+        self._setup_attribution_matrices()
 
         if self._has_opsin:
             self._opsin_model = lds.opsin_model
@@ -354,6 +385,171 @@ class NLMPCController(Controller):
             self._torch_matrices['u_std_opto'] = torch.tensor(
                 lds.u_std[: self.k_opto], dtype=torch.float32
             )
+
+    @property
+    def _attribution_active(self) -> bool:
+        """Whether any attribution cost term carries weight this run."""
+        return any(w != 0.0 for w in (
+            self.Lambda_cost, self.Lambda_state, self.Lambda_nat, self.Lambda_omega
+        ))
+
+    def _setup_attribution_matrices(self):
+        """Build the operators the attribution cost terms need, once per reset.
+
+        No-op unless a term is weighted, so a default run pays nothing and its objective is the
+        one the pre-attribution code assembled.
+        """
+        if not self._attribution_active:
+            return
+
+        lds = self.lds
+        if self.ref_type != "Z":
+            raise ValueError(
+                f"the attribution objective is defined on the behavior readout, but "
+                f"ref_type={self.ref_type!r}. r̃ has no meaning without a behavior reference"
+            )
+        require_linear_cz(
+            self._cz_state,
+            "the attribution objective needs z = Cz1·x1 + Cz2·x2 + d_z to hold additively",
+        )
+        m = self._torch_matrices
+
+        if self._subspace_mode:
+            Cz1, Cz2, d_z = readout_blocks(lds)
+            m['Cz1'] = torch.tensor(Cz1, dtype=torch.float32)
+            m['Cz2'] = torch.tensor(Cz2, dtype=torch.float32)
+            m['d_z'] = torch.tensor(d_z, dtype=torch.float32)
+            if self.Lambda_nat != 0.0:
+                if self.natural_covariance is None:
+                    raise ValueError(
+                        "Lambda_nat is nonzero but natural_covariance was not supplied. The "
+                        "(n′) penalty measures Δx1 in units of the natural block's own "
+                        "NULL-trial variability and has no meaning without it"
+                    )
+                P1 = np.asarray(self.natural_covariance, dtype=float)
+                ridge = self._ridge_for(P1)
+                m['P1_inv'] = torch.tensor(
+                    np.linalg.inv(P1 + ridge * np.eye(P1.shape[0])), dtype=torch.float32
+                )
+        else:
+            if self.Lambda_omega != 0.0:
+                if self.null_covariance is None or self.lambda_ref is None:
+                    raise ValueError(
+                        "Lambda_omega is nonzero but null_covariance/lambda_ref were not "
+                        "supplied. Ω weights directions by how much the plant visits them "
+                        "without input, which only the NULL trials define"
+                    )
+                m['Omega'] = torch.tensor(self._build_omega(), dtype=torch.float32)
+                m['C_full'] = torch.tensor(np.asarray(lds.C, dtype=float), dtype=torch.float32)
+
+    def _build_omega(self):
+        """`Ω = U diag(1 − w_i) Uᵀ` from the NULL-trial covariance, weighting atypical directions.
+
+        `w_i = λ_i / (λ_i + lambda_ref)` grades each eigendirection by how much of the plant's
+        no-input activity lives there, so `Ω` is near-zero along directions the plant occupies
+        freely and near-one along directions it does not.
+        """
+        sigma = np.asarray(self.null_covariance, dtype=float)
+        eigenvalues, eigenvectors = np.linalg.eigh(sigma)
+        eigenvalues = np.clip(eigenvalues, 0.0, None)
+        weights = eigenvalues / (eigenvalues + self.lambda_ref)
+        return eigenvectors @ np.diag(1.0 - weights) @ eigenvectors.T
+
+    @staticmethod
+    def _ridge_for(matrix):
+        """Ridge scaled to the matrix's own leading eigenvalue, for a conditioning-safe inverse."""
+        scale = float(np.max(np.abs(np.linalg.eigvalsh(matrix))))
+        return 1e-6 * max(scale, np.finfo(float).tiny)
+
+    def _free_run(self, x0, H):
+        """Light-off propagation of the planning model over the horizon: (H, n).
+
+        `A_cl` (or `A`) is not a function of `u`, so this depends only on the current estimate and
+        is computed once per control step, outside the solver loop. It is what the required
+        deviation `r̃` is measured against: everything beyond what the intrinsic dynamics were
+        going to do anyway.
+        """
+        A = self._torch_matrices['A_cl' if self._subspace_mode else 'A']
+        x = x0
+        states = []
+        for _ in range(H):
+            x = A @ x
+            states.append(x)
+        return torch.stack(states)
+
+    def _attribution_setpoint(self, x0, ref, H):
+        """The `u`-independent quantities the attribution terms are scored against.
+
+        Args:
+            x0: (n,) current state estimate.
+            ref: (H, n_z) reference over the horizon, z-scored.
+            H: horizon length.
+
+        Returns:
+            dict with `x_free` (H, n) and, on a subspace LDS, `r_tilde` (H, n_z) and the scalar
+            window normalizer `S_H`.
+
+        `r̃ = r − (Cz1·x1^free + d_z)` is the behavioral deviation left after what the intrinsic
+        dynamics deliver on their own. `S_H = Σ_t‖r̃_t‖² + ε` is its energy over the window, which
+        divides out of the commanded-share term so `Λ` sets a scale-free preference strength.
+        """
+        with torch.no_grad():
+            x_free = self._free_run(x0, H)
+            out = {'x_free': x_free}
+            if self._subspace_mode:
+                mat = self._torch_matrices
+                n1 = mat['n1']
+                z_nat_free = x_free[:, :n1] @ mat['Cz1'].T + mat['d_z']
+                r_tilde = ref - z_nat_free
+                out['r_tilde'] = r_tilde
+                out['S_H'] = torch.sum(r_tilde ** 2) + _SHARE_EPS
+        return out
+
+    def _attribution_cost(self, traj, attrib):
+        """The attribution terms of `J(α)`, evaluated on one candidate trajectory.
+
+        Args:
+            traj: (H, n) states produced by the rollout under the proposed light.
+            attrib: dict from `_attribution_setpoint`.
+
+        Returns:
+            scalar torch tensor to add to tracking + effort.
+        """
+        mat = self._torch_matrices
+        H = traj.shape[0]
+        cost = torch.zeros((), dtype=traj.dtype, device=traj.device)
+
+        if self._subspace_mode:
+            n1 = mat['n1']
+            x2 = traj[:, n1:]
+            if self.Lambda_cost != 0.0:
+                # Command the induced readout onto its share of the required deviation. Two-sided:
+                # at α = 0.7 an induced contribution that is too small is penalized exactly as
+                # much as one that is too large, which a magnitude penalty cannot express.
+                z_ind = x2 @ mat['Cz2'].T
+                residual = z_ind - self.alpha_attrib * attrib['r_tilde']
+                cost = cost + (
+                    self.Lambda_cost / self.n_r
+                ) * torch.sum(residual ** 2) / attrib['S_H']
+            if self.Lambda_state != 0.0:
+                cost = cost + self.Lambda_state * torch.sum(x2 ** 2) / H
+            if self.Lambda_nat != 0.0:
+                dx1 = traj[:, :n1] - attrib['x_free'][:, :n1]
+                whitened = dx1 @ mat['P1_inv']
+                cost = cost + self.Lambda_nat * torch.sum(dx1 * whitened) / H
+        elif self.Lambda_omega != 0.0:
+            # BRAID's counterpart: a setpoint on the share of its own induced readout deviation
+            # that lands in atypical directions. The ratio makes it two-sided and scale-free, so
+            # it spans the same commanded range α does rather than only the low half.
+            dy = (traj - attrib['x_free']) @ mat['C_full'].T
+            atypical = torch.sum((dy @ mat['Omega']) * dy, dim=1)
+            total = torch.sum(dy ** 2, dim=1) + _SHARE_EPS
+            share = atypical / total
+            cost = cost + self.Lambda_omega * torch.sum(
+                (share - self.alpha_attrib) ** 2
+            ) / H
+
+        return cost
 
     def _run_opsin_forward(self, u_light, h0=None):
         """Run opsin model: (H, k_opto) light → (H, k_opto) photocurrents.
@@ -417,6 +613,10 @@ class NLMPCController(Controller):
             self._opsin_hidden.detach() if self._opsin_hidden is not None else None
         )
 
+        # Light-off counterfactual and the deviation the controller must manufacture. Both are
+        # independent of the decision variable, so they are formed here rather than per iterate.
+        attrib = self._attribution_setpoint(x0, ref, H) if self._attribution_active else None
+
         def loss_fn(u_light):
             # Mode-aware rollout. Three paths:
             #   • opsin + subspace: forward through NN opsin → photocurrents,
@@ -429,21 +629,21 @@ class NLMPCController(Controller):
             #     form; kalman update happens out-of-band in `process`).
             if self._has_opsin:
                 photocurrents, _ = self._run_opsin_forward(u_light, h0=h0_planning)
-                tracking_cost = _rollout_state(
+                tracking_cost, traj = _rollout_state(
                     x0, photocurrents,
                     mat['A_cl'], mat['B_block'],
                     ref, self.ref_type, self._cz_state,
                 )
             elif self._subspace_mode:
                 u_zscored = (u_light - mat['u_mean_opto']) / mat['u_std_opto']
-                tracking_cost = _rollout_state(
+                tracking_cost, traj = _rollout_state(
                     x0, u_zscored,
                     mat['A_cl'], mat['B_block'],
                     ref, self.ref_type, self._cz_state,
                 )
             else:  # linearized_unified (BRAID)
                 u_zscored = (u_light - mat['u_mean_opto']) / mat['u_std_opto']
-                tracking_cost = _rollout_state_unified(
+                tracking_cost, traj = _rollout_state_unified(
                     x0, u_zscored,
                     mat['A'], mat['B_opto'],
                     ref, self.ref_type, self._cz_state,
@@ -453,7 +653,10 @@ class NLMPCController(Controller):
             # argmin) — so on the linear no-opsin path a converged solve must
             # match LQMPC. See _solve_projected_adam.
             effort_cost = torch.sum(u_light ** 2) / (H * k_opto)
-            return self.Qcost * tracking_cost / self.n_r + self.Rcost * effort_cost
+            loss = self.Qcost * tracking_cost / self.n_r + self.Rcost * effort_cost
+            if attrib is not None:
+                loss = loss + self._attribution_cost(traj, attrib)
+            return loss
 
         if self.nlmpc_optimizer == "lbfgsb":
             u_opt, n_iters, final_loss = _solve_lbfgsb(

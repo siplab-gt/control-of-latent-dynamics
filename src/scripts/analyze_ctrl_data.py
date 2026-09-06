@@ -11,10 +11,13 @@ from snakemake.script import snakemake
 from src.helpers import (
     drop_constant_behavior,
     load_factors_emg,
+    load_pkl_gz,
     preprocess_params,
+    seed_everything,
     setup_debugger,
     setup_logging,
 )
+from src.scripts.attribution_metrics import compute_attribution_metrics
 from src.scripts.ctrl_expts import CtrlData
 from src.scripts.model_fit import ModelFitPredData
 from src.scripts.sys_id_expts import ExptData
@@ -236,6 +239,7 @@ def analyze_ctrl_data(
     model_fit_analysis_file,
     chr2_stability_file,
     saturation_curve_file,
+    lds_model_file,
     outfile,
 ):
     results = {**cond_params}
@@ -458,6 +462,21 @@ def analyze_ctrl_data(
         traceback.print_exc()
         print(f"[WARN] operating-regime linearity metric failed: {e}")
 
+    # Attribution / routing / counterfactual metrics (EVAL_PLAN P1a, P2). Diagnostics-class:
+    # a failure here must not cost the cell its tracking metrics, which are the primary output.
+    try:
+        results.update(compute_attribution_metrics(
+            ctrl_data,
+            null_ctrl_data,
+            load_pkl_gz(lds_model_file),
+            eval_mask,
+            np.random.default_rng(seed_everything(int(cond_params["seed"]), "attribution")),
+        ))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[WARN] attribution metrics failed: {e}")
+
     print(results)
 
     df = pd.DataFrame([results])
@@ -480,5 +499,6 @@ if __name__ == "__main__" and "snakemake" in locals():
         snakemake.input.model_fit_analysis,
         snakemake.input.chr2_stability,
         snakemake.input.saturation_curve,
+        snakemake.input.lds_model,
         snakemake.output[0],
     )

@@ -100,11 +100,40 @@ class CtrlData(ExptData):
         return self.X
 
 
+def _attribution_kwargs(cond_params, attribution_geometry):
+    """NLMPC attribution-objective kwargs read from the cond-params.
+
+    Args:
+        cond_params: this cell's wildcards.
+        attribution_geometry: path to the NULL-derived `.npz`, or None when the cell's objective
+            does not reference plant-side statistics.
+
+    Returns:
+        dict of controller kwargs. Every weight is 0 by default, so a cell that sweeps none of
+        them constructs the controller exactly as it did before the attribution terms existed.
+    """
+    kwargs = {
+        "alpha_attrib": float(cond_params.alpha_attrib),
+        "Lambda_cost": float(cond_params.Lambda_cost),
+        "Lambda_state": float(cond_params.Lambda_state),
+        "Lambda_nat": float(cond_params.Lambda_nat),
+        "Lambda_omega": float(cond_params.Lambda_omega),
+    }
+    if attribution_geometry:
+        geometry = np.load(attribution_geometry)
+        kwargs["null_covariance"] = geometry["sigma_null"]
+        kwargs["lambda_ref"] = float(geometry["lambda_ref"])
+        if "P1" in geometry:
+            kwargs["natural_covariance"] = geometry["P1"]
+    return kwargs
+
+
 def ctrl_expts(
     cond_params,
     base_params,
     cleo_prep_file,
     lds_model_file,
+    attribution_geometry,
     out_data_file,
     config,
 ):
@@ -189,6 +218,7 @@ def ctrl_expts(
     if ctrl_type == "NLMPC":
         ctrl_kwargs['nlmpc_grad_iters'] = int(cond_params.nlmpc_grad_iters)
         ctrl_kwargs['nlmpc_step_size'] = float(base_params.nlmpc_step_size)
+        ctrl_kwargs.update(_attribution_kwargs(cond_params, attribution_geometry))
     elif ctrl_type == "iLQR":
         # iLQR reuses the `nlmpc_grad_iters` wildcard as its outer-iteration
         # budget so we don't need a parallel path wildcard. Other iLQR
@@ -363,6 +393,9 @@ if __name__ == "__main__" and "snakemake" in locals():
         preprocess_params(snakemake.params),
         snakemake.input.cleo_prep,
         snakemake.input.lds_model,
+        # [] when this cell's objective needs no plant-side statistics (Snakemake collapses an
+        # empty conditional input to an empty list).
+        snakemake.input.attribution_geometry or None,
         snakemake.output.data,  # outfile
         preprocess_params(snakemake.config),  # for non-essential params
     )

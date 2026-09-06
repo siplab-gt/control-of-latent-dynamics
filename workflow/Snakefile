@@ -641,10 +641,17 @@ rule stim_rec_tabulate:
 rule analyze_ctrl_data:
     input:
         ctrl_data=wildcard_path("ctrl_data.pkl.gz"),
-        null_ctrl_data=wildcard_path(
+        # Pinned to the default attribution wildcards as well as ctrl_type/latency. A NULL cell
+        # runs the NULL controller, which reads no attribution param, so a sweep over them would
+        # otherwise spawn one identical Brian2 NULL run per cell. Sharing one twin per seed also
+        # removes twin-to-twin variation from the alpha curve.
+        null_ctrl_data=lambda wildcards: wildcard_path(
             "ctrl_data.pkl.gz",
             ctrl_type="NULL",
             latency=False,
+            **{k: getattr(wildcards, k) for k in cond_params_for_step("ctrl_expts")
+               if k not in ATTRIB_DEFAULT_WC and k not in ("ctrl_type", "latency")},
+            **ATTRIB_DEFAULT_WC,
         ),
         fsnn_data_analysis=wildcard_path("fsnn_test_data_analysis.csv"),
         model_fit_analysis=wildcard_path("model_fit_analysis.csv"),
@@ -666,6 +673,9 @@ rule analyze_ctrl_data:
         # against the opsin nonlinearity (ctrl_opsin_* operating-regime
         # metrics) and to report plant linearity (lin[5,75]) as provenance.
         saturation_curve="results/opsin_calibration/target_iopto_{target_iopto}/chr2_4s_fsnn_saturation_curve.json",
+        # The attribution metrics replay the planner's own free-run recursion, which needs the
+        # fitted matrices themselves — model_fit_analysis.csv carries only scores.
+        lds_model=wildcard_path("model_fit_lds.pkl.gz"),
     output:
         wildcard_path("summary.csv"),
     log:
@@ -752,12 +762,55 @@ def _ctrl_expts_runtime(wildcards, attempt):
     return base * attempt
 
 
+def _attribution_needs_geometry(wildcards) -> bool:
+    """Whether this cell's objective references plant-side statistics.
+
+    Only the unified-LDS atypicality term and the (n') intrinsic-range term do. Every other cell
+    — including every NULL cell, which pins these to their defaults — must not take the dependency,
+    or a NULL cell would depend on itself.
+    """
+    if wildcards.ctrl_type == "NULL":
+        return False
+    return (
+        float(wildcards.Lambda_omega) != 0.0 or float(wildcards.Lambda_nat) != 0.0
+    )
+
+
+def get_attribution_geometry_input(wildcards):
+    """Path to the NULL-derived geometry for this cell, or [] when its objective does not use one."""
+    if not _attribution_needs_geometry(wildcards):
+        return []
+    keep = {k: getattr(wildcards, k) for k in cond_params_for_step("ctrl_expts")
+            if k not in ATTRIB_DEFAULT_WC and k not in ("ctrl_type", "latency")}
+    return wildcard_path(
+        "attribution_geometry.npz",
+        ctrl_type="NULL",
+        latency=False,
+        **keep,
+        **ATTRIB_DEFAULT_WC,
+    )
+
+
+rule attribution_geometry:
+    input:
+        null_ctrl_data=wildcard_path("ctrl_data.pkl.gz"),
+        lds_model=wildcard_path("model_fit_lds.pkl.gz"),
+    output:
+        wildcard_path("attribution_geometry.npz"),
+    log:
+        wildcard_path("attribution_geometry.log"),
+    localrule: True
+    script:
+        "../src/scripts/attribution_geometry.py"
+
+
 rule ctrl_expts:
     input:
         "src/ctrl/__init__.py",
         "src/ctrl/{ctrl_type}.py",
         cleo_prep=wildcard_path("cleo_prep.pkl.gz"),
         lds_model=wildcard_path("model_fit_lds.pkl.gz"),
+        attribution_geometry=get_attribution_geometry_input,
         # ctrl_expts unpickles cleo_prep, whose __reduce__ re-runs CleoPrep.build,
         # which EAGERLY reads chr2_4s_fsnn_calibration.json. Declare it (same
         # pattern as rule cleo_prep via _cleo_prep_calibration_input) so the DAG

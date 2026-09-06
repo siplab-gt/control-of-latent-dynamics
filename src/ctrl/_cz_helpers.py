@@ -84,6 +84,12 @@ def build_cz_state(lds) -> Dict[str, object]:
             'is_nonlinear': False,
             'Cz': Cz,
             'd_z': _behavior_bias(lds, Cz.shape[0]),
+            # The blocks are retained alongside the concatenation: tracking needs only the
+            # combined Cz, while the attribution objective and metrics need to know which part
+            # of the readout each block produced.
+            'Cz1': torch.tensor(np.asarray(cz1), dtype=torch.float32),
+            'Cz2': torch.tensor(np.asarray(Cz2), dtype=torch.float32),
+            'n1': int(np.asarray(cz1).shape[1]),
         }
 
     return {'is_nonlinear': False}  # ref_type='X' fallback
@@ -136,3 +142,35 @@ def has_cz(cz_state: Dict[str, object]) -> bool:
     """Whether the LDS has any Cz (matrix or nonlinear). Used to decide
     ref_type='Z' vs passthrough ref_type='X' fallback in rollouts."""
     return cz_state.get('is_nonlinear') or ('Cz' in cz_state)
+
+
+def apply_cz_split(cz_state: Dict[str, object], x: torch.Tensor):
+    """Split the behavior readout into its natural and induced parts: `(..., n) → two (..., m_z)`.
+
+    Returns `(z_nat, z_ind)` with `z_nat = Cz1·x1 + d_z` and `z_ind = Cz2·x2`, so their sum is
+    exactly `apply_cz(cz_state, x)`. The bias joins the natural component by convention, and the
+    objectives are not invariant to that choice.
+    """
+    require_linear_cz(cz_state, "apply_cz_split needs a separable linear readout")
+    if 'Cz1' not in cz_state:
+        raise KeyError(
+            "cz_state carries no Cz1/Cz2 blocks — this LDS has a unified Cz, so its readout "
+            "cannot be attributed to a natural or an induced block"
+        )
+    n1 = cz_state['n1']
+    z_nat = x[..., :n1] @ cz_state['Cz1'].T + cz_state.get('d_z', 0.0)
+    z_ind = x[..., n1:] @ cz_state['Cz2'].T
+    return z_nat, z_ind
+
+
+def require_linear_cz(cz_state: Dict[str, object], reason: str) -> None:
+    """Raise if the readout is the nonlinear torch module rather than a matrix.
+
+    `z = Cz1·x1 + Cz2·x2 + d_z` holds additively for any learned linear Cz, because USID's
+    `Cz1`/`Cz2` are row-slices of the linear readout. The nonlinear path (`TorchNonlinearCz`,
+    created only by BRAID under `linear_Cz=False`) has no such decomposition at any level of
+    approximation, so a split objective handed one would be scoring a quantity that does not
+    exist.
+    """
+    if cz_state.get('is_nonlinear'):
+        raise TypeError(f"nonlinear Cz is not separable: {reason}")
