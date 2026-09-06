@@ -164,7 +164,7 @@ def fit_lds_to_data(
                             pool_row_len=pool_row_len, a11_max_radius=a11_max_radius,
                             a22_max_radius=a22_max_radius, a_cl_lim=a_cl_lim,
                             init_scale=init_scale, ifp=ifp, acf=acf,
-                            innov_white=innov_white, kreg=kreg)
+                            val_rollout_k=val_rollout_k, innov_white=innov_white, kreg=kreg)
     cfg.no_opsin = not use_opsin
 
     # === Natural electrode data, normalized in the controller's Y/Z coordinates (model_fit stats) ===
