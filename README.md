@@ -17,17 +17,17 @@ This entails:
 
 ## Installing dependencies
 
-```bash
-mamba env create -f workflow/envs/main.yaml
-mamba activate cold
-```
-
-Since Snakemake's conda method straight from the file struggles with the relative path to install the source package here, we just make sure to prepare the environment first.
-Keep this environment up-to-date with the env file like so:
+COLD shares one environment with the USID repo that vendors it, since `model_fit_method: usid`
+runs USID's training code in-process. Build it with USID's installer, which pip-installs both
+packages editable into the same prefix:
 
 ```bash
-mamba env update -n cold -f workflow/envs/main.yaml --prune 
+~/r-crozell3-0/projects/usid/envs/pace/install.sh
+conda activate ~/r-crozell3-0/envs/USID312gpu
 ```
+
+The workflow has no Snakemake conda integration: activate that environment before invoking
+`snakemake`, and it is inherited by every SLURM job the executor submits.
 
 ## Usage
 

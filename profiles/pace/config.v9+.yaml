@@ -5,8 +5,8 @@ jobs: 495 # just under 500 limit to be safe
 # resources:
 #   gpu_jobs: 500
 #   gpu: 32
-# NOTE: Removed sdm: conda due to PACE conda version (24.1.2) not meeting
-# Snakemake 8.x requirement (24.7.1+). Using pre-activated USID env instead.
+# No software-deployment method is set: jobs inherit the environment activated before
+# snakemake is invoked (see workflow/smk-submit-slurm.sbatch).
 default-resources:
   # slurm_account: gts-crozell3
   # tasks_per_gpu: 0

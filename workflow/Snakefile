@@ -828,8 +828,6 @@ rule ctrl_expts:
         step_cfg("cleo_prep", "expts", "ctrl_expts"),
     output:
         data=wildcard_path("ctrl_data.pkl.gz"),
-    conda:
-        "envs/main.yaml"
     resources:
         # Control loop is pure CPU (scipy L-BFGS-B / torch-CPU + Brian2 cython runtime
         # mode); no rule in src/ctrl/* touches CUDA. Run on CPU to free the rtx6000 GPU
@@ -1067,8 +1065,6 @@ rule measure_voperating_range:
         base_params=_voperating_base_params,
     log:
         "logs/measure_voperating_range.log",
-    conda:
-        "envs/main.yaml"
     resources:
         mem_mb=16000,
         runtime=30,
@@ -1109,8 +1105,6 @@ rule calibrate_opsin_plant:
         "results/opsin_calibration/target_iopto_{target_iopto}/chr2_4s_fsnn_calibration.json",
     log:
         "logs/opsin_calibration/target_iopto_{target_iopto}/calibrate_opsin_plant.log",
-    conda:
-        "envs/main.yaml"
     resources:
         mem_mb=8000,
         runtime=30,
@@ -1142,8 +1136,6 @@ rule opsin_saturation_curve:
         "results/opsin_calibration/target_iopto_{target_iopto}/chr2_4s_fsnn_saturation_curve.json",
     log:
         "logs/opsin_calibration/target_iopto_{target_iopto}/opsin_saturation_curve.log",
-    conda:
-        "envs/main.yaml"
     resources:
         mem_mb=8000,
         runtime=60,
@@ -1180,8 +1172,6 @@ rule opsin_train_cold:
         sentinel="results/opsin_train_cold/opsin_stim_method_{opsin_stim_method}/best_model.path",
     log:
         "logs/opsin_train_cold_{opsin_stim_method}.log",
-    conda:
-        "envs/main.yaml"
     threads: 4
     resources:
         # GPU partition for the NN-training half (5000 epochs at hidden_size=32
@@ -1228,8 +1218,6 @@ rule model_fit:
         mem_mb=32000,
         runtime=180,    # raised 120->180 for n_trials_sys_id=50 + rollout/ACF losses (loss-recovery sweep)
     retries: 1
-    conda:
-        "envs/main.yaml"
     log:
         wildcard_path("model_fit.log"),
     script:
@@ -1283,8 +1271,6 @@ rule sys_id_expts:
         wildcard_path("sys_id_data.pkl.gz"),
     log:
         wildcard_path("sys_id_expts.log"),
-    conda:
-        "envs/main.yaml"
     resources:
         mem_mb=4000,
         runtime=60,
@@ -1453,8 +1439,6 @@ rule cleo_prep:
         mem_mb=16000,  # 16GB for loading large fSNN pickle files
         runtime=60,    # 60 min timeout (increased from 30 for LFP jobs)
     retries: 1
-    conda:
-        "envs/main.yaml"
     script:
         "../src/scripts/cleo_prep.py"
 
@@ -1556,8 +1540,6 @@ rule _prep_fsnn:
         runtime=120,
         mem_mb=64000,
     retries: 1
-    conda:
-        "envs/main.yaml"
     script:
         "../src/scripts/prep_fsnn.py"
 

@@ -12,22 +12,22 @@ This repository contains a Snakemake workflow and Python source code for "Closed
   - `helpers.py`: Shared utilities for seeding, logging, and parameter preprocessing.
 - `workflow/`: Snakemake orchestration.
   - `Snakefile`: Main workflow definition.
-  - `envs/`: Conda environment definitions.
 - `config/`: Configuration files (YAML).
 - `results/`: Generated data, models, and figures (ignored by git, but structure is parameter-dependent).
 
 ## Essential Commands
 
 ### Environment Setup
+COLD shares the USID repo's environment (both packages are pip-installed editable into it).
+Build it with USID's `envs/pace/install.sh`, then:
 ```bash
-mamba env create -f workflow/envs/main.yaml
-mamba activate cold
+conda activate ~/r-crozell3-0/envs/USID312gpu
 ```
 
 ### Running the Workflow
 ```bash
 # Run everything
-snakemake --use-conda
+snakemake
 
 # Run a specific rule
 snakemake results/figs/diagnostics.pdf

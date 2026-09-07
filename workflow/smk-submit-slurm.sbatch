@@ -51,8 +51,7 @@ COLD_BATCH_LABEL="$(date +%Y%m%d)-${SLURM_JOB_ID:-local}"
 # --jobs 100: up to 100 parallel SLURM jobs
 # --default-resources: set defaults for jobs that don't specify
 # SLURM executor with PACE settings (adapted from profiles/pace)
-# NOTE: Removed sdm=conda due to PACE conda version (24.1.2) not meeting
-# Snakemake 8.x requirement (24.7.1+). Using already-activated USID env instead.
+# There is no software-deployment method. Child jobs inherit the environment activated above.
 SU_BEFORE="$(mktemp)"; SU_AFTER="$(mktemp)"
 _su_snapshot > "$SU_BEFORE"
 echo "=== SU balances before run ==="; cat "$SU_BEFORE"
