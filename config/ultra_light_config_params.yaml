@@ -43,7 +43,8 @@ params:
   stim_u_max_mWmm2: 75
   stim_budget_mWmm2: 6
   # opsin-NN training light distribution (src.opsin_stim; opsin_train_cold rule).
-  # current_mix (60% blocks + 40% white, validated default) | ou (clipped OU colored noise).
+  # logwalk (log-uniform dwell + log-amplitude random walk; the default) | current_mix (60%
+  # blocks + 40% white, the earlier validated default) | ou (clipped OU colored noise).
   opsin_stim_method: logwalk
   # USID model_fit-level loss-weight wildcards (route into usid_overrides via
   # src/scripts/model_fit.py): each maps to a usid_hyperparams.loss.loss_weights leaf.
@@ -74,7 +75,7 @@ params:
   ctrl_type: LQMPC
   ctrl_horizon_ms: 300
   nlmpc_grad_iters: 2
-  # Attribution objective (EVAL_PLAN P1). Every weight defaults to 0, so the objective is
+  # Attribution objective. Every weight defaults to 0, so the objective is
   # tracking + effort exactly as before unless a sweep turns one on.
   alpha_attrib: 0.0        # commanded induced share of the required behavioral deviation
   Lambda_cost: 0.0         # weight on the commanded share (subspace LDS)

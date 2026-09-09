@@ -1,6 +1,5 @@
 # Swept axes for the testconfig pipeline. Every axis NOT listed here takes its default from
-# config/testconfig_params.yaml, and those defaults describe the logwalk cell that scored
-# Q = 0.367 (mean over this roster). So this file is the roster and nothing else: it fans the
+# config/testconfig_params.yaml. This file is the seed roster and nothing else: it fans the
 # reference condition across seeds without varying anything about the condition itself.
 #
 # q_usid is NOT repeated here -- it lives in the params file, which is its single source of

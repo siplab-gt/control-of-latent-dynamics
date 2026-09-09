@@ -86,9 +86,10 @@ params:
   stim_u_max_mWmm2: 75
   stim_budget_mWmm2: 6
   # opsin-NN training light distribution (src.opsin_stim; opsin_train_cold rule).
-  # current_mix = 60% sustained blocks + 40% white lognormal (validated default) |
-  # ou = single clipped Ornstein-Uhlenbeck colored-noise process. Equivalent for control
-  # Q (sweep 10833292); ou is simpler, current_mix has better deep-saturation coverage.
+  # logwalk = log-uniform dwell + log-amplitude random walk (the default; one leaf spanning
+  # both current_mix limits) | current_mix = 60% sustained blocks + 40% white lognormal (the
+  # earlier validated default) | ou = single clipped Ornstein-Uhlenbeck colored-noise process.
+  # Equivalent for control Q (sweep 10833292).
   opsin_stim_method: logwalk
   # USID model_fit-level loss-weight wildcards (route into usid_overrides via
   # src/scripts/model_fit.py): each maps to a usid_hyperparams.loss.loss_weights leaf.
@@ -124,7 +125,7 @@ params:
   # Inner-solve iteration cap. The convergence test stops earlier when the projected
   # gradient flattens; the cap must be high enough that it is not what ends the solve.
   nlmpc_grad_iters: 300
-  # Attribution objective (EVAL_PLAN P1). Every weight defaults to 0, so the objective is
+  # Attribution objective. Every weight defaults to 0, so the objective is
   # tracking + effort exactly as before unless a sweep turns one on.
   alpha_attrib: 0.0        # commanded induced share of the required behavioral deviation
   Lambda_cost: 0.0         # weight on the commanded share (subspace LDS)

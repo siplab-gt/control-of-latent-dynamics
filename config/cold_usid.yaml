@@ -12,8 +12,8 @@
 #      - models.ny                    (from sys_id data shape)
 #      - models.n_clusters            (from cond_params.k)
 #      - seed                         (from cond_params.seed)
-#   3. COLD config's `usid_overrides:` block (if present) deep-merges on top.
-#      `ultra_light_config.yaml` uses this to shorten epochs to 2.
+#   3. The params file's `usid_overrides:` block (if present) deep-merges on top.
+#      `ultra_light_config_params.yaml` uses this to shorten epochs to 2.
 #
 # WARNING on step 3 vs step 2: `usid_overrides` is applied AFTER runtime
 # injection, so it CAN clobber the runtime-owned keys listed above
@@ -28,9 +28,8 @@
 #       train_num_sequences, configs}, natural_results_dir, plot_num_samples,
 #       plot_max_cols (latter two have getattr defaults so omitting is safe).
 #   * OMITTED (architecturally dead in COLD):
-#       oracle_natural, oracle_usid (no ground-truth fSNN matrices — training
-#       core would raise ValueError anyway), no_opsin (runtime kwarg, not
-#       config), training.lr_opsin_model (opsin frozen in COLD),
+#       kalman_optimal_natural, kalman_optimal_usid (no ground-truth fSNN matrices
+#       for the DARE injection), training.lr_opsin_model (opsin frozen in COLD),
 #       scheduler.step_size/gamma (only used under scheduler.type == step_lr).
 #   * CHANGED:
 #       data.source: synthetic -> cold_inline
@@ -106,12 +105,9 @@ scheduler:
   verbose: false
 
 trainer:
-  # AMP + torch.compile envelopes. Env vars USID_USE_AMP, USID_AMP_DTYPE,
-  # USID_USE_COMPILE, USID_COMPILE_MODE, USID_COMPILE_BACKEND override these
-  # at load time via scripts/utils/config_io.py.
-  amp:
-    enabled: false
-    dtype: float16
+  # torch.compile envelope. USID_USE_COMPILE / USID_COMPILE_MODE / USID_COMPILE_BACKEND override it
+  # at load time via scripts/config_io.py::read_env, and the stage copies torch_compile.enabled into
+  # usid.train.step._COMPILE.
   torch_compile:
     enabled: false
     mode: reduce-overhead
@@ -165,12 +161,6 @@ natural_hyperparams:
       type: exponential
       gamma: 0.97
       normalize: mean
-    k_reg:
-      enabled: false
-      lambda_start: 1.0
-      lambda_end: 0.01
-      schedule_epochs: 30
-      schedule_mode: exponential
     innovation_whiteness:
       num_lags: 10
       burn_in: 20          # Discards first 20 timesteps per window before ACF.
@@ -186,10 +176,11 @@ natural_hyperparams:
   val_split: 0.15
   subset_ratio: 0.5
 
-# (oracle_natural omitted — architecturally incompatible with COLD (no ground-truth
-# fSNN matrices). Leave absent; USID training_core handles absence via getattr.)
+# (kalman_optimal_natural omitted — architecturally incompatible with COLD: the DARE
+# injection needs ground-truth fSNN matrices, which COLD does not have.)
 
-# (no_opsin omitted — a runtime kwarg to run_training, not read from cfg.)
+# (no_opsin is set on the cfg at runtime by _load_usid_config as `not use_opsin`, so it is
+# not carried statically here.)
 
 usid_hyperparams:
   epochs: 100
@@ -229,12 +220,6 @@ usid_hyperparams:
       type: exponential
       gamma: 0.97
       normalize: mean
-    k_reg:
-      enabled: false
-      lambda_start: 1.0
-      lambda_end: 0.01
-      schedule_epochs: 30
-      schedule_mode: exponential
     behavior_weight: 1.0     # Unnatural-phase (Phase 3) weight on the behavior block of the augmented
                              # [LFP|behavior] output (the LFP block is weight 1.0). All output losses are
                              # block-normalized so the modalities balance regardless of channel count;
@@ -278,4 +263,4 @@ validation:
   loss_weights: { delta: 0.2, rollout: 1.0, teacher: 0.0, innov_white: 0.0, ifp: 0.0, kreg: 0.0 }
   rollout: { K: 80, W: 16 }
 
-# (oracle_usid omitted — architecturally incompatible with COLD; same as oracle_natural.)
+# (kalman_optimal_usid omitted — same reason as kalman_optimal_natural.)
