@@ -56,9 +56,11 @@ SU_BEFORE="$(mktemp)"; SU_AFTER="$(mktemp)"
 _su_snapshot > "$SU_BEFORE"
 echo "=== SU balances before run ==="; cat "$SU_BEFORE"
 
+# SMK_EXTRA_ARGS appends flags to the coordinator (word-split, so quote nothing inside it).
 snakemake \
     --configfiles "$CONFIG_PARAMS" "$CONFIG_SWEEPS" \
     --config cold_batch_label="$COLD_BATCH_LABEL" \
+    ${SMK_EXTRA_ARGS:-} \
     --executor slurm \
     --jobs 100 \
     --max-jobs-per-second 1 \
