@@ -267,7 +267,7 @@ class NLMPCController(Controller):
     nlmpc_gtol: float = 1e-6
     """L-BFGS-B projected-gradient inf-norm convergence tolerance."""
 
-    # --- attribution objective (EVAL_PLAN P1). Every term is inert at its default. ---
+    # --- attribution objective. Every term is inert at its default. ---
     alpha_attrib: float = 0.0
     """Commanded share of the required behavioral deviation carried by the induced component.
 

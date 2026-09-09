@@ -1,4 +1,4 @@
-"""Attribution, routing, and counterfactual metrics for a control cell (EVAL_PLAN P1a, P2).
+"""Attribution, routing, and counterfactual metrics for a control cell.
 
 Everything here is offline: it reads a finished `CtrlData`, its NULL twin, and the fitted LDS,
 and needs no controller change. That is deliberate — these are the measurements that decide

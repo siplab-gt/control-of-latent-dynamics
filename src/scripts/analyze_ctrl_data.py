@@ -462,7 +462,7 @@ def analyze_ctrl_data(
         traceback.print_exc()
         print(f"[WARN] operating-regime linearity metric failed: {e}")
 
-    # Attribution / routing / counterfactual metrics (EVAL_PLAN P1a, P2). Diagnostics-class:
+    # Attribution / routing / counterfactual metrics. Diagnostics-class:
     # a failure here must not cost the cell its tracking metrics, which are the primary output.
     try:
         results.update(compute_attribution_metrics(

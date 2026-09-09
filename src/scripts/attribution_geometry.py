@@ -1,4 +1,4 @@
-"""NULL-trial geometry the attribution controller arms are defined against (EVAL_PLAN P1).
+"""NULL-trial geometry the attribution controller arms are defined against.
 
 Two of P1's cost terms are stated in units the plant supplies rather than the model:
 
