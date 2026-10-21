@@ -145,7 +145,7 @@ def main(wildcards, cfg, base_params, results_csv, outfile):
         z_cols = ["seed"]
     else:
         conds2keep = ref_condition.copy()
-        del conds2keep[ep], conds2keep["latency"]
+        del conds2keep[ep]  # keep latency restriction: only undelayed runs
         query_str = " and ".join(
             [f"({k} == {v!r} or {k}.isnull())" for k, v in conds2keep.items()]
         )
