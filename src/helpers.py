@@ -11,6 +11,7 @@ import snakemake
 from jaxtyping import UInt
 
 from src.log_redirector import setup_permanent_logging
+from src.workflow_utils import str2bool
 
 
 def seed_everything(seed: int, extra_seed_str=""):
@@ -40,22 +41,10 @@ def save_pkl_gz(obj, filename):
 
 
 def load_pkl_gz(filename):
+    """Load a trusted workflow artifact; dill can execute code while loading."""
     assert filename.endswith(".pkl.gz")
     with gzip.open(filename, "rb") as f:
         return dill.load(f)
-
-
-def str2bool(value):
-    if isinstance(value, bool):
-        return value
-    if not isinstance(value, str):
-        raise ValueError(f"Cannot convert {value!r} to bool")
-    value = value.strip().lower()
-    if value in {"true", "1", "yes", "y", "on"}:
-        return True
-    if value in {"false", "0", "no", "n", "off"}:
-        return False
-    raise ValueError(f"Invalid boolean string: {value!r}")
 
 
 def setup_logging(cfg, logfile):

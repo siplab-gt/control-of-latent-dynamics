@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from snakemake.io import Namedlist
 
-from src.helpers import str2bool
+from src.workflow_utils import str2bool
 
 # Main entrypoint of the workflow.
 # Please follow the best practices:
