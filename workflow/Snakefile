@@ -8,8 +8,6 @@ import numpy as np
 import pandas as pd
 from snakemake.io import Namedlist
 
-from src.workflow_utils import str2bool
-
 # Main entrypoint of the workflow.
 # Please follow the best practices:
 # https://snakemake.readthedocs.io/en/stable/snakefiles/best_practices.html,
@@ -799,9 +797,13 @@ def fsnn_params(wc):
     """gets all prep_fsnn params, but only task and mode params as needed"""
     params = deepcopy(config["prep_fsnn"])
     try:
-        multitask = str2bool(wc.multitask)
+        multitask_value = wc.multitask
     except AttributeError:
         multitask = False
+    else:
+        from src.helpers import str2bool
+
+        multitask = str2bool(multitask_value)
     if multitask:
         for task in ["reaching", "cycling"]:
             params[wc.task] = config[f"prep_fsnn_{wc.task}"]
