@@ -40,6 +40,7 @@ def save_pkl_gz(obj, filename):
 
 
 def load_pkl_gz(filename):
+    """Load a trusted workflow artifact; dill can execute code while loading."""
     assert filename.endswith(".pkl.gz")
     with gzip.open(filename, "rb") as f:
         return dill.load(f)
