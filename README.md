@@ -3,7 +3,7 @@
 [![Snakemake](https://img.shields.io/badge/snakemake-≥6.3.0-brightgreen.svg)](https://snakemake.github.io)
 [![Syntax and DAG planning](https://github.com/siplab-gt/control-of-latent-dynamics/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/siplab-gt/control-of-latent-dynamics/actions/workflows/main.yml)
 
-A Snakemake workflow for running all simulations and producing figures for "Closed-loop optogenetic control of latent dynamics".
+A Snakemake workflow for running all simulations and producing figures for "Feasible closed-loop stimulation for neural latent dynamics control".
 This entails:
 
 - training of [factor-based SNNs (fSNNs)](https://www.sciencedirect.com/science/article/pii/S0896627322010807)
