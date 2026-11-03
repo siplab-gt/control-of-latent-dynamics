@@ -503,7 +503,7 @@ rule dependence_analysis:
         "cold"
     resources:
         mem_mb=4000,
-        runtime=10,
+        runtime=45,
     params:
         subcfg("dependence_analysis", "analysis"),
     script:
@@ -600,7 +600,7 @@ def runtime_min(n_trials, n_train_trials=0, multiplier=1):
         if "k" in wc.keys():
             k = int(wc["k"])
             if k > 100:
-                scale *= 2 * (k - 100) / (1024 - 100)
+                scale *= 1 + (k - 100) / (1024 - 100)
         # observed per-trial runtimes for small networks
         # got 5.4 seconds per trial for demean on big network (*6)
         # get ~1s/trial on Myelin, but ~7 for PACE.
