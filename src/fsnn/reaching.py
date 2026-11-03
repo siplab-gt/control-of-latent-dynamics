@@ -237,10 +237,10 @@ def init_task(seed, base_params, task_params, n_ng, g, n_latent_dims_offset):
     XX = np.zeros((n_tilde, n_tilde))
 
     for i in range(task_params.n_trials_pca):
+        fin, fout, nsteps_trial, cond, i_trial_start_end, nsteps_iti = (
+            reaching_task._trial_reaching(rng)
+        )
         if i == 0:
-            fin, fout, nsteps_trial, cond, i_trial_start_end, nsteps_iti = (
-                reaching_task._trial_reaching(rng)
-            )
             xprimes, x = reaching_task._rate_model(fin, fout, nsteps_trial, rng=rng)
         else:
             xprimes, x = reaching_task._rate_model(fin, fout, nsteps_trial, x)
